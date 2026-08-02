@@ -1,0 +1,200 @@
+"""Exhaustive tests for the canonical MVP enum vocabulary."""
+
+from __future__ import annotations
+
+from enum import StrEnum
+
+import pytest
+
+from context_for_ai.domain.enums import (
+    ClarificationReason,
+    ConditionEvaluation,
+    ConditionKind,
+    ConstraintResolutionStatus,
+    ConstraintScope,
+    ConstraintSourceKind,
+    ConstraintType,
+    EntityType,
+    EvaluationProviderMode,
+    FailureCode,
+    IntentType,
+    LocalActor,
+    MemoryEffectiveStatus,
+    MemoryRevisionOperation,
+    MemoryScope,
+    MemorySourceKind,
+    MemoryStatus,
+    MemoryType,
+    MessageRole,
+    ModelRequestPurpose,
+    ModelRequestStatus,
+    OutputType,
+    PipelineStage,
+    ProcessingRunStatus,
+    ProjectStatus,
+    ProviderKind,
+    QualifierKind,
+    ReferenceStatus,
+    RetrievalExclusionReason,
+    TaskStatus,
+    ValidationStatus,
+)
+
+
+CANONICAL_ENUM_VALUES: dict[type[StrEnum], tuple[str, ...]] = {
+    MessageRole: ("USER", "ASSISTANT", "SYSTEM"),
+    ProjectStatus: ("ACTIVE", "ARCHIVED"),
+    TaskStatus: ("OPEN", "IN_PROGRESS", "COMPLETED", "CANCELLED"),
+    IntentType: (
+        "ANSWER",
+        "EXPLAIN",
+        "DESCRIBE",
+        "PLAN",
+        "ANALYZE",
+        "RESEARCH",
+        "DEBUG",
+        "EDIT_TEXT",
+        "CONTINUE",
+        "CORRECT",
+        "UNSUPPORTED",
+    ),
+    OutputType: (
+        "TEXT_ANSWER",
+        "TEXT_EXPLANATION",
+        "TEXT_DESCRIPTION",
+        "TEXT_PLAN",
+        "TEXT_ANALYSIS",
+        "TEXT_CODE",
+        "TEXT_COMPARISON",
+        "CLARIFICATION",
+        "CONTROLLED_FAILURE",
+    ),
+    ConstraintType: (
+        "REQUIRED",
+        "FORBIDDEN",
+        "PRESERVE",
+        "PREFERRED",
+        "OPTIONAL",
+        "CONDITIONAL",
+        "ASSUMED",
+    ),
+    ConstraintScope: ("CURRENT_RESPONSE", "CONVERSATION", "PROJECT", "GLOBAL"),
+    MemoryType: (
+        "PROJECT_FACT",
+        "USER_PREFERENCE",
+        "CORRECTION_RULE",
+        "TECHNICAL_ENVIRONMENT",
+        "ARCHIVED_SUMMARY",
+    ),
+    MemoryScope: ("CONVERSATION", "PROJECT", "GLOBAL"),
+    MemoryStatus: ("ACTIVE", "DELETED"),
+    MemoryEffectiveStatus: ("ACTIVE", "EXPIRED", "DELETED"),
+    EntityType: ("PROJECT", "TOPIC", "TASK", "NAMED_ITEM"),
+    ReferenceStatus: ("RESOLVED", "AMBIGUOUS", "UNRESOLVED", "NOT_APPLICABLE"),
+    ProcessingRunStatus: (
+        "PERSISTED",
+        "CONTEXT_READY",
+        "GENERATING",
+        "REVISING",
+        "SUCCEEDED",
+        "NEEDS_CLARIFICATION",
+        "CONTROLLED_FAILURE",
+        "FAILED",
+        "CANCELLED",
+    ),
+    ModelRequestStatus: (
+        "PENDING",
+        "IN_FLIGHT",
+        "SUCCEEDED",
+        "TIMED_OUT",
+        "CANCELLED",
+        "FAILED",
+    ),
+    ValidationStatus: ("PASSED", "FAILED", "NOT_RUN"),
+    QualifierKind: (
+        "ONLY",
+        "EXACTLY",
+        "APPROXIMATE",
+        "PROHIBITION",
+        "PRESERVATION",
+        "SUBSTITUTION",
+        "PRIOR_REFERENCE",
+        "SEQUENTIAL",
+    ),
+    ConstraintSourceKind: (
+        "CURRENT_MESSAGE",
+        "TASK_POLICY",
+        "CORRECTION_MEMORY",
+        "PREFERENCE_MEMORY",
+        "RETRIEVED_MEMORY",
+        "ASSUMPTION",
+        "DERIVED_OUTPUT_POLICY",
+    ),
+    ConstraintResolutionStatus: ("ACTIVE", "INACTIVE", "OVERRIDDEN", "CONFLICTING"),
+    ConditionKind: ("OUTPUT_TYPE_EQUALS", "ACTIVE_PROJECT_EQUALS"),
+    ConditionEvaluation: ("TRUE", "FALSE", "UNSUPPORTED"),
+    MemorySourceKind: ("USER_MESSAGE", "MANUAL_ENTRY", "USER_EDIT"),
+    MemoryRevisionOperation: ("CREATE", "EDIT", "SOFT_DELETE"),
+    LocalActor: ("LOCAL_USER", "SYSTEM_RECOVERY"),
+    ModelRequestPurpose: ("INITIAL", "REVISION"),
+    ProviderKind: ("OLLAMA",),
+    PipelineStage: (
+        "ACCEPTANCE",
+        "CONTEXT",
+        "REQUEST",
+        "TRANSPORT",
+        "VALIDATION",
+        "CORRECTION",
+        "TERMINALIZATION",
+        "RECOVERY",
+        "MEMORY",
+    ),
+    EvaluationProviderMode: ("MOCK", "OLLAMA"),
+    ClarificationReason: (
+        "AMBIGUOUS_REFERENCE",
+        "UNRESOLVED_REFERENCE",
+        "LOW_CONFIDENCE_INTERPRETATION",
+        "HARD_CONSTRAINT_CONFLICT",
+        "UNSUPPORTED_INTENT",
+        "UNSUPPORTED_CONDITION",
+        "MATERIAL_ASSUMPTION",
+    ),
+    RetrievalExclusionReason: (
+        "SCOPE_MISMATCH",
+        "DELETED",
+        "EXPIRED",
+        "SCORE_BELOW_THRESHOLD",
+        "DUPLICATE_CONTENT",
+        "LIMIT_EXCEEDED",
+    ),
+    FailureCode: (
+        "CONTEXT_BUDGET_EXCEEDED",
+        "PERSISTENCE_ERROR",
+        "CONCURRENCY_CONFLICT",
+        "PROCESS_RESTARTED",
+        "CONFIGURATION_CHANGED",
+        "PROVIDER_UNAVAILABLE",
+        "MODEL_NOT_FOUND",
+        "MODEL_TIMEOUT",
+        "MODEL_CANCELLED",
+        "INVALID_PROVIDER_RESPONSE",
+        "VALIDATION_EXHAUSTED",
+        "CONFIGURATION_INVALID",
+        "CANCELLED_BY_USER",
+    ),
+}
+
+
+@pytest.mark.parametrize(("enum_type", "expected"), CANONICAL_ENUM_VALUES.items())
+def test_canonical_enum_has_exact_values(
+    enum_type: type[StrEnum],
+    expected: tuple[str, ...],
+) -> None:
+    assert tuple(member.value for member in enum_type) == expected
+    assert enum_type.__module__ == "context_for_ai.domain.enums"
+
+
+@pytest.mark.parametrize("enum_type", CANONICAL_ENUM_VALUES)
+def test_canonical_enum_rejects_unknown_value(enum_type: type[StrEnum]) -> None:
+    with pytest.raises(ValueError):
+        enum_type("NOT_A_CANONICAL_VALUE")

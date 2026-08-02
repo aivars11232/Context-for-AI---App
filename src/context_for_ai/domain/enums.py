@@ -1,0 +1,283 @@
+"""Canonical MVP domain enumerations.
+
+The values in this module mirror the single canonical table in
+``docs/contracts/DomainAndDecisionRules.md``.  Keeping them together prevents
+individual layers from inventing alternate lifecycle or taxonomy values.
+"""
+
+from enum import StrEnum, unique
+
+
+@unique
+class MessageRole(StrEnum):
+    USER = "USER"
+    ASSISTANT = "ASSISTANT"
+    SYSTEM = "SYSTEM"
+
+
+@unique
+class ProjectStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+
+
+@unique
+class TaskStatus(StrEnum):
+    OPEN = "OPEN"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+@unique
+class IntentType(StrEnum):
+    ANSWER = "ANSWER"
+    EXPLAIN = "EXPLAIN"
+    DESCRIBE = "DESCRIBE"
+    PLAN = "PLAN"
+    ANALYZE = "ANALYZE"
+    RESEARCH = "RESEARCH"
+    DEBUG = "DEBUG"
+    EDIT_TEXT = "EDIT_TEXT"
+    CONTINUE = "CONTINUE"
+    CORRECT = "CORRECT"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
+@unique
+class OutputType(StrEnum):
+    TEXT_ANSWER = "TEXT_ANSWER"
+    TEXT_EXPLANATION = "TEXT_EXPLANATION"
+    TEXT_DESCRIPTION = "TEXT_DESCRIPTION"
+    TEXT_PLAN = "TEXT_PLAN"
+    TEXT_ANALYSIS = "TEXT_ANALYSIS"
+    TEXT_CODE = "TEXT_CODE"
+    TEXT_COMPARISON = "TEXT_COMPARISON"
+    CLARIFICATION = "CLARIFICATION"
+    CONTROLLED_FAILURE = "CONTROLLED_FAILURE"
+
+
+@unique
+class ConstraintType(StrEnum):
+    REQUIRED = "REQUIRED"
+    FORBIDDEN = "FORBIDDEN"
+    PRESERVE = "PRESERVE"
+    PREFERRED = "PREFERRED"
+    OPTIONAL = "OPTIONAL"
+    CONDITIONAL = "CONDITIONAL"
+    ASSUMED = "ASSUMED"
+
+
+@unique
+class ConstraintScope(StrEnum):
+    CURRENT_RESPONSE = "CURRENT_RESPONSE"
+    CONVERSATION = "CONVERSATION"
+    PROJECT = "PROJECT"
+    GLOBAL = "GLOBAL"
+
+
+@unique
+class MemoryType(StrEnum):
+    PROJECT_FACT = "PROJECT_FACT"
+    USER_PREFERENCE = "USER_PREFERENCE"
+    CORRECTION_RULE = "CORRECTION_RULE"
+    TECHNICAL_ENVIRONMENT = "TECHNICAL_ENVIRONMENT"
+    ARCHIVED_SUMMARY = "ARCHIVED_SUMMARY"
+
+
+@unique
+class MemoryScope(StrEnum):
+    CONVERSATION = "CONVERSATION"
+    PROJECT = "PROJECT"
+    GLOBAL = "GLOBAL"
+
+
+@unique
+class MemoryStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    DELETED = "DELETED"
+
+
+@unique
+class MemoryEffectiveStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    EXPIRED = "EXPIRED"
+    DELETED = "DELETED"
+
+
+@unique
+class EntityType(StrEnum):
+    PROJECT = "PROJECT"
+    TOPIC = "TOPIC"
+    TASK = "TASK"
+    NAMED_ITEM = "NAMED_ITEM"
+
+
+@unique
+class ReferenceStatus(StrEnum):
+    RESOLVED = "RESOLVED"
+    AMBIGUOUS = "AMBIGUOUS"
+    UNRESOLVED = "UNRESOLVED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+@unique
+class ProcessingRunStatus(StrEnum):
+    PERSISTED = "PERSISTED"
+    CONTEXT_READY = "CONTEXT_READY"
+    GENERATING = "GENERATING"
+    REVISING = "REVISING"
+    SUCCEEDED = "SUCCEEDED"
+    NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
+    CONTROLLED_FAILURE = "CONTROLLED_FAILURE"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+@unique
+class ModelRequestStatus(StrEnum):
+    PENDING = "PENDING"
+    IN_FLIGHT = "IN_FLIGHT"
+    SUCCEEDED = "SUCCEEDED"
+    TIMED_OUT = "TIMED_OUT"
+    CANCELLED = "CANCELLED"
+    FAILED = "FAILED"
+
+
+@unique
+class ValidationStatus(StrEnum):
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    NOT_RUN = "NOT_RUN"
+
+
+@unique
+class QualifierKind(StrEnum):
+    ONLY = "ONLY"
+    EXACTLY = "EXACTLY"
+    APPROXIMATE = "APPROXIMATE"
+    PROHIBITION = "PROHIBITION"
+    PRESERVATION = "PRESERVATION"
+    SUBSTITUTION = "SUBSTITUTION"
+    PRIOR_REFERENCE = "PRIOR_REFERENCE"
+    SEQUENTIAL = "SEQUENTIAL"
+
+
+@unique
+class ConstraintSourceKind(StrEnum):
+    CURRENT_MESSAGE = "CURRENT_MESSAGE"
+    TASK_POLICY = "TASK_POLICY"
+    CORRECTION_MEMORY = "CORRECTION_MEMORY"
+    PREFERENCE_MEMORY = "PREFERENCE_MEMORY"
+    RETRIEVED_MEMORY = "RETRIEVED_MEMORY"
+    ASSUMPTION = "ASSUMPTION"
+    DERIVED_OUTPUT_POLICY = "DERIVED_OUTPUT_POLICY"
+
+
+@unique
+class ConstraintResolutionStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+    OVERRIDDEN = "OVERRIDDEN"
+    CONFLICTING = "CONFLICTING"
+
+
+@unique
+class ConditionKind(StrEnum):
+    OUTPUT_TYPE_EQUALS = "OUTPUT_TYPE_EQUALS"
+    ACTIVE_PROJECT_EQUALS = "ACTIVE_PROJECT_EQUALS"
+
+
+@unique
+class ConditionEvaluation(StrEnum):
+    TRUE = "TRUE"
+    FALSE = "FALSE"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
+@unique
+class MemorySourceKind(StrEnum):
+    USER_MESSAGE = "USER_MESSAGE"
+    MANUAL_ENTRY = "MANUAL_ENTRY"
+    USER_EDIT = "USER_EDIT"
+
+
+@unique
+class MemoryRevisionOperation(StrEnum):
+    CREATE = "CREATE"
+    EDIT = "EDIT"
+    SOFT_DELETE = "SOFT_DELETE"
+
+
+@unique
+class LocalActor(StrEnum):
+    LOCAL_USER = "LOCAL_USER"
+    SYSTEM_RECOVERY = "SYSTEM_RECOVERY"
+
+
+@unique
+class ModelRequestPurpose(StrEnum):
+    INITIAL = "INITIAL"
+    REVISION = "REVISION"
+
+
+@unique
+class ProviderKind(StrEnum):
+    OLLAMA = "OLLAMA"
+
+
+@unique
+class PipelineStage(StrEnum):
+    ACCEPTANCE = "ACCEPTANCE"
+    CONTEXT = "CONTEXT"
+    REQUEST = "REQUEST"
+    TRANSPORT = "TRANSPORT"
+    VALIDATION = "VALIDATION"
+    CORRECTION = "CORRECTION"
+    TERMINALIZATION = "TERMINALIZATION"
+    RECOVERY = "RECOVERY"
+    MEMORY = "MEMORY"
+
+
+@unique
+class EvaluationProviderMode(StrEnum):
+    MOCK = "MOCK"
+    OLLAMA = "OLLAMA"
+
+
+@unique
+class ClarificationReason(StrEnum):
+    AMBIGUOUS_REFERENCE = "AMBIGUOUS_REFERENCE"
+    UNRESOLVED_REFERENCE = "UNRESOLVED_REFERENCE"
+    LOW_CONFIDENCE_INTERPRETATION = "LOW_CONFIDENCE_INTERPRETATION"
+    HARD_CONSTRAINT_CONFLICT = "HARD_CONSTRAINT_CONFLICT"
+    UNSUPPORTED_INTENT = "UNSUPPORTED_INTENT"
+    UNSUPPORTED_CONDITION = "UNSUPPORTED_CONDITION"
+    MATERIAL_ASSUMPTION = "MATERIAL_ASSUMPTION"
+
+
+@unique
+class RetrievalExclusionReason(StrEnum):
+    SCOPE_MISMATCH = "SCOPE_MISMATCH"
+    DELETED = "DELETED"
+    EXPIRED = "EXPIRED"
+    SCORE_BELOW_THRESHOLD = "SCORE_BELOW_THRESHOLD"
+    DUPLICATE_CONTENT = "DUPLICATE_CONTENT"
+    LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
+
+
+@unique
+class FailureCode(StrEnum):
+    CONTEXT_BUDGET_EXCEEDED = "CONTEXT_BUDGET_EXCEEDED"
+    PERSISTENCE_ERROR = "PERSISTENCE_ERROR"
+    CONCURRENCY_CONFLICT = "CONCURRENCY_CONFLICT"
+    PROCESS_RESTARTED = "PROCESS_RESTARTED"
+    CONFIGURATION_CHANGED = "CONFIGURATION_CHANGED"
+    PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
+    MODEL_NOT_FOUND = "MODEL_NOT_FOUND"
+    MODEL_TIMEOUT = "MODEL_TIMEOUT"
+    MODEL_CANCELLED = "MODEL_CANCELLED"
+    INVALID_PROVIDER_RESPONSE = "INVALID_PROVIDER_RESPONSE"
+    VALIDATION_EXHAUSTED = "VALIDATION_EXHAUSTED"
+    CONFIGURATION_INVALID = "CONFIGURATION_INVALID"
+    CANCELLED_BY_USER = "CANCELLED_BY_USER"

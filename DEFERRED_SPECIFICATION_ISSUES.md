@@ -32,6 +32,16 @@ also agree.
 | D-014 | Align detailed task scopes with the repaired contracts: Task 0002 enums/types; Task 0003 clarification/retrieval ports; Task 0004 schema additions/indexes; Task 0005 repositories/recovery; Task 0006 lifecycle; Tasks 0007–0010 deterministic contracts; Tasks 0011–0018 provider, pipeline, UI, and smoke criteria. | `TASK-0002` through `TASK-0018` |
 | D-015 | Reconcile roadmap/backlog/implementation-plan wording with the global single-run admission rule, recovery matrix, clarification persistence, and task-stage acceptance ownership. | `TASK-0014` |
 
+### TASK-0002 reconciliation
+
+The `TASK-0002` portion of D-014 is resolved. Its scope is the dependency-free
+canonical enums, value objects, immutable domain representations, typed domain
+errors, and structural priority/lifecycle policies named by
+`tasks/TASK-0002-DOMAIN-PRIMITIVES-AND-POLICIES.md` and the canonical contracts.
+It does not include application ports, persistence, context parsing or decision
+pipelines, provider integration, orchestration, or UI behavior. D-014 remains
+unresolved for `TASK-0003` through `TASK-0018`.
+
 ## Historical planning reconciliation
 
 These supporting documents require a status-note or canonical-pointer repair,
