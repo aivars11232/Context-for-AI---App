@@ -39,8 +39,17 @@ canonical enums, value objects, immutable domain representations, typed domain
 errors, and structural priority/lifecycle policies named by
 `tasks/TASK-0002-DOMAIN-PRIMITIVES-AND-POLICIES.md` and the canonical contracts.
 It does not include application ports, persistence, context parsing or decision
-pipelines, provider integration, orchestration, or UI behavior. D-014 remains
-unresolved for `TASK-0003` through `TASK-0018`.
+pipelines, provider integration, orchestration, or UI behavior.
+
+### TASK-0003 reconciliation
+
+The `TASK-0003` portion of D-014 is resolved. Its repository-port scope
+explicitly includes the one-record clarification operations on
+`ClarificationRepository` and the retrieval-result/retrieval-exclusion
+operations on `ContextPacketRepository`. It defines inward contracts only; the
+deterministic builders/retriever, repository implementations, pipeline
+orchestration, and UI behavior remain assigned to their later tasks. D-014
+remains unresolved for `TASK-0004` through `TASK-0018`.
 
 ## Historical planning reconciliation
 

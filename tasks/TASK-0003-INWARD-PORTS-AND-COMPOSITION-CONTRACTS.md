@@ -18,7 +18,9 @@ direction before any infrastructure adapter is implemented.
 ## Required work
 
 1. Define typed repository ports for every repository named in the persistence
-   contract.
+   contract. This explicitly includes the one-record clarification operations on
+   `ClarificationRepository` and retrieval-result/retrieval-exclusion operations
+   on `ContextPacketRepository`; their implementations remain later-task work.
 2. Define model-gateway, clock, ID-generation, configuration, logging, and
    transaction-boundary ports.
 3. Define use-case input/output types for processing, context inspection,
