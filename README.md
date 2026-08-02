@@ -14,3 +14,4 @@ The first permitted implementation task is `tasks/TASK-0001-REPOSITORY-FOUNDATIO
 - Repository control documents: complete
 - Application code: not started
 - Active task: TASK-0001
+# Context-for-AI---App
