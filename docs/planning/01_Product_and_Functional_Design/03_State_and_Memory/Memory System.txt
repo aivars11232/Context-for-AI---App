@@ -1,0 +1,56 @@
+The app needs more than one type of memory.
+Memory
+├── Session memory
+├── Project memory
+├── User preference memory
+├── Correction memory
+├── Technical environment memory
+└── Archived conversation memory
+
+Session memory
+Temporary information from the current conversation.
+Examples:
+current topic
+current task
+last few messages
+active references
+temporary decisions
+Project memory
+Information specific to one project.
+Example for Arch Dock:
+purpose
+architecture
+features
+files
+known bugs
+completed changes
+design rules
+current development stage
+User preference memory
+Long-term interaction preferences.
+Examples:
+answer yes or no first
+do not invent commands
+treat “only” as a strict limitation
+use one command per step
+do not ask for files already available
+Correction memory
+Records previous misunderstandings and their corrections.
+
+{
+  "incorrect_behavior": "Generated an image",
+  "user_correction": "Description only",
+  "future_rule": "When the user asks for a Canva description, return text unless image generation is explicitly requested"
+}
+
+Technical environment memory
+Examples:
+operating system
+desktop environment
+installed software
+hardware
+model names
+API endpoints
+project directories
+Archived conversation memory
+Older conversations stored for retrieval, but not automatically inserted into every prompt.

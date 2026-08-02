@@ -1,0 +1,35 @@
+packet/
+├── ContextPacketBuilder.py
+├── PromptRenderer.py
+├── TokenBudgetManager.py
+├── ContextCompressor.py
+└── ContextPacket.py
+
+Example packet:
+{
+  "request": {
+    "original_text": "Give me the engineering skeleton",
+    "intent": "architecture_design",
+    "output_type": "technical_description"
+  },
+  "active_state": {
+    "project": "Context for AI",
+    "topic": "application architecture",
+    "task": "define engineering skeleton"
+  },
+  "constraints": {
+    "required": [
+      "include layers",
+      "include application components"
+    ],
+    "forbidden": [],
+    "preserve": [
+      "app name: Context for AI"
+    ]
+  },
+  "retrieved_context": [],
+  "response_policy": {
+    "technical_depth": "medium",
+    "format": "structured"
+  }
+}

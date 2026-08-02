@@ -1,0 +1,26 @@
+After each interaction, the app decides what should be remembered.
+It should classify information as:
+Temporary
+Session-only
+Project-specific
+Long-term preference
+Correction
+Do not store
+
+It must not save every message automatically.
+Example:
+{
+  "memory_candidate": "User wants Canva descriptions rather than generated images",
+  "category": "user_preference",
+  "confidence": 0.93,
+  "scope": "visual design requests",
+  "storage_action": "save"
+}
+
+It should also:
+merge duplicates
+update outdated facts
+preserve change history
+allow manual correction
+allow deletion
+show where a memory came from

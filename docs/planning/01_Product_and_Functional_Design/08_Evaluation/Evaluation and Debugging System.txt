@@ -1,0 +1,169 @@
+You need a test system to measure whether context understanding improves.
+Each test should contain:
+{
+  "conversation_history": [],
+  "user_message": "",
+  "expected_intent": "",
+  "expected_references": {},
+  "required_constraints": [],
+  "forbidden_behaviors": [],
+  "expected_answer_properties": []
+}
+
+Useful test categories:
+topic switching
+ambiguous references
+important qualifiers
+correction handling
+persistent project state
+“do not change anything else”
+output-type confusion
+literal versus intended meaning
+repeated-question prevention
+old-context interference
+Your previous conversations already contain many real test cases.
+Supporting infrastructure
+Beyond the main modules, the app will need:
+Database
+For the first version:
+SQLite
+Later:
+PostgreSQL
+Possible tables:
+users
+conversations
+messages
+projects
+project_states
+memories
+corrections
+instructions
+context_packets
+model_responses
+validation_results
+files
+file_versions
+evaluation_cases
+
+Semantic search
+For retrieving context by meaning:
+embeddings
+vector storage
+metadata filters
+A local first version could use:
+SQLite + vector extension
+or
+Chroma
+or
+any other aviable.
+
+Backend
+A sensible structure:
+backend/
+├── api/
+├── context/
+├── memory/
+├── retrieval/
+├── interpretation/
+├── validation/
+├── models/
+├── database/
+├── projects/
+├── tests/
+└── configuration/
+
+backend/
+├── api/
+├── context/
+├── memory/
+├── retrieval/
+├── interpretation/
+├── validation/
+├── models/
+├── database/
+├── projects/
+├── tests/
+└── configuration/
+
+Frontend
+Since your system uses KDE and you already work with Qt:
+Qt 6 + QML
+Possible frontend structure:
+frontend/
+├── Main.qml
+├── ChatView.qml
+├── ContextPanel.qml
+├── MemoryView.qml
+├── ProjectView.qml
+├── ValidationView.qml
+├── ModelSettings.qml
+└── components/
+
+Local service
+The context engine should run separately from the interface:
+Qt/QML interface
+      ↓
+Local API
+      ↓
+Context engine
+      ↓
+AI models and database
+
+This allows other applications and agents to use the same context engine later.
+Recommended first version
+Do not build all modules immediately.
+Your minimum viable version should contain:
+1. Chat interface
+2. Conversation-state manager
+3. Basic intent and qualifier extraction
+4. Project memory
+5. SQLite database
+6. Context packet builder
+7. Ollama connector
+8. Rule-based response validator
+9. Context inspection panel
+10. Basic evaluation tests
+
+The first functional pipeline would be:
+User message
+    ↓
+Load current project state
+    ↓
+Extract intent, references and constraints
+    ↓
+Retrieve relevant memories
+    ↓
+Build structured context packet
+    ↓
+Send it to Ollama
+    ↓
+Validate response
+    ↓
+Show response
+    ↓
+Update session state
+
+Later expansion
+
+Once the basic system works, add:
+Phase 2
+- semantic memory retrieval
+- automatic reference resolution
+- correction memory
+- automatic response revision
+
+Phase 3
+- multiple specialized agents
+- file and code context
+- cross-application context
+- model routing
+- confidence scoring
+
+Phase 4
+- visual context
+- screen understanding
+- voice context
+- autonomous project tracking
+- shared context across all AI agents
+
+The central product is not merely a chatbot. It is a shared context service that every AI agent in your control center can use.

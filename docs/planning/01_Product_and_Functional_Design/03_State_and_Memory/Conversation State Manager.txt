@@ -1,0 +1,26 @@
+This tracks what is happening right now.
+
+Example:
+{
+  "active_project": "Arch Dock",
+  "active_topic": "dock appearance",
+  "current_task": "write a Canva description",
+  "task_status": "in_progress",
+  "previous_task": "describe the top panel",
+  "current_output_type": "text",
+  "referenced_item": "previous panel description"
+}
+It should track:
+active project
+active topic
+current task
+previous task
+completed steps
+pending steps
+current file
+current file version
+current application
+accepted decisions
+rejected approaches
+unresolved questions
+This component prevents the AI from suddenly answering an older topic.

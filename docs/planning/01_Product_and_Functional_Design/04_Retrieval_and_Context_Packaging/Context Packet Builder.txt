@@ -1,0 +1,28 @@
+This creates the clean package sent to the main AI.
+Example:
+{
+  "user_message": "Now do the same for Blender.",
+  "interpreted_intent": "create_text_description",
+  "active_project": "custom application icons",
+  "resolved_reference": {
+    "same": "reuse the previously established Alienware-style icon design"
+  },
+  "required_elements": [
+    "Blender symbolism",
+    "neon green glow",
+    "alien-like visual language",
+    "metallic futuristic texture"
+  ],
+  "forbidden_actions": [
+    "do not generate an image",
+    "do not add a background"
+  ],
+  "relevant_context": [
+    "Previous icons used transparent backgrounds",
+    "Previous style used alien-inspired textures",
+    "User requested full Canva descriptions"
+  ],
+  "output_format": "single descriptive prompt"
+}
+
+The main AI receives this structured packet rather than an uncontrolled conversation dump.

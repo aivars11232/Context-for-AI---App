@@ -1,0 +1,25 @@
+application/
+├── chat/
+│   ├── ProcessUserMessage.py
+│   ├── RegenerateResponse.py
+│   └── ContinueConversation.py
+├── context/
+│   ├── BuildContext.py
+│   ├── InspectContext.py
+│   └── ResetActiveContext.py
+├── memory/
+│   ├── CreateMemory.py
+│   ├── UpdateMemory.py
+│   ├── DeleteMemory.py
+│   └── SearchMemory.py
+├── projects/
+│   ├── CreateProject.py
+│   ├── OpenProject.py
+│   ├── UpdateProjectState.py
+│   └── ArchiveProject.py
+├── validation/
+│   ├── ValidateResponse.py
+│   └── ReviseFailedResponse.py
+└── evaluation/
+    ├── RunEvaluation.py
+    └── CompareResults.py

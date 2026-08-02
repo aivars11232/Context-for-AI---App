@@ -1,0 +1,51 @@
+The interface could have several panels.
+Main Window
+├── Chat
+├── Active Context
+├── Memories
+├── Projects
+├── Rules and Constraints
+├── AI Models
+├── Validation Log
+└── Settings
+
+Chat panel
+Normal conversation interface.
+Active Context panel
+Shows what the system currently believes:
+Project: Arch Dock
+Topic: Canva dock description
+Task: Produce compressed text prompt
+Output: Text only
+Important constraints:
+- Exclude opened applications
+- Keep launcher and system indicators
+- Use neon green and orange
+
+This is important because you can immediately detect incorrect context.
+Memory panel
+Allows you to:
+inspect memories
+edit them
+delete them
+lock important rules
+change their scope
+see their source
+Project panel
+Each project could have:
+description
+current state
+files
+decisions
+tasks
+rules
+known problems
+conversation history
+Validation log
+Shows why a response was accepted or rejected.
+Example:
+PASS: Correct output type
+PASS: Active topic preserved
+PASS: No forbidden application names
+FAIL: Neon orange was omitted
+ACTION: Response revised automatically

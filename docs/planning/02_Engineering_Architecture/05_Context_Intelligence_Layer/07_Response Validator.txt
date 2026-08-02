@@ -1,0 +1,21 @@
+validation/
+├── ResponseValidator.py
+├── ConstraintValidator.py
+├── TopicValidator.py
+├── CompletenessValidator.py
+├── HallucinationValidator.py
+├── FormatValidator.py
+├── RepetitionValidator.py
+└── ValidationReport.py
+
+Validation result:
+{
+  "passed": false,
+  "score": 0.82,
+  "violations": [
+    {
+      "type": "MISSING_REQUIREMENT",
+      "rule": "Include storage layer"
+    }
+  ]
+}

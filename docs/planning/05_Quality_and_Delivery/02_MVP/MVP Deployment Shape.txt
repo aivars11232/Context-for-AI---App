@@ -1,0 +1,5 @@
+One desktop application
+One local SQLite database
+One Ollama connection
+One optional embedding model
+One controlled context pipeline

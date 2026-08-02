@@ -1,0 +1,25 @@
+This searches memory and selects only what is relevant.
+For a request about Arch Dock, it might retrieve:
+- Arch Dock project state
+- active visual style
+- previous panel description
+- current output constraints
+- recent user corrections
+
+It should not retrieve unrelated information.
+The retrieval engine needs:
+keyword search
+semantic search
+project filtering
+recency weighting
+relevance scoring
+correction priority
+duplicate removal
+A simple scoring system could be:
+Context relevance =
+topic match
++ project match
++ reference match
++ recency
++ instruction priority
++ correction importance

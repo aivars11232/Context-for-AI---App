@@ -1,0 +1,13 @@
+Desktop UI
+    ↓
+Local application API
+    ↓
+Context engine
+    ↓
+Storage and model providers
+
+
+What can be used:
+
+internal Python service objects
+FastAPI on localhost

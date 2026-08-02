@@ -1,0 +1,25 @@
+ProcessUserMessage
+    ↓
+Load conversation state
+    ↓
+Interpret user message
+    ↓
+Resolve references
+    ↓
+Extract constraints
+    ↓
+Retrieve relevant memory
+    ↓
+Build context packet
+    ↓
+Call selected AI model
+    ↓
+Validate response
+    ↓
+Correct if necessary
+    ↓
+Store message and context result
+    ↓
+Update memory and project state
+    ↓
+Return final response to UI

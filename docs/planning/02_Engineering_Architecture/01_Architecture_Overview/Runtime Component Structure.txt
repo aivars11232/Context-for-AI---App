@@ -1,0 +1,31 @@
+When running, the app would consist of these processes:
+Context for AI Desktop
+│
+├── Qt/QML UI process
+│
+├── Context application service
+│   ├── conversation orchestrator
+│   ├── context engine
+│   ├── memory manager
+│   └── validation engine
+│
+├── SQLite database
+│
+├── Vector store
+│
+└── Ollama service
+    ├── interpretation model
+    ├── main response model
+    └── embedding model
+
+For the MVP, interpretation and response generation can use the same model.
+
+Later:
+small fast model
+    → interpretation and validation
+
+larger model
+    → final response generation
+
+embedding model
+    → semantic retrieval

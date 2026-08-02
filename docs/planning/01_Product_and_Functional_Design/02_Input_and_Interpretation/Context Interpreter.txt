@@ -1,0 +1,46 @@
+This is the first intelligence layer.
+It analyzes the user's message and extracts meaning.
+It should identify:
+Intent:
+Explain
+Describe
+Generate
+Edit
+Compare
+Install
+Research
+Debug
+Continue previous work
+Correct previous answer
+
+Important qualifiers:
+only
+exactly
+roughly
+could
+might
+do not
+same as before
+without changing
+one at a time
+instead of
+
+References:
+it
+that
+this
+the previous one
+same thing
+the file
+the app
+the email
+the icon
+
+Implied instructions
+For example:
+“Now do the same for Blender.”
+The interpreter should understand:
+Reuse the established icon style.
+Change the represented application to Blender.
+Preserve the previous transparency requirements.
+Return a description, not an image.

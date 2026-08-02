@@ -1,0 +1,18 @@
+Project
+ ├── Conversations
+ ├── Tasks
+ ├── Memories
+ └── Project states
+
+Conversation
+ ├── Messages
+ ├── Active state
+ ├── Context packets
+ └── Validation results
+
+Memory
+ ├── Source message
+ ├── Scope
+ ├── Importance
+ ├── Confidence
+ └── Expiration policy

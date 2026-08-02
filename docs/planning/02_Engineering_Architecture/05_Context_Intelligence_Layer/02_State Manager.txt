@@ -1,0 +1,14 @@
+Tracks the currently active conversation state
+state/
+├── ConversationStateManager.py
+├── ActiveTaskTracker.py
+├── TopicStack.py
+├── ProjectStateManager.py
+├── StateTransition.py
+└── StateSnapshot.py
+
+The topic stack is important.
+Topic stack:
+1. Context for AI app
+2. Engineering skeleton
+3. Current subtopic: architectural layers

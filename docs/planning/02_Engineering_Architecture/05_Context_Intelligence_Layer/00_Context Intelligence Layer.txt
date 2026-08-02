@@ -1,0 +1,11 @@
+context_engine/
+├── interpretation/
+├── state/
+├── references/
+├── constraints/
+├── retrieval/
+├── packet/
+├── validation/
+├── correction/
+├── confidence/
+└── policies/

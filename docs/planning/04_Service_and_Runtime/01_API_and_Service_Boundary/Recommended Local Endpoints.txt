@@ -1,0 +1,14 @@
+POST   /chat/messages
+GET    /conversations/{id}
+GET    /context/active
+POST   /context/rebuild
+GET    /memories
+POST   /memories
+PATCH  /memories/{id}
+DELETE /memories/{id}
+GET    /projects
+POST   /projects
+GET    /validation/{message_id}
+POST   /evaluations/run
+GET    /models
+POST   /models/test

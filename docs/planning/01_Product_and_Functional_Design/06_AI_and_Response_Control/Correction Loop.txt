@@ -1,0 +1,18 @@
+When validation fails, the app should not immediately show the bad answer.
+Instead:
+AI response
+    ↓
+Validator detects failure
+    ↓
+Correction instructions generated
+    ↓
+AI revises response
+    ↓
+Validator checks again
+    ↓
+Approved response shown
+
+Set a strict retry limit, such as:
+Maximum automatic corrections: 2
+
+After that, show the result with a warning rather than allowing an endless loop.

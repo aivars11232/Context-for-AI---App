@@ -1,0 +1,33 @@
+ui/
+├── Main.qml
+├── AppShell.qml
+├── navigation/
+│   ├── Sidebar.qml
+│   └── TopBar.qml
+├── chat/
+│   ├── ChatPage.qml
+│   ├── MessageList.qml
+│   ├── MessageBubble.qml
+│   └── InputComposer.qml
+├── context/
+│   ├── ContextPage.qml
+│   ├── ActiveContextPanel.qml
+│   ├── IntentCard.qml
+│   ├── ConstraintList.qml
+│   └── ReferenceList.qml
+├── memory/
+│   ├── MemoryPage.qml
+│   ├── MemoryEditor.qml
+│   └── MemorySourceView.qml
+├── projects/
+│   ├── ProjectsPage.qml
+│   ├── ProjectOverview.qml
+│   └── ProjectStateView.qml
+├── validation/
+│   ├── ValidationPage.qml
+│   └── ValidationResultCard.qml
+├── settings/
+│   ├── SettingsPage.qml
+│   ├── ModelSettings.qml
+│   └── StorageSettings.qml
+└── components/

@@ -1,0 +1,24 @@
+Resolves language such as:
+it
+that
+this
+same one
+previous version
+the app
+the file
+do that again
+
+references/
+├── ReferenceResolver.py
+├── EntityTracker.py
+├── MentionExtractor.py
+├── CandidateRanker.py
+└── ReferenceResolutionResult.py
+
+Example:
+{
+  "phrase": "the app",
+  "resolved_entity": "Context for AI",
+  "source_message_id": "message_184",
+  "confidence": 0.98
+}

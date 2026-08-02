@@ -1,0 +1,74 @@
+domain/
+├── entities/
+├── value_objects/
+├── enums/
+├── policies/
+├── events/
+├── repositories/
+└── exceptions/
+
+Core entities:
+entities/
+├── User.py
+├── Conversation.py
+├── Message.py
+├── Project.py
+├── ProjectState.py
+├── Task.py
+├── Topic.py
+├── ContextMemory.py
+├── Constraint.py
+├── Reference.py
+├── ContextPacket.py
+├── ModelResponse.py
+└── ValidationResult.py
+
+Important value objects:
+value_objects/
+├── MessageId.py
+├── ConversationId.py
+├── ProjectId.py
+├── MemoryId.py
+├── ConfidenceScore.py
+├── TokenBudget.py
+├── TimeRange.py
+└── SourceReference.py
+
+Enums:
+enums/
+├── IntentType.py
+├── MemoryType.py
+├── ConstraintType.py
+├── MemoryScope.py
+├── MessageRole.py
+├── ValidationStatus.py
+├── TaskStatus.py
+└── ModelProvider.py
+
+Domain policies:
+policies/
+├── InstructionPriorityPolicy.py
+├── MemoryRetentionPolicy.py
+├── TopicTransitionPolicy.py
+├── ContextSelectionPolicy.py
+└── ValidationPolicy.py
+
+policies/
+├── InstructionPriorityPolicy.py
+├── MemoryRetentionPolicy.py
+├── TopicTransitionPolicy.py
+├── ContextSelectionPolicy.py
+└── ValidationPolicy.py
+
+Example instruction priority:
+1. Current explicit user command
+2. Current prohibition or preservation rule
+3. Current task definition
+4. Recent user correction
+5. Active project rule
+6. Persistent user preference
+7. Older inferred context
+
+
+
+

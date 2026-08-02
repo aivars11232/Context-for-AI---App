@@ -1,0 +1,10 @@
+ai/
+├── ModelGateway.py
+├── ModelRouter.py
+├── providers/
+│   ├── OllamaProvider.py
+│   ├── OpenAIProvider.py
+│   └── MockProvider.py
+├── ModelRequest.py
+├── ModelResult.py
+└── ModelHealthCheck.py

@@ -1,0 +1,25 @@
+constraints/
+├── ConstraintExtractor.py
+├── ConstraintNormalizer.py
+├── ConstraintPriorityResolver.py
+├── ConflictDetector.py
+├── PreservationRuleBuilder.py
+└── ConstraintSet.py
+
+Constraint types:
+REQUIRED
+FORBIDDEN
+PRESERVE
+PREFERRED
+OPTIONAL
+CONDITIONAL
+ASSUMED
+
+Example:
+{
+  "type": "FORBIDDEN",
+  "rule": "Do not generate an image",
+  "priority": 100,
+  "scope": "current_response",
+  "source": "current_user_message"
+}

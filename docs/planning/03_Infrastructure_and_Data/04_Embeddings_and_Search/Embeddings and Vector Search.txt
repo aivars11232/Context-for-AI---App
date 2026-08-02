@@ -1,0 +1,13 @@
+embeddings/
+├── EmbeddingProvider.py
+├── LocalEmbeddingProvider.py
+├── VectorStore.py
+├── SqliteVectorStore.py
+└── ChromaVectorStore.py
+
+Example:
+Conversation model:
+qwen2.5-coder:7b
+
+Embedding model:
+nomic-embed-text

@@ -1,0 +1,26 @@
+Before showing the answer, the validator compares it against the context packet.
+It checks:
+Did the AI answer the current question?
+Did it change topics?
+Did it obey “only”?
+Did it perform a prohibited action?
+Did it invent facts?
+Did it ignore an important qualifier?
+Did it repeat information unnecessarily?
+Did it ask a question already answered?
+Did it use the correct output format?
+Did it preserve requested elements?
+Example result:
+{
+  "valid": false,
+  "violations": [
+    {
+      "rule": "text_only",
+      "problem": "The response attempted image generation"
+    },
+    {
+      "rule": "exclude_open_apps",
+      "problem": "The description mentioned Firefox and VS Code"
+    }
+  ]
+}

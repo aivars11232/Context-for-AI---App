@@ -1,0 +1,21 @@
+Determines what the user is trying to do.
+interpretation/
+├── IntentClassifier.py
+├── MessageAnalyzer.py
+├── TopicDetector.py
+├── OutputTypeDetector.py
+├── QualifierDetector.py
+└── InterpretationResult.py
+
+Output example:
+{
+  "intent": "create_description",
+  "topic": "desktop dock",
+  "output_type": "text",
+  "confidence": 0.95,
+  "qualifiers": [
+    "same style",
+    "do not generate",
+    "compressed"
+  ]
+}

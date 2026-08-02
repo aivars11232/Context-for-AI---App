@@ -1,0 +1,13 @@
+confidence/
+├── ConfidenceCalculator.py
+├── AmbiguityDetector.py
+├── EvidenceTracker.py
+└── ConfidenceResult.py
+
+The app should not treat all inferred context as fact.
+{
+  "interpretation_confidence": 0.91,
+  "reference_confidence": 0.67,
+  "retrieval_confidence": 0.88,
+  "overall_confidence": 0.82
+}

@@ -1,0 +1,27 @@
+Context App
+├── 1. User Input Layer
+├── 2. Conversation State Manager
+├── 3. Context Interpreter
+├── 4. Memory System
+├── 5. Context Retrieval Engine
+├── 6. Instruction and Constraint Manager
+├── 7. Context Packet Builder
+├── 8. Main AI Connector
+├── 9. Response Validator
+├── 10. Correction Loop
+├── 11. Memory Update System
+├── 12. User Interface
+└── 13. Evaluation and Debugging System
+
+User Input Layer:
+Receives the user's message and basic metadata.
+
+It should capture:
+exact original wording
+current conversation
+attached files or images
+selected project
+active AI model
+time of the message
+whether the user requested an action, explanation, description, code change, image generation, and so on
+The original message must never be overwritten. The app should preserve it exactly

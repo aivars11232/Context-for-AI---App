@@ -1,0 +1,26 @@
+This connects the context app to one or more AI models.
+You could support:
+local Ollama models
+OpenAI API
+other cloud APIs
+specialized models
+separate coding and conversational models
+The connector needs:
+model selection
+API configuration
+prompt templates
+timeout handling
+streaming responses
+token counting
+error handling
+fallback model selection
+For your setup, the initial connector could support:
+Ollama
+└── qwen2.5-coder:7b or other if aviable.
+
+Later, the app could route tasks:
+Coding request → coding model
+General conversation → conversational model
+Context interpretation → smaller fast model
+Validation → validator model
+Image-related request → image model

@@ -1,0 +1,14 @@
+Context App
+├── 1. User Input Layer
+├── 2. Conversation State Manager
+├── 3. Context Interpreter
+├── 4. Memory System
+├── 5. Context Retrieval Engine
+├── 6. Instruction and Constraint Manager
+├── 7. Context Packet Builder
+├── 8. Main AI Connector
+├── 9. Response Validator
+├── 10. Correction Loop
+├── 11. Memory Update System
+├── 12. User Interface
+└── 13. Evaluation and Debugging System

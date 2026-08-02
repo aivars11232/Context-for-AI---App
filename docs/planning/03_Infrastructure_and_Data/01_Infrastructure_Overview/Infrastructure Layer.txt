@@ -1,0 +1,9 @@
+infrastructure/
+├── database/
+├── ai/
+├── embeddings/
+├── files/
+├── logging/
+├── configuration/
+├── security/
+└── system/

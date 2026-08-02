@@ -1,0 +1,26 @@
+The first version should include only:
+UI
+Application orchestrator
+Conversation state
+Constraint extraction
+Basic reference resolution
+SQLite memory
+Keyword retrieval
+Context packet builder
+Ollama connector
+Rule-based validation
+Evaluation tests
+
+Do not initially add:
+distributed services
+cloud synchronization
+multiple databases
+autonomous memory rewriting
+unrestricted background agents
+complex event buses
+Kubernetes
+microservices
+multiple simultaneous model pipelines
+
+The first version should remain one repository and one local application.
+

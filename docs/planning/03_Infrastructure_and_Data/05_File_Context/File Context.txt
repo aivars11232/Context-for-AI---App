@@ -1,0 +1,7 @@
+files/
+├── FileScanner.py
+├── FileReader.py
+├── FileChunker.py
+├── FileIndexer.py
+├── FileVersionTracker.py
+└── SupportedFileTypes.py

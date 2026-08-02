@@ -1,0 +1,15 @@
+database/
+├── Database.py
+├── migrations/
+├── models/
+├── repositories/
+└── transaction/
+
+Repository implimentations:
+repositories/
+├── SqliteConversationRepository.py
+├── SqliteMessageRepository.py
+├── SqliteMemoryRepository.py
+├── SqliteProjectRepository.py
+├── SqliteContextRepository.py
+└── SqliteEvaluationRepository.py

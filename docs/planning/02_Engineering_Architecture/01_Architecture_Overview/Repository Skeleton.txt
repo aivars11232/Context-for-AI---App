@@ -1,0 +1,106 @@
+context-for-ai/
+├── README.md
+├── pyproject.toml
+├── requirements.txt
+├── .env.example
+├── config/
+│   ├── app.yaml
+│   ├── models.yaml
+│   ├── context.yaml
+│   ├── memory.yaml
+│   ├── validation.yaml
+│   └── logging.yaml
+│
+├── src/
+│   └── context_for_ai/
+│       ├── main.py
+│       │
+│       ├── ui/
+│       │   ├── qml/
+│       │   ├── controllers/
+│       │   ├── models/
+│       │   └── resources/
+│       │
+│       ├── api/
+│       │   ├── server.py
+│       │   ├── routes/
+│       │   ├── schemas/
+│       │   └── middleware/
+│       │
+│       ├── application/
+│       │   ├── chat/
+│       │   ├── context/
+│       │   ├── memory/
+│       │   ├── projects/
+│       │   ├── validation/
+│       │   └── evaluation/
+│       │
+│       ├── domain/
+│       │   ├── entities/
+│       │   ├── value_objects/
+│       │   ├── enums/
+│       │   ├── policies/
+│       │   ├── events/
+│       │   ├── repositories/
+│       │   └── exceptions/
+│       │
+│       ├── context_engine/
+│       │   ├── interpretation/
+│       │   ├── state/
+│       │   ├── references/
+│       │   ├── constraints/
+│       │   ├── retrieval/
+│       │   ├── packet/
+│       │   ├── validation/
+│       │   ├── correction/
+│       │   ├── confidence/
+│       │   └── policies/
+│       │
+│       ├── infrastructure/
+│       │   ├── database/
+│       │   ├── ai/
+│       │   ├── embeddings/
+│       │   ├── files/
+│       │   ├── logging/
+│       │   ├── configuration/
+│       │   ├── security/
+│       │   └── system/
+│       │
+│       ├── workers/
+│       │   ├── memory_worker.py
+│       │   ├── embedding_worker.py
+│       │   ├── summary_worker.py
+│       │   └── cleanup_worker.py
+│       │
+│       └── shared/
+│           ├── types/
+│           ├── utilities/
+│           ├── constants/
+│           └── errors/
+│
+├── migrations/
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   ├── evaluation/
+│   └── fixtures/
+│
+├── scripts/
+│   ├── initialize_database.py
+│   ├── import_conversations.py
+│   ├── run_evaluations.py
+│   └── export_context.py
+│
+├── data/
+│   ├── database/
+│   ├── vector_store/
+│   ├── logs/
+│   ├── cache/
+│   └── exports/
+│
+└── docs/
+    ├── architecture.md
+    ├── context_pipeline.md
+    ├── memory_model.md
+    ├── validation_rules.md
+    └── api.md

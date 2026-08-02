@@ -1,0 +1,42 @@
+This component converts user instructions into explicit rules.
+Example user message:
+“Render it, remove only the blue line, and don’t change anything else.”
+Structured result:
+{
+  "primary_action": "render_image",
+  "required_changes": [
+    "remove_blue_line"
+  ],
+  "preserve": [
+    "all_objects",
+    "geometry",
+    "composition",
+    "colors_except_blue_line",
+    "belt",
+    "mudguard",
+    "tires"
+  ],
+  "forbidden_changes": [
+    "remove_objects",
+    "add_objects",
+    "redesign",
+    "merge_parts",
+    "change_proportions"
+  ],
+  "strictness": "high"
+}
+
+The manager should distinguish between:
+required actions
+optional preferences
+preservation constraints
+prohibited actions
+assumptions
+unresolved ambiguity
+It should also rank instructions:
+1. Current explicit instruction
+2. Current preservation constraint
+3. Active project rule
+4. Recent correction
+5. Long-term preference
+6. Older conversation context

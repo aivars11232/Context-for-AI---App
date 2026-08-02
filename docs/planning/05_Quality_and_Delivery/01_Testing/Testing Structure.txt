@@ -1,0 +1,18 @@
+tests/
+├── unit/
+│   ├── interpretation/
+│   ├── constraints/
+│   ├── references/
+│   ├── retrieval/
+│   └── validation/
+├── integration/
+│   ├── database/
+│   ├── ollama/
+│   └── complete_pipeline/
+├── evaluation/
+│   ├── topic_switching/
+│   ├── qualifier_handling/
+│   ├── reference_resolution/
+│   ├── correction_memory/
+│   └── instruction_conflicts/
+└── fixtures/

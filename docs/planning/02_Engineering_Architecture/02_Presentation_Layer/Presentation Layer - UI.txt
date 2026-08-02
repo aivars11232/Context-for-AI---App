@@ -1,0 +1,21 @@
+This is the desktop application the user interacts with.
+Qt 6
+QML
+C++
+
+or:
+Qt 6
+QML
+Python with PySide6
+
+Responsibilities:
+display conversations
+accept user messages
+show active context
+show extracted constraints
+manage projects
+inspect and edit memories
+show validation results
+configure AI models
+display system status
+never contain core context logic
