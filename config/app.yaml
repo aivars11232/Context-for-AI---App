@@ -1,0 +1,4 @@
+app:
+  environment: development
+  data_directory: ../data
+  foreground_run_limit: 1

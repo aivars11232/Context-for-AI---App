@@ -1,0 +1,76 @@
+context:
+  tokenizer_estimator: conservative_utf8_v1
+  maximum_prompt_tokens: 2048
+  reserved_response_tokens: 512
+  recent_message_limit: 20
+  retrieved_memory_limit: 12
+  minimum_relevance_score: 0.35
+  topic_stack_limit: 10
+  rule_set_version: mvp-context-rules-v1
+  conditional_grammar_version: mvp-condition-v1
+  intent_rules:
+    - id: answer
+      intent: ANSWER
+      phrases: [answer]
+      priority: 50
+    - id: explain
+      intent: EXPLAIN
+      phrases: [explain]
+      priority: 50
+    - id: describe
+      intent: DESCRIBE
+      phrases: [describe]
+      priority: 50
+    - id: plan
+      intent: PLAN
+      phrases: [plan]
+      priority: 50
+    - id: analyze
+      intent: ANALYZE
+      phrases: [analyze]
+      priority: 50
+    - id: research
+      intent: RESEARCH
+      phrases: [research]
+      priority: 50
+    - id: debug
+      intent: DEBUG
+      phrases: [debug]
+      priority: 50
+    - id: edit-text
+      intent: EDIT_TEXT
+      phrases: [edit text]
+      priority: 50
+    - id: continue
+      intent: CONTINUE
+      phrases: [continue]
+      priority: 50
+    - id: correct
+      intent: CORRECT
+      phrases: [correct]
+      priority: 50
+  qualifier_rules:
+    - id: only
+      qualifier: ONLY
+      phrases: [only]
+    - id: exactly
+      qualifier: EXACTLY
+      phrases: [exactly]
+    - id: approximate
+      qualifier: APPROXIMATE
+      phrases: [roughly, could, might]
+    - id: prohibition
+      qualifier: PROHIBITION
+      phrases: [do not]
+    - id: preservation
+      qualifier: PRESERVATION
+      phrases: [without changing]
+    - id: substitution
+      qualifier: SUBSTITUTION
+      phrases: [instead of]
+    - id: prior-reference
+      qualifier: PRIOR_REFERENCE
+      phrases: [same as before]
+    - id: sequential
+      qualifier: SEQUENTIAL
+      phrases: [one at a time]

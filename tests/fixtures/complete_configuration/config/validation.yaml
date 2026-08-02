@@ -1,0 +1,28 @@
+validation:
+  max_revisions: 2
+  rule_set_version: mvp-validation-rules-v1
+  output_shape_rules:
+    - id: text-answer
+      output_type: TEXT_ANSWER
+      shape: NON_EMPTY_TEXT
+    - id: text-explanation
+      output_type: TEXT_EXPLANATION
+      shape: NON_EMPTY_TEXT
+    - id: text-description
+      output_type: TEXT_DESCRIPTION
+      shape: NON_EMPTY_TEXT
+    - id: text-plan
+      output_type: TEXT_PLAN
+      shape: NUMBERED_LIST
+    - id: text-analysis
+      output_type: TEXT_ANALYSIS
+      shape: NON_EMPTY_TEXT
+    - id: text-code
+      output_type: TEXT_CODE
+      shape: FENCED_CODE
+    - id: text-comparison
+      output_type: TEXT_COMPARISON
+      shape: COMPARISON_LIST
+  preserve_change_verb_list_id: preserve-change-verbs-v1
+  preserve_change_verbs: [add, remove, replace, change, modify, delete, move]
+  action_markers: ["TOOL_CALL:", "ACTION_EXECUTED:", "IMAGE_RESULT:"]

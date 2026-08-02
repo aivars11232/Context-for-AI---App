@@ -1,0 +1,5 @@
+logging:
+  level: INFO
+  directory: ../data/logs
+  retention_days: 30
+  include_content: false
