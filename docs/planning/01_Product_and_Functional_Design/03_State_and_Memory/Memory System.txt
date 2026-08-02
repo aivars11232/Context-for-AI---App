@@ -1,4 +1,10 @@
 The app needs more than one type of memory.
+
+MVP status: this taxonomy is historical. Canonical MVP memory types/scopes are
+in `docs/contracts/DomainAndDecisionRules.md`; session state is not a memory
+record. Arch Dock and correction examples are historical fixtures. Technical
+environment memory may be created only through an explicit user operation with
+provenance and redaction; it is never silently collected.
 Memory
 ├── Session memory
 ├── Project memory

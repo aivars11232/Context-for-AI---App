@@ -8,17 +8,13 @@ The application must interpret user intent, resolve references, extract and prio
 
 ## Source of truth
 
-The authoritative project documents are, in priority order:
+`SPECIFICATION_GOVERNANCE.md` defines the complete authority order for every
+project document, including the schema, contracts, tasks, ADRs, and historical
+planning material. The user's current explicit instruction remains highest
+priority and `AGENTS.md` remains the controlling repository instruction.
 
-1. The user's current explicit instruction.
-2. `MVP_SCOPE.md` for MVP boundaries.
-3. `REQUIREMENTS.md` for required behavior.
-4. `ARCHITECTURE.md` for approved engineering boundaries.
-5. `ACCEPTANCE_TESTS.md` for completion criteria.
-6. `IMPLEMENTATION_PLAN.md` for implementation order.
-7. Supporting planning documents under `docs/planning/`.
-
-Codex must read the relevant documents before implementing or modifying a component.
+Codex must read the relevant root control documents and applicable contracts
+before implementing or modifying a component.
 
 If authoritative documents conflict, do not silently choose an interpretation. Report the conflict and stop before implementation.
 
@@ -104,6 +100,12 @@ The complete message-processing pipeline must eventually be covered by an integr
 Only features explicitly listed in `MVP_SCOPE.md` may be implemented during the MVP.
 
 Anything listed as excluded or future work must not be added without explicit approval.
+
+The MVP is one local Python/PySide6/QML process with in-process application
+services, SQLite, and one configured Ollama text-generation model. FastAPI,
+HTTP service hosting, cloud providers, model routing, streaming UI output,
+embeddings, vector databases, file indexing, and background workers are not
+MVP features.
 
 ## Validation requirements
 

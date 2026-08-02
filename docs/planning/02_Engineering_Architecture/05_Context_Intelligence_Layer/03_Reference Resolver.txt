@@ -8,6 +8,10 @@ the app
 the file
 do that again
 
+MVP status: resolution uses the explicit entity registry and canonical ranking,
+confidence, ambiguous/unresolved outcomes, and clarification behavior. File
+references are unresolved because file ingestion/indexing is Deferred Post-MVP.
+
 references/
 ├── ReferenceResolver.py
 ├── EntityTracker.py

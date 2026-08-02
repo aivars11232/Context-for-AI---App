@@ -1,3 +1,6 @@
+Deferred Post-MVP endpoint ideas. These routes are not MVP contracts and must
+not be implemented until a later approved local-service decision exists.
+
 POST   /chat/messages
 GET    /conversations/{id}
 GET    /context/active

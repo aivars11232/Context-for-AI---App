@@ -1,18 +1,33 @@
+MVP status: `ACCEPTANCE_TESTS.md` is the canonical requirement-to-test map.
+Default tests use deterministic fixtures, fixed clocks, temporary SQLite, and
+the mock provider. Live Ollama tests are explicitly marked `ollama` and opt-in.
+
 tests/
 ├── unit/
 │   ├── interpretation/
 │   ├── constraints/
 │   ├── references/
 │   ├── retrieval/
-│   └── validation/
+│   ├── validation/
+│   ├── state/
+│   ├── memory/
+│   ├── packet/
+│   ├── configuration/
+│   └── application/
 ├── integration/
 │   ├── database/
 │   ├── ollama/
-│   └── complete_pipeline/
+│   ├── complete_pipeline/
+│   ├── migrations/
+│   ├── repositories/
+│   └── ui/
 ├── evaluation/
 │   ├── topic_switching/
 │   ├── qualifier_handling/
 │   ├── reference_resolution/
 │   ├── correction_memory/
-│   └── instruction_conflicts/
+│   ├── instruction_conflicts/
+│   ├── packet_budget/
+│   ├── lifecycle_recovery/
+│   └── manual_memory/
 └── fixtures/

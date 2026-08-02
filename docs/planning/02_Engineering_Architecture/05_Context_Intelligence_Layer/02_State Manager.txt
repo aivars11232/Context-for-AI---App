@@ -1,4 +1,8 @@
 Tracks the currently active conversation state
+
+MVP status: the canonical state is versioned per conversation and derives its
+only active project from `conversations.project_id`. `ProjectStateManager` is
+not a second source of truth; use it only as a historical naming reference.
 state/
 ├── ConversationStateManager.py
 ├── ActiveTaskTracker.py

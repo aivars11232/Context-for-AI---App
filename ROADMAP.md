@@ -1,39 +1,43 @@
-# Context for AI — Roadmap
+# Context for AI — MVP Roadmap
 
 ## Milestone 1 — Repository boots
 
-- Python package structure exists.
-- Configuration and logging bootstrap load.
-- Test suite runs.
+- Python package, sole dependency manifest, YAML configuration, logging, and
+  minimal QML startup boundary exist.
+- AT-001 passes.
 
-## Milestone 2 — Core data exists
+## Milestone 2 — Canonical local data exists
 
-- Domain entities and interfaces exist.
-- SQLite persists conversations, messages, state, memories, context packets, and validation results.
+- Domain types/ports, SQLite migrations, repositories, provenance, lifecycle,
+  and state-version invariants exist.
+- Repository and migration integration tests pass.
 
-## Milestone 3 — Context is constructed
+## Milestone 3 — Deterministic context is constructed
 
-- State tracking, interpretation, constraints, references, retrieval, and packet building work deterministically.
+- State, interpretation, qualifiers, constraints, references, retrieval,
+  confidence, and packet construction work without a live model.
+- AT-003 through AT-009 pass.
 
-## Milestone 4 — Model responses flow
+## Milestone 4 — Controlled mock-provider pipeline works
 
-- Mock model gateway works.
-- Ollama adapter is isolated behind the gateway.
-- Complete backend pipeline passes integration tests.
+- Buffered model abstraction, deterministic validation, bounded correction,
+  transaction/recovery/idempotency behavior, and complete pipeline pass with a
+  mock provider.
+- AT-010 through AT-012 and AT-015 pass.
 
-## Milestone 5 — Responses are controlled
+## Milestone 5 — Desktop MVP is inspectable and safe
 
-- Validation detects violations.
-- Correction attempts are limited to two.
-- Failures return controlled results.
+- QML shell remains responsive during one foreground request per conversation.
+- Context, manual memory, project, validation, and settings views work through
+  application use cases.
+- AT-013 and AT-014 pass.
 
-## Milestone 6 — Desktop MVP works
+## Milestone 6 — Local Ollama acceptance
 
-- QML shell accepts messages.
-- Context inspection is visible.
-- Memory and project views operate through application use cases.
+- The configured local Ollama model completes the bounded, buffered,
+  validate-before-display pipeline.
+- AT-016 passes under its explicit opt-in conditions.
 
-## Milestone 7 — Local Ollama acceptance
-
-- Configured local Ollama model completes the end-to-end pipeline.
-- AT-014 passes.
+Post-MVP ideas such as APIs, cloud providers, embeddings, vector retrieval,
+file indexing, model routing, streaming, and workers are not roadmap milestones
+until MVP completion is formally accepted.

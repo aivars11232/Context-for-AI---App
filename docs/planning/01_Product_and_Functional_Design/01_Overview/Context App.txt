@@ -13,6 +13,11 @@ Context App
 ├── 12. User Interface
 └── 13. Evaluation and Debugging System
 
+MVP status: this is a historical component map. The canonical MVP is defined by
+the root control documents. File/image attachment ingestion, active-model
+routing, image/action generation, and autonomous memory update are Deferred
+Post-MVP.
+
 User Input Layer:
 Receives the user's message and basic metadata.
 
@@ -25,3 +30,7 @@ active AI model
 time of the message
 whether the user requested an action, explanation, description, code change, image generation, and so on
 The original message must never be overwritten. The app should preserve it exactly
+
+For MVP input is exact text plus conversation, optional explicit project, and
+idempotency metadata. A request for an unsupported action is returned as a
+textual clarification/controlled outcome; no action is executed.

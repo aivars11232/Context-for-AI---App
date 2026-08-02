@@ -2,13 +2,13 @@ The first version should include only:
 UI
 Application orchestrator
 Conversation state
-Constraint extraction
+Deterministic interpretation, confidence, and constraint extraction
 Basic reference resolution
-SQLite memory
-Keyword retrieval
+Explicit manual SQLite memory lifecycle
+Deterministic keyword retrieval
 Context packet builder
-Ollama connector
-Rule-based validation
+One buffered local Ollama connector
+Rule-based validation and bounded correction
 Evaluation tests
 
 Do not initially add:
@@ -22,5 +22,8 @@ Kubernetes
 microservices
 multiple simultaneous model pipelines
 
-The first version should remain one repository and one local application.
+Also do not initially add FastAPI/local HTTP services, cloud providers, model
+routing/fallback, streaming UI output, embeddings/vector stores, file indexing,
+or automatic memory extraction/merge/rewrite/deletion.
 
+The first version should remain one repository and one local application.

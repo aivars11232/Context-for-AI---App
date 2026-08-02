@@ -1,12 +1,10 @@
 This is the desktop application the user interacts with.
 Qt 6
 QML
-C++
-
-or:
-Qt 6
-QML
 Python with PySide6
+
+MVP status: Python with PySide6 and QML is the approved implementation. A C++
+alternative is Deferred Post-MVP and must not be introduced during MVP.
 
 Responsibilities:
 display conversations
@@ -19,3 +17,6 @@ show validation results
 configure AI models
 display system status
 never contain core context logic
+
+Long-running processing is dispatched through the application layer outside the
+QML UI thread; it is bounded foreground work, not a background worker system.

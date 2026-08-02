@@ -1,3 +1,7 @@
+MVP status: `docs/contracts/ConfigurationAndLogging.md` is canonical for the
+six YAML files, schema, defaults, precedence, validation, and loopback-only
+Ollama policy. The historical example below must not override it.
+
 config/
 ├── app.yaml
 ├── models.yaml
@@ -7,9 +11,6 @@ config/
 └── logging.yaml
 
 
-context:
-  recent_message_limit: 20
-  retrieved_memory_limit: 12
-  maximum_context_tokens: 12000
-  minimum_relevance_score: 0.65
-  automatic_correction_attempts: 2
+Historical example only. MVP uses `maximum_prompt_tokens`,
+`reserved_response_tokens`, `minimum_relevance_score: 0.35`, and
+`validation.max_revisions: 0..2` as specified by the canonical contract.

@@ -9,3 +9,7 @@ context_engine/
 ├── correction/
 ├── confidence/
 └── policies/
+
+MVP status: all components are deterministic and rule-based. The `policies/`
+directory must not duplicate domain policy ownership. Model-backed context,
+embeddings, and semantic retrieval are Deferred Post-MVP.

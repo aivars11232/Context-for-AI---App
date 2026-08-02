@@ -5,6 +5,10 @@ packet/
 ├── ContextCompressor.py
 └── ContextPacket.py
 
+MVP status: use `docs/contracts/ContextPacket.md` as the formal packet schema,
+token estimator, truncation, and injection-boundary contract. This example is
+historical and not a complete schema.
+
 Example packet:
 {
   "request": {

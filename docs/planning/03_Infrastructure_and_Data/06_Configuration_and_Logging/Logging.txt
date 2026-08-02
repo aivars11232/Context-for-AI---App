@@ -4,3 +4,8 @@ logging/
 ├── ModelCallLogger.py
 ├── ContextDecisionLogger.py
 └── ErrorLogger.py
+
+MVP status: event names, required correlation fields, redaction, retention, and
+configuration fingerprints are canonical in
+`docs/contracts/ConfigurationAndLogging.md`. Logs never contain raw message,
+prompt, response, or memory content.

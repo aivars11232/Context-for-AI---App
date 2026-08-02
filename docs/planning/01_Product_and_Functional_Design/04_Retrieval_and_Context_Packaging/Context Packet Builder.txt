@@ -1,4 +1,8 @@
 This creates the clean package sent to the main AI.
+
+MVP status: this example is a historical fixture. The formal, versioned MVP
+packet, text-only response policy, token budget, truncation order, and
+untrusted-data boundary are in `docs/contracts/ContextPacket.md`.
 Example:
 {
   "user_message": "Now do the same for Blender.",

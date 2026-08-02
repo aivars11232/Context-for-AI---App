@@ -1,3 +1,5 @@
+Deferred Post-MVP: Local API and service boundary
+
 Desktop UI
     ↓
 Local application API
@@ -10,4 +12,8 @@ Storage and model providers
 What can be used:
 
 internal Python service objects
-FastAPI on localhost
+FastAPI on localhost                 # Deferred Post-MVP
+
+MVP uses direct in-process application use-case interfaces in one desktop
+process. No HTTP listener, service process, API schema, authentication, or CORS
+behavior exists in MVP.

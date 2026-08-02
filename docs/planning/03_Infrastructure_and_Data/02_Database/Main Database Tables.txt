@@ -1,3 +1,9 @@
+MVP status: this historical table list is superseded by `DATABASE_SCHEMA.md`,
+the single canonical schema. Do not implement this list independently; in
+particular, MVP has no `users`, `project_states`, `references`, `files`,
+`file_versions`, vector, or external database table.
+
+Historical/post-MVP table ideas:
 users
 projects
 conversations

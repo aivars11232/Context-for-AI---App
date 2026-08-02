@@ -1,4 +1,7 @@
-After each interaction, the app decides what should be remembered.
+Historical future workflow: after each interaction, a future app might decide
+what should be remembered. In MVP, memory create/edit/delete occurs only through
+an explicit user operation; there is no automatic candidate storage, merge,
+outdated-fact update, or cleanup.
 It should classify information as:
 Temporary
 Session-only
@@ -17,10 +20,6 @@ Example:
   "storage_action": "save"
 }
 
-It should also:
-merge duplicates
-update outdated facts
-preserve change history
-allow manual correction
-allow deletion
-show where a memory came from
+MVP preserves change history, allows manual correction/soft deletion, and shows
+provenance. Duplicate merging and automatic outdated-fact updates are Deferred
+Post-MVP.

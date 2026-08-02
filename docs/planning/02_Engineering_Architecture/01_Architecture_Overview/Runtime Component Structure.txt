@@ -1,26 +1,17 @@
-When running, the app would consist of these processes:
-Context for AI Desktop
+MVP runtime (canonical):
+Context for AI Desktop — one Python/PySide6/QML process
 │
-├── Qt/QML UI process
-│
-├── Context application service
-│   ├── conversation orchestrator
-│   ├── context engine
-│   ├── memory manager
-│   └── validation engine
-│
-├── SQLite database
-│
-├── Vector store
-│
-└── Ollama service
-    ├── interpretation model
-    ├── main response model
-    └── embedding model
+├── QML UI and bounded foreground request task
+├── application orchestrator and deterministic context engine
+├── SQLite embedded database
+└── buffered client to one configured local Ollama text-generation model
 
-For the MVP, interpretation and response generation can use the same model.
+SQLite is embedded storage, not a process. Interpretation and validation are
+rule-based and do not use a model in MVP. Vector stores, embedding models,
+separate UI/application-service processes, and multiple model roles are
+Deferred Post-MVP.
 
-Later:
+Deferred Post-MVP:
 small fast model
     → interpretation and validation
 

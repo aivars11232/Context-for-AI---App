@@ -1,3 +1,7 @@
+Deferred Post-MVP: background workers are excluded from MVP. This historical
+list must not be implemented as a thread, queue, daemon, or scheduled task.
+MVP uses only a bounded foreground request task to keep the QML UI responsive.
+
 workers/
 ├── MemoryExtractionWorker.py
 ├── EmbeddingWorker.py

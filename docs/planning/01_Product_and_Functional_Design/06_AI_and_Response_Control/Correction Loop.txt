@@ -15,4 +15,5 @@ Approved response shown
 Set a strict retry limit, such as:
 Maximum automatic corrections: 2
 
-After that, show the result with a warning rather than allowing an endless loop.
+After that, persist and return a controlled failure rather than showing the
+known-invalid result or allowing an endless loop.

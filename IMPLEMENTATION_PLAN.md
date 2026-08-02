@@ -1,98 +1,73 @@
 # Context for AI — Implementation Plan
 
-Implement one stage at a time. Do not begin a later stage until the current stage passes its tests and startup checks.
+Implement one numbered task at a time. Do not begin a task until every earlier
+task's exit criteria and relevant acceptance criteria pass. The detailed task
+files under `tasks/` are mandatory delivery contracts; this plan is their
+ordered summary.
 
-## Stage 1 — Repository foundation
+## Stage 1 — Repository foundation (`TASK-0001`)
 
-- Create `pyproject.toml`.
-- Create source and test package structure.
-- Add configuration loading.
-- Add logging bootstrap.
-- Add a minimal application-startup test.
+Create the Python packaging, validated six-file YAML bootstrap, logging
+bootstrap, minimal QML startup boundary, and isolated test layout. `pyproject.toml`
+is the sole dependency-management source of truth; do not add `requirements.txt`.
 
-Exit condition: imports succeed and pytest passes.
+**Exit:** AT-001 startup/configuration behavior passes with fixtures.
 
-## Stage 2 — Domain model
+## Stage 2 — Domain and ports (`TASK-0002`, `TASK-0003`)
 
-- Add identifiers and enums.
-- Add Conversation, Message, Project, ConversationState, Constraint, Reference, Memory, ContextPacket, ModelResponse, and ValidationResult.
-- Add repository interfaces.
-- Add instruction-priority and memory-retention policies.
+Implement canonical value objects, enums, entities, typed errors, deterministic
+policies, and inward repository/model/clock ports without imports from Qt,
+SQLite, or Ollama.
 
-Exit condition: domain unit tests pass without importing infrastructure.
+**Exit:** domain/port unit tests pass; import-boundary checks pass.
 
-## Stage 3 — SQLite persistence
+## Stage 3 — SQLite schema and repositories (`TASK-0004`, `TASK-0005`)
 
-- Add database connection and migrations.
-- Implement conversation, message, state, memory, context-packet, and validation repositories.
-- Add transaction handling.
+Implement numbered migrations for the canonical schema, all required repository
+ports, transaction helpers, state-version checks, idempotency storage, lineage,
+and memory revision/provenance persistence.
 
-Exit condition: repository integration tests pass against a temporary SQLite database.
+**Exit:** isolated SQLite migration/repository integration tests pass,
+including data-preservation, lifecycle, and FK behavior.
 
-## Stage 4 — Conversation state
+## Stage 4 — Deterministic context intelligence (`TASK-0006`–`TASK-0010`)
 
-- Implement active project, topic, task, previous task, output type, and topic stack.
-- Persist and restore state.
+Implement state transitions, interpretation/qualifiers/constraints, reference
+resolution, memory retrieval, and immutable packet rendering using the
+canonical rules only.
 
-Exit condition: state-transition tests pass.
+**Exit:** AT-003 through AT-009 pass with deterministic fixtures.
 
-## Stage 5 — Interpretation and constraints
+## Stage 5 — Controlled model flow (`TASK-0011`–`TASK-0013`)
 
-- Implement rule-based intent, topic, qualifier, and output-type detection.
-- Implement constraint extraction, normalization, priority, and conflict detection.
+Implement the mock gateway, bounded foreground provider port, local Ollama
+adapter, deterministic validation, and correction controller. No streaming,
+routing, fallback, cloud provider, or transport retry is permitted.
 
-Exit condition: qualifier and instruction-conflict evaluation tests pass.
+**Exit:** AT-010 through AT-012 pass with the mock provider; Ollama adapter has
+isolated optional transport tests.
 
-## Stage 6 — Reference resolution
+## Stage 6 — Complete mock-provider pipeline (`TASK-0014`)
 
-- Implement mention extraction, recent-entity tracking, candidate ranking, and confidence.
+Implement `ProcessUserMessage` with the documented persistence ordering,
+transactions, idempotency, recovery, concurrency handling, safe failures, and
+state updates.
 
-Exit condition: basic reference-resolution evaluation tests pass.
+**Exit:** AT-002, AT-015, and applicable AT-003–AT-012 assertions pass through
+the public use case with the mock provider.
 
-## Stage 7 — Memory retrieval
+## Stage 7 — Desktop MVP (`TASK-0015`–`TASK-0017`)
 
-- Implement keyword retrieval, project filtering, recency scoring, importance scoring, and deduplication.
+Implement the QML shell, bounded foreground request presentation, context
+inspection, and explicit manual memory/project/validation/settings views.
 
-Exit condition: relevant memories are selected and unrelated memories are excluded in tests.
+**Exit:** AT-013 and AT-014 pass; no UI thread blocking or hidden automatic
+memory mutation remains.
 
-## Stage 8 — Context packet
+## Stage 8 — Local Ollama acceptance (`TASK-0018`)
 
-- Implement token budgeting, packet assembly, and prompt rendering.
+Run the opt-in, reproducible local-Ollama smoke acceptance against the
+configured local model and record non-secret environment/model metadata.
 
-Exit condition: packet-completeness tests pass.
-
-## Stage 9 — Model gateway
-
-- Add provider interface, mock provider, and Ollama provider.
-- Add health check and controlled error handling.
-
-Exit condition: gateway tests pass with the mock provider and optional Ollama integration test passes when Ollama is available.
-
-## Stage 10 — Validation and correction
-
-- Implement topic, intent, constraint, preservation, output-type, completeness, and repetition checks.
-- Implement bounded correction with a maximum of two revisions.
-
-Exit condition: invalid responses are rejected and retry limits are enforced.
-
-## Stage 11 — Complete backend pipeline
-
-- Implement `ProcessUserMessage` orchestration.
-- Persist every stage result and return a final response object.
-
-Exit condition: complete-pipeline integration test passes using the mock provider.
-
-## Stage 12 — Desktop interface
-
-- Add QML application shell, chat page, context panel, memory page, project page, validation page, and settings.
-- Connect UI actions to application use cases.
-
-Exit condition: application starts and the context-inspection acceptance test passes.
-
-## Stage 13 — Local Ollama validation
-
-- Configure the selected local model.
-- Run the complete pipeline with Ollama.
-- Record limitations and performance.
-
-Exit condition: `AT-014 Complete pipeline` passes.
+**Exit:** AT-016 passes. A failed or unavailable live environment is reported,
+not ignored.

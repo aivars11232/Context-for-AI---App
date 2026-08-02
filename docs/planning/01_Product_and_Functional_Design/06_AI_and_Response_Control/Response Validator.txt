@@ -1,4 +1,9 @@
 Before showing the answer, the validator compares it against the context packet.
+
+MVP status: deterministic validation predicates, typed evidence, scoring, and
+correction rules are canonical in `docs/contracts/ResponseValidation.md`.
+Fact/hallucination judgment and subjective "unnecessary" assessment are
+Deferred Post-MVP because MVP has no deterministic truth corpus.
 It checks:
 Did the AI answer the current question?
 Did it change topics?

@@ -6,6 +6,11 @@ constraints/
 ├── PreservationRuleBuilder.py
 └── ConstraintSet.py
 
+MVP status: types include `ASSUMED`; canonical numeric priority bands, conflict
+groups, conditional activation, and clarification rules are in
+`DomainAndDecisionRules.md`. The `priority: 100` example below is historical,
+not an MVP priority value.
+
 Constraint types:
 REQUIRED
 FORBIDDEN

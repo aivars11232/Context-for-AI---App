@@ -1,24 +1,20 @@
-This connects the context app to one or more AI models.
-You could support:
-local Ollama models
-OpenAI API
-other cloud APIs
-specialized models
-separate coding and conversational models
-The connector needs:
-model selection
-API configuration
-prompt templates
-timeout handling
-streaming responses
-token counting
-error handling
-fallback model selection
+MVP status: this connector uses one configured local Ollama text-generation
+model through the buffered gateway contract. OpenAI, other cloud APIs,
+specialized/multiple models, routing, fallback, and streaming are Deferred
+Post-MVP.
+The MVP connector needs:
+one configured model
+loopback configuration
+fixed prompt rendering
+timeout and cancellation
+buffered complete responses
+deterministic token estimation
+typed error handling
 For your setup, the initial connector could support:
 Ollama
 └── qwen2.5-coder:7b or other if aviable.
 
-Later, the app could route tasks:
+Deferred Post-MVP, the app could route tasks:
 Coding request → coding model
 General conversation → conversational model
 Context interpretation → smaller fast model

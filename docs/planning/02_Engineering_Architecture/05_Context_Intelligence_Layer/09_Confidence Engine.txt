@@ -4,6 +4,10 @@ confidence/
 ├── EvidenceTracker.py
 └── ConfidenceResult.py
 
+MVP status: confidence formula, thresholds, persistence, and clarification
+behavior are canonical in `DomainAndDecisionRules.md`. The example values below
+are illustrative only, not an independent scoring policy.
+
 The app should not treat all inferred context as fact.
 {
   "interpretation_confidence": 0.91,

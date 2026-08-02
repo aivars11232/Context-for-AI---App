@@ -1,4 +1,10 @@
 The interface could have several panels.
+
+MVP status: Arch Dock/Canva values are historical fixtures. The MVP context
+inspection view must also show intent, expected output type, reference outcomes
+and evidence, retrieved-memory scores/reasons, confidence, validation, and safe
+failure status. Memory edits are explicit operations; no automatic memory
+mutation is available.
 Main Window
 ├── Chat
 ├── Active Context

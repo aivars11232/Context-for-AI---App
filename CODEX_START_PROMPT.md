@@ -1,6 +1,8 @@
 # Initial Codex Prompt
 
-Read `START_HERE.md` and every document it lists before making changes. Then execute only `tasks/TASK-0001-REPOSITORY-FOUNDATION.md`.
+Read `START_HERE.md` and every document it lists before making changes. Apply
+`SPECIFICATION_GOVERNANCE.md` when documents differ. Then execute only
+`tasks/TASK-0001-REPOSITORY-FOUNDATION.md`.
 
 Follow `AGENTS.md` exactly:
 
@@ -11,6 +13,8 @@ Follow `AGENTS.md` exactly:
 - Stop on any test, import, startup, dependency, or requirement failure.
 - Do not implement any later task.
 - Do not create placeholder functionality and call it complete.
+- Use `pyproject.toml` as the sole dependency-management source; do not add a
+  `requirements.txt` file.
 
 At completion, report:
 

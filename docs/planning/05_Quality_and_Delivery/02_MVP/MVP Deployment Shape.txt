@@ -1,5 +1,5 @@
-One desktop application
-One local SQLite database
-One Ollama connection
-One optional embedding model
-One controlled context pipeline
+One local Python/PySide6/QML desktop process
+One embedded SQLite database
+One buffered loopback Ollama connection and one configured text model
+One controlled deterministic context pipeline
+No API service, embedding model, vector store, file indexer, or background worker

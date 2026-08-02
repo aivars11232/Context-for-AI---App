@@ -23,3 +23,9 @@ application/
 └── evaluation/
     ├── RunEvaluation.py
     └── CompareResults.py
+
+MVP status: `ProcessUserMessage`, context inspection, explicit memory CRUD,
+project selection/archive, validation inspection, and evaluation execution are
+MVP use cases only where their behavior is defined by the root contracts.
+`RegenerateResponse`, `ResetActiveContext`, and `CompareResults` are Deferred
+Post-MVP unless later approved with requirements and acceptance criteria.

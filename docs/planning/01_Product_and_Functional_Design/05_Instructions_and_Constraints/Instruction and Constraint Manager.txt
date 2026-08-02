@@ -1,4 +1,9 @@
 This component converts user instructions into explicit rules.
+
+MVP status: `render_image` is a historical unsupported-action example. MVP has
+text-only output and uses the canonical qualifier, `ASSUMED`, priority, and
+conflict rules in `docs/contracts/DomainAndDecisionRules.md`. A material
+ambiguity or hard conflict requests clarification before generation.
 Example user message:
 “Render it, remove only the blue line, and don’t change anything else.”
 Structured result:

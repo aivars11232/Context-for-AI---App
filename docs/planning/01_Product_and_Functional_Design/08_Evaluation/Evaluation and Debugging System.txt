@@ -1,4 +1,9 @@
 You need a test system to measure whether context understanding improves.
+
+MVP status: this file preserves early design material. Canonical acceptance and
+fixture rules are in `ACCEPTANCE_TESTS.md`. Prior conversations may not be used
+as fixtures unless they are explicitly authorized, synthetic/redacted, and
+versioned. Arch Dock, Canva, Blender, and image examples are historical fixtures.
 Each test should contain:
 {
   "conversation_history": [],
@@ -45,7 +50,7 @@ files
 file_versions
 evaluation_cases
 
-Semantic search
+Deferred Post-MVP: Semantic search
 For retrieving context by meaning:
 embeddings
 vector storage
@@ -99,8 +104,8 @@ frontend/
 ├── ModelSettings.qml
 └── components/
 
-Local service
-The context engine should run separately from the interface:
+Deferred Post-MVP: Local service
+The context engine may later run separately from the interface:
 Qt/QML interface
       ↓
 Local API
@@ -110,19 +115,12 @@ Context engine
 AI models and database
 
 This allows other applications and agents to use the same context engine later.
-Recommended first version
-Do not build all modules immediately.
-Your minimum viable version should contain:
-1. Chat interface
-2. Conversation-state manager
-3. Basic intent and qualifier extraction
-4. Project memory
-5. SQLite database
-6. Context packet builder
-7. Ollama connector
-8. Rule-based response validator
-9. Context inspection panel
-10. Basic evaluation tests
+Recommended MVP version
+Do not build all modules immediately. The canonical MVP contains the chat UI,
+state manager, deterministic interpretation/constraints/references/confidence,
+explicit manual memory lifecycle plus deterministic retrieval, SQLite, packet
+builder, one buffered Ollama connector, deterministic validation/bounded
+correction, context inspection, and versioned evaluation tests.
 
 The first functional pipeline would be:
 User message
@@ -146,24 +144,25 @@ Update session state
 Later expansion
 
 Once the basic system works, add:
-Phase 2
+Deferred Post-MVP Phase 2
 - semantic memory retrieval
-- automatic reference resolution
+- advanced reference resolution beyond the MVP deterministic registry
 - correction memory
-- automatic response revision
+- model-assisted response revision beyond the MVP bounded deterministic policy
 
-Phase 3
+Deferred Post-MVP Phase 3
 - multiple specialized agents
 - file and code context
 - cross-application context
 - model routing
-- confidence scoring
+- advanced/model-assisted confidence scoring beyond MVP rule thresholds
 
-Phase 4
+Deferred Post-MVP Phase 4
 - visual context
 - screen understanding
 - voice context
 - autonomous project tracking
 - shared context across all AI agents
 
-The central product is not merely a chatbot. It is a shared context service that every AI agent in your control center can use.
+Deferred Post-MVP vision: the product could become a shared context service for
+other applications/agents. The MVP remains one local desktop application.

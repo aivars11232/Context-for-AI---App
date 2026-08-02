@@ -1,7 +1,7 @@
 retrieval/
 ├── ContextRetriever.py
 ├── KeywordRetriever.py
-├── SemanticRetriever.py
+├── SemanticRetriever.py             # Deferred Post-MVP
 ├── ProjectFilter.py
 ├── RecencyScorer.py
 ├── RelevanceScorer.py
@@ -12,8 +12,11 @@ Recommended scoring inputs:
 project match
 topic match
 entity match
-semantic similarity
+semantic similarity                  # Deferred Post-MVP
 recency
 memory importance
 correction relevance
 instruction priority
+
+MVP scoring, eligibility, threshold, and tie-breaking are canonical in
+`DomainAndDecisionRules.md`; semantic retrieval is not an MVP dependency.

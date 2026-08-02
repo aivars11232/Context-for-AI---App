@@ -1,5 +1,10 @@
 This is the first intelligence layer.
 It analyzes the user's message and extracts meaning.
+
+MVP status: supported intents, output types, qualifier mappings, confidence,
+and ambiguity behavior are canonical in `docs/contracts/DomainAndDecisionRules.md`.
+The examples below are historical fixtures. `Generate` means a supported text
+response only; image/action generation is Deferred Post-MVP.
 It should identify:
 Intent:
 Explain
@@ -44,3 +49,6 @@ Reuse the established icon style.
 Change the represented application to Blender.
 Preserve the previous transparency requirements.
 Return a description, not an image.
+
+If a prior rule/reference is not uniquely resolved, MVP returns a clarification
+before a model call instead of inferring these hidden rules.

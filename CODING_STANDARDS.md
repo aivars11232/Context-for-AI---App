@@ -35,15 +35,20 @@
 
 ## Logging
 
-- Use structured logging fields where practical: conversation ID, message ID, stage, attempt number, and error type.
-- Never log API keys, authentication tokens, or complete secret-bearing configuration.
-- Preserve traceability from a user message through context construction, model calls, validation, and persistence.
+- Follow `docs/contracts/ConfigurationAndLogging.md` for required structured
+  fields, event names, redaction, retention, and traceability.
+- Never log API keys, authentication tokens, original message text, rendered
+  prompts, model responses, raw memory content, or complete configuration.
+- Preserve traceability from a user message through context construction, model
+  calls, validation, correction, failures, and manual memory changes.
 
 ## Configuration
 
-- Keep environment-specific values outside source code.
-- Provide safe defaults only where requirements define them.
-- Validate configuration at startup and fail clearly on invalid values.
+- Keep environment-specific values outside source code and follow the six-file
+  YAML schema and precedence contract.
+- Provide only the explicit defaults defined by that contract.
+- Validate configuration before QML startup and fail clearly with a typed,
+  redacted error on invalid configuration.
 
 ## Documentation
 
@@ -56,5 +61,6 @@
 - Tests must verify observable behavior.
 - Unit tests must not require Ollama or a persistent user database.
 - Integration tests must use temporary isolated storage.
-- Live Ollama tests must be marked and optional until Stage 13.
+- Live Ollama tests must be marked `ollama`, opt-in, and required only for
+  TASK-0018 / AT-016 after all deterministic acceptance criteria are green.
 - A failing test blocks further implementation.

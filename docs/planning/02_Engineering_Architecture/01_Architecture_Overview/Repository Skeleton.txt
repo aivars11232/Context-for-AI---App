@@ -1,9 +1,31 @@
+MVP status: the canonical source layout is in `ARCHITECTURE.md`. The older tree
+below is retained as a historical/post-MVP reference. Do not create its
+`api/`, `workers/`, `embeddings/`, `files/`, `security/`, `system/`,
+`requirements.txt`, vector-store, or scripts/import/export surfaces in MVP.
+
+Canonical MVP layout:
+context-for-ai/
+├── pyproject.toml                 # sole dependency source of truth
+├── config/                        # six validated YAML files
+├── src/context_for_ai/
+│   ├── main.py
+│   ├── bootstrap/
+│   ├── ui/
+│   ├── application/
+│   ├── domain/
+│   ├── context_engine/
+│   └── infrastructure/{database,ollama,configuration,logging}/
+├── migrations/
+├── tests/{unit,integration,evaluation,fixtures}/
+└── docs/
+
+Historical/post-MVP reference begins here:
 context-for-ai/
 ├── README.md
 ├── pyproject.toml
-├── requirements.txt
+├── requirements.txt                 # Deferred Post-MVP; never create for MVP
 ├── .env.example
-├── config/
+├── config/                          # Historical layout; canonical files above
 │   ├── app.yaml
 │   ├── models.yaml
 │   ├── context.yaml
@@ -21,7 +43,7 @@ context-for-ai/
 │       │   ├── models/
 │       │   └── resources/
 │       │
-│       ├── api/
+│       ├── api/                     # Deferred Post-MVP
 │       │   ├── server.py
 │       │   ├── routes/
 │       │   ├── schemas/
@@ -59,20 +81,20 @@ context-for-ai/
 │       ├── infrastructure/
 │       │   ├── database/
 │       │   ├── ai/
-│       │   ├── embeddings/
-│       │   ├── files/
+│       │   ├── embeddings/          # Deferred Post-MVP
+│       │   ├── files/               # Deferred Post-MVP
 │       │   ├── logging/
 │       │   ├── configuration/
 │       │   ├── security/
 │       │   └── system/
 │       │
-│       ├── workers/
+│       ├── workers/                 # Deferred Post-MVP
 │       │   ├── memory_worker.py
 │       │   ├── embedding_worker.py
 │       │   ├── summary_worker.py
 │       │   └── cleanup_worker.py
 │       │
-│       └── shared/
+│       └── shared/                  # Do not use in MVP; avoid catch-all ownership
 │           ├── types/
 │           ├── utilities/
 │           ├── constants/
@@ -85,15 +107,15 @@ context-for-ai/
 │   ├── evaluation/
 │   └── fixtures/
 │
-├── scripts/
+├── scripts/                         # Historical/Post-MVP reference
 │   ├── initialize_database.py
 │   ├── import_conversations.py
 │   ├── run_evaluations.py
 │   └── export_context.py
 │
-├── data/
+├── data/                            # Historical vector/export paths are Deferred
 │   ├── database/
-│   ├── vector_store/
+│   ├── vector_store/                # Deferred Post-MVP
 │   ├── logs/
 │   ├── cache/
 │   └── exports/

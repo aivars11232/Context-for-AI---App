@@ -6,4 +6,5 @@ correction/
 
 Correction must be bounded:
 Maximum revisions: 2
-Maximum total model calls per message: 4
+Maximum total model-generation calls per processing run: 3 (initial plus two
+revisions). Provider transport failures are not automatically retried.

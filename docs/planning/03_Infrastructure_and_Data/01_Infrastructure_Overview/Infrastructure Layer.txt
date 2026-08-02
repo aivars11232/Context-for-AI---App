@@ -7,3 +7,8 @@ infrastructure/
 ├── configuration/
 ├── security/
 └── system/
+
+MVP status: only `database/`, `ai/` (local Ollama), `logging/`, and
+`configuration/` are MVP infrastructure. `embeddings/`, `files/`, `security/`
+as a separate subsystem, and `system/` are Deferred Post-MVP unless required by
+the canonical local configuration/logging implementation.

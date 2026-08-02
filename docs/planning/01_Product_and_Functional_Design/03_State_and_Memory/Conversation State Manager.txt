@@ -1,5 +1,12 @@
 This tracks what is happening right now.
 
+MVP status: the Arch Dock object below is a historical fixture, not an active
+default project. MVP state is limited to the canonical conversation project,
+topic, task, previous task, expected output type, topic stack, and version.
+Completed/pending steps, file/version, application, accepted/rejected
+approaches, and unresolved-question tracking are Deferred Post-MVP unless they
+are represented by one of those canonical fields.
+
 Example:
 {
   "active_project": "Arch Dock",

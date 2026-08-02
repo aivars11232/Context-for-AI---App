@@ -1,10 +1,14 @@
 ai/
 ├── ModelGateway.py
-├── ModelRouter.py
+├── ModelRouter.py                  # Deferred Post-MVP
 ├── providers/
 │   ├── OllamaProvider.py
-│   ├── OpenAIProvider.py
+│   ├── OpenAIProvider.py            # Deferred Post-MVP
 │   └── MockProvider.py
 ├── ModelRequest.py
 ├── ModelResult.py
 └── ModelHealthCheck.py
+
+MVP status: use one configured loopback Ollama provider plus the deterministic
+mock behind the inward gateway port. Routing, OpenAI/cloud providers, fallback,
+and multiple-model behavior are Deferred Post-MVP.

@@ -31,3 +31,7 @@ ui/
 │   ├── ModelSettings.qml
 │   └── StorageSettings.qml
 └── components/
+
+MVP status: this is an illustrative module map. `ContextPage` must include
+retrieved memories with score/reasons, confidence, validation, and safe failure
+status. All modules call application use cases; none call SQLite or Ollama.

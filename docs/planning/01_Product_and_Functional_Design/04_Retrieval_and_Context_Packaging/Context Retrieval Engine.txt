@@ -1,4 +1,8 @@
 This searches memory and selects only what is relevant.
+
+MVP status: Arch Dock is a historical fixture. MVP uses only the deterministic
+keyword/project/topic/recency/importance/scope scoring rules in
+`docs/contracts/DomainAndDecisionRules.md`.
 For a request about Arch Dock, it might retrieve:
 - Arch Dock project state
 - active visual style
@@ -7,14 +11,15 @@ For a request about Arch Dock, it might retrieve:
 - recent user corrections
 
 It should not retrieve unrelated information.
-The retrieval engine needs:
+The retrieval engine needs for MVP:
 keyword search
-semantic search
 project filtering
 recency weighting
 relevance scoring
 correction priority
 duplicate removal
+
+Semantic search is Deferred Post-MVP and is not an MVP dependency.
 A simple scoring system could be:
 Context relevance =
 topic match

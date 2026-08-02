@@ -4,6 +4,11 @@ Project
  ├── Memories
  └── Project states
 
+MVP status: `DATABASE_SCHEMA.md` is canonical. A conversation has one optional
+project association, which is its only persisted active project; it does not
+have a distinct project-state relation. Topics/tasks are conversation-scoped,
+and entity registry/reference resolution supplies named-entity lineage.
+
 Conversation
  ├── Messages
  ├── Active state
@@ -16,3 +21,6 @@ Memory
  ├── Importance
  ├── Confidence
  └── Expiration policy
+
+Expiry excludes a memory from retrieval; it does not delete it. Sources and
+immutable revisions are required for every manual memory mutation.

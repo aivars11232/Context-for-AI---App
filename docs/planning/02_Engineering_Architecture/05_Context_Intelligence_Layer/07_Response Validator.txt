@@ -8,6 +8,10 @@ validation/
 ├── RepetitionValidator.py
 └── ValidationReport.py
 
+MVP status: deterministic predicate/evidence behavior is in
+`docs/contracts/ResponseValidation.md`. `HallucinationValidator` is Deferred
+Post-MVP because MVP has no deterministic truth corpus.
+
 Validation result:
 {
   "passed": false,

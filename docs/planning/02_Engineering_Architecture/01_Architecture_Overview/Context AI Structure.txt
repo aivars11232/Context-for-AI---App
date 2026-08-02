@@ -12,3 +12,7 @@ Context App
 ├── 11. Memory Update System
 ├── 12. User Interface
 └── 13. Evaluation and Debugging System
+
+MVP status: historical component map. Canonical ownership and dependency rules
+are in `ARCHITECTURE.md` and `COMPONENT_CONTRACTS.md`. It does not imply a
+separate API, workers, embeddings, file indexing, or multi-model runtime.

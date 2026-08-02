@@ -1,8 +1,10 @@
 ProcessUserMessage
     ↓
-Load conversation state
+Persist exact user message and idempotent processing run
     ↓
-Interpret user message
+Load versioned conversation state, entities, and eligible memories
+    ↓
+Interpret user message deterministically
     ↓
 Resolve references
     ↓
@@ -12,14 +14,14 @@ Retrieve relevant memory
     ↓
 Build context packet
     ↓
-Call selected AI model
+Persist deterministic decisions and immutable packet
     ↓
-Validate response
+Start and await buffered local model request outside SQLite transaction
     ↓
-Correct if necessary
+Persist and validate complete candidate; correct at most twice if necessary
     ↓
-Store message and context result
+Persist linked assistant message and state only on valid result
     ↓
-Update memory and project state
+Otherwise persist clarification/controlled failure; never mutate memory automatically
     ↓
-Return final response to UI
+Return final text, clarification, or safe failure to UI

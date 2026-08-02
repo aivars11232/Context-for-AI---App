@@ -1,152 +1,433 @@
-# Context for AI — MVP Database Schema
+# Context for AI — Canonical MVP Database Schema
 
-SQLite is the only MVP database. IDs are text UUIDs unless otherwise stated. Timestamps are UTC ISO-8601 text. Foreign-key enforcement must be enabled.
+## Status and database boundary
 
-## projects
+This is the single authoritative logical schema for the MVP. SQLite is the only
+database. The local MVP is single-operator, so it has no `users` table. Every
+ID is UUID text, every timestamp is UTC ISO-8601 text, foreign keys are enabled
+for every connection, and all JSON columns contain valid JSON.
+
+No table name is a SQLite keyword. In particular, the former `references` table
+is replaced by `reference_resolutions`.
+
+## Shared rules
+
+- `created_at` and `updated_at` are non-null unless a table explicitly has only
+  an immutable creation time.
+- Enumerated values use the canonical values in
+  `docs/contracts/DomainAndDecisionRules.md`; migrations add SQLite `CHECK`
+  constraints for them.
+- User-facing history is append-only where stated. Project archiving and memory
+  deletion are state changes, not physical deletion. Conversations and messages
+  are not deletable MVP operations.
+- All foreign keys use `ON DELETE RESTRICT` unless this document states
+  otherwise. The application must surface a typed error rather than cascading
+  deletion of user data.
+- `schema_migrations` records ordered, transactional migrations. A migration
+  cannot be edited after it has been applied; its checksum must match.
+
+## Schema migration ledger
+
+### `schema_migrations`
+
+- `version` integer primary key
+- `checksum` non-null text
+- `applied_at` non-null
+
+## Conversation and state
+
+### `projects`
 
 - `id` primary key
-- `name` non-null
-- `description` nullable
-- `status` non-null
-- `created_at` non-null
-- `updated_at` non-null
+- `name` non-null text
+- `description` nullable text
+- `status` non-null `ProjectStatus`
+- `created_at`, `updated_at` non-null
 
-## conversations
+### `conversations`
 
 - `id` primary key
 - `project_id` nullable foreign key to `projects.id`
-- `title` nullable
-- `created_at` non-null
-- `updated_at` non-null
+- `title` nullable text
+- `created_at`, `updated_at` non-null
 
-## messages
+`conversations.project_id` is the sole persisted active-project value. A null
+value means the conversation is unscoped. There is no duplicate
+`conversation_states.active_project_id` column.
+
+### `topics`
 
 - `id` primary key
-- `conversation_id` non-null foreign key
-- `role` non-null: user, assistant, system, tool
-- `original_text` non-null
+- `conversation_id` non-null foreign key to `conversations.id`
+- `label` non-null text
+- `normalized_label` non-null text
+- `created_at`, `updated_at` non-null
+- unique `(conversation_id, normalized_label)`
+
+### `tasks`
+
+- `id` primary key
+- `conversation_id` non-null foreign key to `conversations.id`
+- `topic_id` nullable foreign key to `topics.id`
+- `title` non-null text
+- `status` non-null `TaskStatus`
+- `created_at`, `updated_at` non-null
+
+### `conversation_states`
+
+- `conversation_id` primary key and foreign key to `conversations.id`
+- `active_topic_id` nullable foreign key to `topics.id`
+- `active_task_id` nullable foreign key to `tasks.id`
+- `previous_task_id` nullable foreign key to `tasks.id`
+- `expected_output_type` nullable `OutputType`
+- `topic_stack_json` non-null JSON array of topic IDs, default `[]`
+- `version` non-null integer, starting at `0`
+- `updated_at` non-null
+
+The application validates that all topic/task IDs belong to the same
+conversation. State updates use compare-and-swap on `version`.
+
+### `messages`
+
+- `id` primary key
+- `conversation_id` non-null foreign key to `conversations.id`
+- `role` non-null `MessageRole`
+- `original_text` non-null text
 - `created_at` non-null
 - `sequence_number` non-null integer
 - unique `(conversation_id, sequence_number)`
 
-## conversation_states
+`original_text` is immutable. A final assistant message is linked from
+`model_responses.assistant_message_id`; a candidate response has no assistant
+message until validation passes.
 
-- `conversation_id` primary key and foreign key
-- `active_project_id` nullable foreign key
-- `active_topic` nullable
-- `active_task` nullable
-- `previous_task` nullable
-- `expected_output_type` nullable
-- `topic_stack_json` non-null default `[]`
-- `version` non-null integer
-- `updated_at` non-null
+## Entities, references, and constraints
 
-## references
+### `named_items`
 
 - `id` primary key
-- `message_id` non-null foreign key
-- `surface_text` non-null
-- `resolved_entity_type` nullable
-- `resolved_entity_id` nullable
-- `source_message_id` nullable foreign key
-- `confidence` non-null real between 0 and 1
+- `conversation_id` non-null foreign key to `conversations.id`
+- `project_id` nullable foreign key to `projects.id`
+- `display_name` non-null text
+- `normalized_name` non-null text
+- `source_message_id` nullable foreign key to `messages.id`
+- `created_at`, `updated_at` non-null
+- unique `(conversation_id, normalized_name)`
+
+A named item is created only by the explicit registration/declaration contract
+in `DomainAndDecisionRules.md`. A null `source_message_id` means the explicit UI
+registration operation; it never means model-inferred extraction.
+
+### `entity_registry`
+
+- `id` primary key
+- `entity_type` non-null `EntityType`
+- `native_id` non-null text
+- `project_id` nullable foreign key to `projects.id`
+- `display_name` non-null text
+- `normalized_name` non-null text
+- `source_message_id` nullable foreign key to `messages.id`
+- `is_active` non-null integer boolean
+- `created_at`, `updated_at` non-null
+- unique `(entity_type, native_id)`
+
+Project, topic, task, and explicit named-item records each receive an entity
+registry row. `native_id` identifies the canonical project/topic/task/named-item
+row. Repository validation in the same transaction enforces: `PROJECT` points
+to `projects`, `TOPIC` to `topics`, `TASK` to `tasks`, and `NAMED_ITEM` to
+`named_items`; the registry `project_id` must agree with the owning row when it
+has one. SQLite cannot express this polymorphic foreign key, so the migration
+adds repository-level invariant tests. No model-inferred entities are stored.
+
+### `reference_resolutions`
+
+- `id` primary key
+- `processing_run_id` non-null foreign key to `processing_runs.id`
+- `message_id` non-null foreign key to `messages.id`
+- `mention_ordinal` non-null integer starting at `0`
+- `surface_text` non-null text
+- `status` non-null `ReferenceStatus`
+- `resolved_entity_id` nullable foreign key to `entity_registry.id`
+- `source_message_id` nullable foreign key to `messages.id`
+- `confidence` non-null real in `[0, 1]`
+- `candidate_evidence_json` non-null JSON array
 - `created_at` non-null
+- unique `(processing_run_id, mention_ordinal)`
 
-## constraints
+`resolved_entity_id` is non-null only for `RESOLVED`. Ambiguous and unresolved
+results preserve candidate evidence and remain visible to the UI.
+
+### `constraints`
 
 - `id` primary key
-- `message_id` non-null foreign key
-- `constraint_type` non-null
-- `normalized_rule` non-null
+- `processing_run_id` non-null foreign key to `processing_runs.id`
+- `message_id` non-null foreign key to `messages.id`
+- `ordinal` non-null integer starting at `0`
+- `constraint_type` non-null `ConstraintType`
+- `underlying_constraint_type` nullable `ConstraintType`, restricted to
+  `REQUIRED`, `FORBIDDEN`, or `PRESERVE`
+- `scope` non-null `ConstraintScope`
+- `normalized_rule` non-null text
 - `priority` non-null integer
-- `scope` non-null
-- `source_text` non-null
-- `confidence` non-null real between 0 and 1
+- `source_kind` non-null `ConstraintSourceKind`
+- `source_text` non-null text
+- `confidence` non-null real in `[0, 1]`
+- `resolution_status` non-null `ConstraintResolutionStatus`
+- `conflict_group_id` nullable text
+- `condition_json` nullable JSON object
+- `condition_evaluation` nullable `ConditionEvaluation`
 - `created_at` non-null
+- unique `(processing_run_id, ordinal)`
 
-## memories
+`underlying_constraint_type`, `condition_json`, and `condition_evaluation` are
+non-null exactly when `constraint_type` is `CONDITIONAL`; otherwise they are
+null. A condition JSON object follows `mvp-condition-v1` and contains
+`grammar_version`, `kind`, `expected_value`, and `evaluation`. `source_text`
+is the immutable source evidence for the normalized predicate.
+
+## Memory and provenance
+
+### `memories`
 
 - `id` primary key
-- `project_id` nullable foreign key
-- `source_message_id` nullable foreign key
-- `memory_type` non-null
-- `scope` non-null
-- `content` non-null
-- `keywords_json` non-null default `[]`
-- `importance` non-null real between 0 and 1
-- `confidence` non-null real between 0 and 1
+- `conversation_id` nullable foreign key to `conversations.id`
+- `project_id` nullable foreign key to `projects.id`
+- `memory_type` non-null `MemoryType`
+- `scope` non-null `MemoryScope`
+- `status` non-null stored `MemoryStatus` (`ACTIVE` or `DELETED` only)
+- `content` non-null text
+- `keywords_json` non-null JSON array
+- `topic_terms_json` non-null JSON array
+- `importance` non-null real in `[0, 1]`
+- `confidence` non-null real in `[0, 1]`
 - `expires_at` nullable
-- `created_at` non-null
-- `updated_at` non-null
+- `created_at`, `updated_at` non-null
+- `deleted_at` nullable
 
-## context_packets
+The application validates scope ownership: conversation-scoped records require
+`conversation_id`; project-scoped records require `project_id`; global records
+require neither. A record must have at least one source row. `DELETED` requires
+non-null `deleted_at`; `ACTIVE` requires null `deleted_at`. Expiry is a computed
+effective retrieval status, never a stored automatic lifecycle mutation.
 
-- `id` primary key
-- `message_id` non-null foreign key
-- `packet_json` non-null
-- `schema_version` non-null
-- `created_at` non-null
-
-## model_requests
+### `memory_sources`
 
 - `id` primary key
-- `context_packet_id` non-null foreign key
-- `provider` non-null
-- `model_name` non-null
-- `attempt_number` non-null integer
-- `request_json` non-null
+- `memory_id` non-null foreign key to `memories.id`
+- `source_kind` non-null `MemorySourceKind`
+- `source_message_id` nullable foreign key to `messages.id`
+- `description` non-null text
 - `created_at` non-null
 
-## model_responses
+`USER_MESSAGE` requires `source_message_id`; manual entries use
+`MANUAL_ENTRY` and a non-empty user-entered description.
+
+### `memory_revisions`
 
 - `id` primary key
-- `model_request_id` non-null foreign key
-- `response_text` non-null
-- `metadata_json` non-null default `{}`
+- `memory_id` non-null foreign key to `memories.id`
+- `revision_number` non-null integer
+- `operation` non-null `MemoryRevisionOperation`
+- `content_snapshot` non-null text
+- `metadata_json` non-null JSON object
+- `performed_by` non-null `LocalActor`, always `LOCAL_USER` for memory changes
 - `created_at` non-null
+- unique `(memory_id, revision_number)`
 
-## validation_results
+Expiry is evaluated at retrieval time and creates no automatic revision or
+deletion. The MVP has no automatic merge; user edits/deletes resolve duplicates.
+
+## Processing, packets, retrieval, and model lineage
+
+### `processing_runs`
 
 - `id` primary key
-- `model_response_id` non-null foreign key
-- `passed` non-null integer boolean
-- `score` nullable real
-- `violations_json` non-null default `[]`
-- `created_at` non-null
+- `conversation_id` non-null foreign key to `conversations.id`
+- `user_message_id` non-null unique foreign key to `messages.id`
+- `idempotency_key` non-null text
+- `status` non-null `ProcessingRunStatus`
+- `state_version_at_start` non-null integer
+- `configuration_fingerprint` non-null text
+- `started_at` non-null
+- `completed_at` nullable
+- unique `(conversation_id, idempotency_key)`
 
-## correction_attempts
+### `context_packets`
 
 - `id` primary key
-- `original_model_response_id` non-null foreign key
-- `revised_model_request_id` non-null foreign key
-- `attempt_number` non-null integer constrained to 1 or 2
-- `reason_json` non-null
+- `processing_run_id` non-null unique foreign key to `processing_runs.id`
+- `message_id` non-null foreign key to `messages.id`
+- `packet_json` non-null JSON object
+- `schema_version` non-null text
+- `prompt_policy_version` non-null text
+- `configuration_fingerprint` non-null text
 - `created_at` non-null
 
-## settings
+Packets are immutable. Revision calls use the same packet plus a separately
+persisted correction envelope; they never mutate packet JSON.
+
+### `retrieval_results`
+
+- `id` primary key
+- `context_packet_id` non-null foreign key to `context_packets.id`
+- `memory_id` non-null foreign key to `memories.id`
+- `rank` non-null integer
+- `score` non-null real in `[0, 1]`
+- `reasons_json` non-null JSON array
+- `created_at` non-null
+- unique `(context_packet_id, rank)`
+- unique `(context_packet_id, memory_id)`
+
+### `retrieval_exclusions`
+
+- `id` primary key
+- `context_packet_id` non-null foreign key to `context_packets.id`
+- `memory_id` non-null foreign key to `memories.id`
+- `exclusion_reason` non-null `RetrievalExclusionReason`
+- `computed_score` nullable real in `[0, 1]`
+- `details_json` non-null JSON object
+- `created_at` non-null
+- unique `(context_packet_id, memory_id, exclusion_reason)`
+
+This audit table records every considered-but-unselected memory. It is not a
+memory mutation and does not expose raw memory content to logs.
+
+### `model_requests`
+
+- `id` primary key
+- `processing_run_id` non-null foreign key to `processing_runs.id`
+- `context_packet_id` non-null foreign key to `context_packets.id`
+- `purpose` non-null `ModelRequestPurpose`
+- `attempt_number` non-null integer (`0`, `1`, or `2`)
+- `provider` non-null `ProviderKind`, `OLLAMA` in MVP
+- `model_name` non-null text
+- `status` non-null `ModelRequestStatus`
+- `rendered_prompt` non-null text
+- `request_json` non-null JSON object
+- `started_at` nullable
+- `completed_at` nullable
+- `error_code` nullable text
+- `safe_error_message` nullable text
+- unique `(processing_run_id, attempt_number)`
+
+### `model_responses`
+
+- `id` primary key
+- `model_request_id` non-null unique foreign key to `model_requests.id`
+- `response_text` non-null text
+- `metadata_json` non-null JSON object
+- `assistant_message_id` nullable unique foreign key to `messages.id`
+- `created_at` non-null
+
+An accepted response has exactly one `assistant_message_id`. Invalid candidates
+have no assistant message and remain available only in trace/validation views.
+
+### `validation_results`
+
+- `id` primary key
+- `model_response_id` non-null unique foreign key to `model_responses.id`
+- `status` non-null `ValidationStatus`
+- `score` non-null real in `[0, 1]`
+- `violations_json` non-null JSON array
+- `evidence_json` non-null JSON array
+- `created_at` non-null
+
+### `correction_attempts`
+
+- `id` primary key
+- `processing_run_id` non-null foreign key to `processing_runs.id`
+- `attempt_number` non-null integer constrained to `1` or `2`
+- `prior_model_response_id` non-null foreign key to `model_responses.id`
+- `revised_model_request_id` non-null foreign key to `model_requests.id`
+- `reason_json` non-null JSON array
+- `created_at` non-null
+- unique `(processing_run_id, attempt_number)`
+
+### `clarification_requests`
+
+- `id` primary key
+- `processing_run_id` non-null unique foreign key to `processing_runs.id`
+- `reason_code` non-null `ClarificationReason`
+- `question_text` non-null text
+- `details_json` non-null JSON object
+- `created_at` non-null
+
+This is the sole durable clarification payload. A `NEEDS_CLARIFICATION` run has
+exactly one row, no model request, and no `pipeline_failures` row. Repeating the
+same idempotency key returns this exact row rather than creating a second
+question.
+
+### `pipeline_failures`
+
+- `id` primary key
+- `processing_run_id` non-null foreign key to `processing_runs.id`
+- `stage` non-null `PipelineStage`
+- `error_code` non-null `FailureCode`
+- `safe_message` non-null text
+- `details_json` non-null JSON object
+- `is_terminal` non-null integer boolean
+- `created_at` non-null
+
+Terminal failures include context construction, provider transport, validation
+exhaustion, cancellation, recovery, and persistence failures. Clarification is
+not a failure. A controlled failure is never represented as an assistant model
+message.
+
+## Settings and evaluation
+
+### `settings`
 
 - `key` primary key
-- `value_json` non-null
+- `value_json` non-null JSON value
 - `updated_at` non-null
 
-## evaluation_cases
+This table contains only the three non-secret presentation keys listed in
+`docs/contracts/ConfigurationAndLogging.md`. YAML remains the source of truth
+for model, storage, security, validation, context, and logging configuration.
+
+### `evaluation_cases`
 
 - `id` primary key
-- `name` non-null unique
-- `category` non-null
-- `case_json` non-null
+- `name` non-null unique text
+- `category` non-null text
+- `case_json` non-null JSON object
 - `enabled` non-null integer boolean
+- `created_at`, `updated_at` non-null
+
+### `evaluation_runs`
+
+- `id` primary key
+- `evaluation_case_id` non-null foreign key to `evaluation_cases.id`
+- `fixture_version` non-null text
+- `provider_mode` non-null `EvaluationProviderMode`
+- `result_json` non-null JSON object
+- `passed` non-null integer boolean
 - `created_at` non-null
-- `updated_at` non-null
 
 ## Required indexes
 
-- messages by `(conversation_id, sequence_number)`
-- memories by `project_id`
-- constraints by `message_id`
-- references by `message_id`
-- context packets by `message_id`
-- model requests by `context_packet_id`
-- validation results by `model_response_id`
+- `messages(conversation_id, sequence_number)`
+- `topics(conversation_id, normalized_label)`
+- `tasks(conversation_id, status)`
+- `entity_registry(normalized_name, is_active)`
+- `reference_resolutions(processing_run_id, mention_ordinal)`
+- `constraints(processing_run_id, priority, ordinal)`
+- `memories(project_id, status)` and `memories(conversation_id, status)`
+- `memory_revisions(memory_id, revision_number)`
+- `processing_runs(conversation_id, status)`
+- partial unique index on a constant for `processing_runs` where `status IN`
+  (`PERSISTED`, `CONTEXT_READY`, `GENERATING`, `REVISING`) to enforce one
+  global non-terminal foreground run
+- `model_requests(processing_run_id, attempt_number)`
+- `validation_results(model_response_id)`
+- `clarification_requests(processing_run_id)`
+- `pipeline_failures(processing_run_id, created_at)`
 
-Schema changes require numbered migrations and integration tests.
+## Migration and recovery rules
+
+Each schema change is one numbered migration with a test for an upgrade from
+the immediately preceding schema. Migrations run in a SQLite transaction,
+create a backup/export recovery instruction before destructive transformations,
+and must preserve immutable messages, packet snapshots, model lineage, memory
+revisions, and terminal failures. Downgrades are not automatic; a failed
+migration rolls back its transaction and leaves the prior ledger version.

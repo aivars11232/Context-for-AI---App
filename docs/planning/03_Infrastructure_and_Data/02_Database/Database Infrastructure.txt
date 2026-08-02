@@ -5,6 +5,11 @@ database/
 ├── repositories/
 └── transaction/
 
+MVP status: `DATABASE_SCHEMA.md` and `docs/contracts/Persistence.md` define the
+canonical tables, repositories, transactions, idempotency, recovery, and
+concurrency behavior. The abbreviated repository list below is historical and
+must not be treated as complete.
+
 Repository implimentations:
 repositories/
 ├── SqliteConversationRepository.py
@@ -13,3 +18,7 @@ repositories/
 ├── SqliteProjectRepository.py
 ├── SqliteContextRepository.py
 └── SqliteEvaluationRepository.py
+
+MVP also requires repositories for topics, tasks, state, entities, reference
+resolutions, constraints, memory sources/revisions, processing runs, retrieval
+results, model lifecycle, corrections, failures, settings, and validation.

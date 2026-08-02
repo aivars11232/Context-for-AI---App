@@ -7,13 +7,20 @@ domain/
 ├── repositories/
 └── exceptions/
 
-Core entities:
+MVP status: canonical domain types and policy behavior are in
+`docs/contracts/DomainAndDecisionRules.md`. The names below are historical
+examples. Do not implement `User` (the MVP is single-operator), a duplicate
+`ProjectState`, or duplicated policy packages. `ConversationState`, topics,
+tasks, entities, memory revisions, processing runs, and typed outcomes are the
+canonical MVP model.
+
+Historical entity naming reference:
 entities/
-├── User.py
+├── User.py                         # Deferred Post-MVP
 ├── Conversation.py
 ├── Message.py
 ├── Project.py
-├── ProjectState.py
+├── ProjectState.py                 # Superseded by versioned ConversationState
 ├── Task.py
 ├── Topic.py
 ├── ContextMemory.py
@@ -23,7 +30,7 @@ entities/
 ├── ModelResponse.py
 └── ValidationResult.py
 
-Important value objects:
+Historical value-object naming reference:
 value_objects/
 ├── MessageId.py
 ├── ConversationId.py
@@ -45,14 +52,7 @@ enums/
 ├── TaskStatus.py
 └── ModelProvider.py
 
-Domain policies:
-policies/
-├── InstructionPriorityPolicy.py
-├── MemoryRetentionPolicy.py
-├── TopicTransitionPolicy.py
-├── ContextSelectionPolicy.py
-└── ValidationPolicy.py
-
+Canonical policies are owned once in the domain layer:
 policies/
 ├── InstructionPriorityPolicy.py
 ├── MemoryRetentionPolicy.py
@@ -61,14 +61,8 @@ policies/
 └── ValidationPolicy.py
 
 Example instruction priority:
-1. Current explicit user command
-2. Current prohibition or preservation rule
-3. Current task definition
-4. Recent user correction
-5. Active project rule
-6. Persistent user preference
-7. Older inferred context
-
+Use the numeric priority bands in `DomainAndDecisionRules.md`; this older list
+is not an independent policy.
 
 
 

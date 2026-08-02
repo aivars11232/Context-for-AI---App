@@ -1,4 +1,8 @@
 Determines what the user is trying to do.
+
+MVP status: use the canonical intent/output taxonomy, qualifier phrase table,
+confidence bands, and clarification outcomes in `DomainAndDecisionRules.md`.
+The desktop-dock example is a historical fixture.
 interpretation/
 ├── IntentClassifier.py
 ├── MessageAnalyzer.py
