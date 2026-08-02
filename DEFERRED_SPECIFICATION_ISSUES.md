@@ -51,6 +51,16 @@ deterministic builders/retriever, repository implementations, pipeline
 orchestration, and UI behavior remain assigned to their later tasks. D-014
 remains unresolved for `TASK-0004` through `TASK-0018`.
 
+### TASK-0005 reconciliation
+
+The `TASK-0005` repository-enforcement portion of D-004 is resolved by the
+canonical lifecycle invariants in `docs/contracts/Persistence.md`. Repositories
+enforce processing-run and model-request timestamp states, `INITIAL`/attempt-0
+and `REVISION`/attempt-1-or-2 pairing, same-run consecutive correction lineage,
+and passed-validation assistant-message links. D-004 remains unresolved for
+`TASK-0014`, which owns application orchestration and recovery use of those
+repository guarantees.
+
 ## Historical planning reconciliation
 
 These supporting documents require a status-note or canonical-pointer repair,

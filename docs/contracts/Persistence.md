@@ -105,11 +105,32 @@ these short transactions:
 - One run has one user message and zero or one immutable packet. A successful
   packet is required before any model request; `CONTEXT_READY` and later
   generation states have exactly one packet.
+- A non-terminal run has null `completed_at`. A terminal run has non-null
+  `completed_at` greater than or equal to `started_at`.
 - Attempt `0` is the initial generation; attempts `1` and `2` are the only
-  possible revisions. A unique database constraint enforces this.
+  possible revisions. `INITIAL` is valid only for attempt `0`; `REVISION` is
+  valid only for attempt `1` or `2`. A unique database constraint enforces one
+  request per run and attempt, and the repository enforces the purpose pairing.
+- A `PENDING` model request has null `started_at`, `completed_at`, `error_code`,
+  and `safe_error_message`. `IN_FLIGHT` requires non-null `started_at` and null
+  completion/error fields. `SUCCEEDED` requires both timestamps, with
+  `completed_at >= started_at`, and null error fields. `TIMED_OUT`, `CANCELLED`,
+  and `FAILED` require both ordered timestamps and both non-empty error fields.
+  A request timestamp cannot precede its processing run's `started_at`.
 - A successful response has exactly one validation result and one linked
   assistant message. Failed candidates have a validation result when text was
   received and no assistant message.
+- A response may be added only for its terminal `SUCCEEDED` request and cannot
+  initially carry an assistant link. Its creation time cannot precede the
+  request completion time. A validation result cannot precede its response.
+  Linking is idempotent only for the same assistant-message ID and is permitted
+  only when the validation status is `PASSED`, the message role is `ASSISTANT`,
+  and the message belongs to the run's conversation.
+- Correction attempt `N` links a failed validation from request attempt `N-1`
+  to a `REVISION` request attempt `N`; the prior response, revised request, and
+  correction row all belong to the same processing run. Its creation time
+  cannot precede the failed validation. Repositories reject cross-run or
+  skipped-attempt lineage before commit.
 - A controlled failure has no final assistant candidate. The UI renders its
   safe system status rather than model text.
 - Manual memory operations write source and revision rows in the same
