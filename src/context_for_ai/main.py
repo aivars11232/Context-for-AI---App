@@ -1,4 +1,4 @@
-"""Minimal executable composition root for the TASK-0001 startup boundary."""
+"""Executable composition root for validated local application startup."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from context_for_ai.infrastructure.configuration import (
     ConfigurationError,
     load_configuration,
 )
-from context_for_ai.infrastructure.database import initialize_migration_ledger
+from context_for_ai.infrastructure.database import MigrationError, apply_migrations
 from context_for_ai.infrastructure.logging import TraceLogger, bootstrap_logging
 
 
@@ -47,7 +47,7 @@ def bootstrap_application(
         configuration.logging,
         configuration.configuration_fingerprint,
     )
-    database_path = initialize_migration_ledger(
+    database_path = apply_migrations(
         configuration.app.data_directory / "database" / "context_for_ai.sqlite3"
     )
     trace_logger.event("startup_initialized")
@@ -77,7 +77,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     options = parser.parse_args(arguments)
     try:
         bootstrap_application()
-    except ConfigurationError as error:
+    except (ConfigurationError, MigrationError) as error:
         print(error, file=sys.stderr)
         return 2
     if options.check:

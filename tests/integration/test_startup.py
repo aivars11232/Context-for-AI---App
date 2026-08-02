@@ -10,7 +10,7 @@ from PySide6.QtGui import QGuiApplication
 from context_for_ai.main import bootstrap_application, create_qml_engine
 
 
-def test_offscreen_startup_validates_config_bootstraps_ledger_and_creates_qml_root(
+def test_offscreen_startup_validates_config_applies_schema_and_creates_qml_root(
     fixture_application_root: Path,
     monkeypatch,
 ) -> None:
@@ -27,7 +27,35 @@ def test_offscreen_startup_validates_config_bootstraps_ledger_and_creates_qml_ro
             )
         }
 
-    assert tables == {"schema_migrations"}
+    assert tables == {
+        "clarification_requests",
+        "constraints",
+        "context_packets",
+        "conversation_states",
+        "conversations",
+        "correction_attempts",
+        "entity_registry",
+        "evaluation_cases",
+        "evaluation_runs",
+        "memories",
+        "memory_revisions",
+        "memory_sources",
+        "messages",
+        "model_requests",
+        "model_responses",
+        "named_items",
+        "pipeline_failures",
+        "processing_runs",
+        "projects",
+        "reference_resolutions",
+        "retrieval_exclusions",
+        "retrieval_results",
+        "schema_migrations",
+        "settings",
+        "tasks",
+        "topics",
+        "validation_results",
+    }
     assert engine.rootObjects()
     assert engine.rootObjects()[0].objectName() == "contextForAiRoot"
     for root in engine.rootObjects():
