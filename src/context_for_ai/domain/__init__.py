@@ -93,6 +93,12 @@ from context_for_ai.domain.policies import (
     require_project_transition,
     require_task_transition,
 )
+from context_for_ai.domain.state_transitions import (
+    clear_terminal_active_task,
+    initial_conversation_state,
+    touch_conversation_state,
+    transition_conversation_state,
+)
 from context_for_ai.domain.value_objects import (
     DomainId,
     FrozenJsonObject,
@@ -182,6 +188,7 @@ __all__ = [
     "UnitScore",
     "ValidationResult",
     "ValidationStatus",
+    "clear_terminal_active_task",
     "confidence_band",
     "ensure_utc",
     "format_utc_timestamp",
@@ -189,6 +196,7 @@ __all__ = [
     "is_terminal_model_request",
     "is_terminal_processing_run",
     "is_terminal_task",
+    "initial_conversation_state",
     "memory_effective_status",
     "parse_utc_timestamp",
     "require_active_task_consistency",
@@ -198,5 +206,7 @@ __all__ = [
     "require_processing_run_transition",
     "require_project_transition",
     "require_task_transition",
+    "touch_conversation_state",
+    "transition_conversation_state",
     "utc_now",
 ]

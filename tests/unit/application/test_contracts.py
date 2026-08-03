@@ -9,6 +9,12 @@ from typing import Protocol, get_type_hints
 import pytest
 
 from context_for_ai.application import (
+    ApplyConversationStateTransition,
+    ApplyConversationStateTransitionInput,
+    ApplyConversationStateTransitionOutput,
+    ArchiveProject,
+    ArchiveProjectInput,
+    ArchiveProjectOutput,
     CreateMemory,
     CreateMemoryInput,
     EditMemory,
@@ -29,6 +35,9 @@ from context_for_ai.application import (
     ProcessUserMessage,
     ProcessUserMessageInput,
     ProcessUserMessageOutput,
+    PreparedOutputTransition,
+    PreparedTaskTransition,
+    PreparedTopicTransition,
     RunEvaluation,
     RunEvaluationInput,
     RunEvaluationOutput,
@@ -37,16 +46,25 @@ from context_for_ai.application import (
     SelectProjectOutput,
     SoftDeleteMemory,
     SoftDeleteMemoryInput,
+    TransitionTaskStatus,
+    TransitionTaskStatusInput,
+    TransitionTaskStatusOutput,
 )
-from context_for_ai.domain.enums import ProcessingRunStatus
+from context_for_ai.domain.enums import IntentType, OutputType, ProcessingRunStatus
 from context_for_ai.domain.errors import BusyError, LifecycleInvariantError
-from context_for_ai.domain.value_objects import DomainId
+from context_for_ai.domain.value_objects import DomainId, UnitScore
 
 
 USE_CASE_SIGNATURES = {
     ProcessUserMessage: (ProcessUserMessageInput, ProcessUserMessageOutput),
     InspectContext: (InspectContextInput, InspectContextOutput),
     SelectProject: (SelectProjectInput, SelectProjectOutput),
+    ApplyConversationStateTransition: (
+        ApplyConversationStateTransitionInput,
+        ApplyConversationStateTransitionOutput,
+    ),
+    TransitionTaskStatus: (TransitionTaskStatusInput, TransitionTaskStatusOutput),
+    ArchiveProject: (ArchiveProjectInput, ArchiveProjectOutput),
     CreateMemory: (CreateMemoryInput, MemoryOutput),
     GetMemory: (GetMemoryInput, MemoryOutput),
     ListMemories: (ListMemoriesInput, MemoryListOutput),
@@ -83,6 +101,9 @@ def test_use_case_inputs_and_outputs_are_frozen_slotted_dataclasses() -> None:
         for request_and_output in USE_CASE_SIGNATURES.values()
         for dto in request_and_output
     }
+    dto_types.update(
+        {PreparedTopicTransition, PreparedTaskTransition, PreparedOutputTransition}
+    )
     for dto_type in dto_types:
         assert is_dataclass(dto_type)
         assert dto_type.__dataclass_params__.frozen is True
@@ -117,3 +138,17 @@ def test_process_result_kind_is_exactly_the_documented_three_branches() -> None:
         "EXISTING_RUN",
         "BUSY",
     }
+
+
+def test_prepared_control_transition_rejects_topic_or_task_proposals() -> None:
+    with pytest.raises(LifecycleInvariantError, match="cannot carry"):
+        ApplyConversationStateTransitionInput(
+            conversation_id=_id(1),
+            expected_state_version=0,
+            task=PreparedTaskTransition(_id(2), UnitScore("0.8")),
+            output=PreparedOutputTransition(
+                IntentType.CONTINUE,
+                OutputType.TEXT_ANSWER,
+                UnitScore("0.8"),
+            ),
+        )

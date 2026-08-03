@@ -1,6 +1,12 @@
 """Presentation-facing application contracts with no concrete adapters."""
 
 from context_for_ai.application.contracts import (
+    ApplyConversationStateTransition,
+    ApplyConversationStateTransitionInput,
+    ApplyConversationStateTransitionOutput,
+    ArchiveProject,
+    ArchiveProjectInput,
+    ArchiveProjectOutput,
     CreateMemory,
     CreateMemoryInput,
     EditMemory,
@@ -21,6 +27,9 @@ from context_for_ai.application.contracts import (
     ProcessUserMessage,
     ProcessUserMessageInput,
     ProcessUserMessageOutput,
+    PreparedOutputTransition,
+    PreparedTaskTransition,
+    PreparedTopicTransition,
     RunEvaluation,
     RunEvaluationInput,
     RunEvaluationOutput,
@@ -29,6 +38,9 @@ from context_for_ai.application.contracts import (
     SelectProjectOutput,
     SoftDeleteMemory,
     SoftDeleteMemoryInput,
+    TransitionTaskStatus,
+    TransitionTaskStatusInput,
+    TransitionTaskStatusOutput,
     ValidationAttempt,
 )
 from context_for_ai.application.errors import (
@@ -38,10 +50,24 @@ from context_for_ai.application.errors import (
     ContextConstructionError,
     ValidationExhaustedError,
 )
+from context_for_ai.application.conversation_state import (
+    ApplyConversationStateTransitionService,
+    ArchiveProjectService,
+    SelectProjectService,
+    TransitionTaskStatusService,
+)
 
 
 __all__ = [
+    "ApplyConversationStateTransition",
+    "ApplyConversationStateTransitionInput",
+    "ApplyConversationStateTransitionOutput",
+    "ApplyConversationStateTransitionService",
     "ApplicationError",
+    "ArchiveProject",
+    "ArchiveProjectInput",
+    "ArchiveProjectOutput",
+    "ArchiveProjectService",
     "ClarificationRequired",
     "ContextBudgetExceededError",
     "ContextConstructionError",
@@ -65,14 +91,22 @@ __all__ = [
     "ProcessUserMessage",
     "ProcessUserMessageInput",
     "ProcessUserMessageOutput",
+    "PreparedOutputTransition",
+    "PreparedTaskTransition",
+    "PreparedTopicTransition",
     "RunEvaluation",
     "RunEvaluationInput",
     "RunEvaluationOutput",
     "SelectProject",
     "SelectProjectInput",
     "SelectProjectOutput",
+    "SelectProjectService",
     "SoftDeleteMemory",
     "SoftDeleteMemoryInput",
+    "TransitionTaskStatus",
+    "TransitionTaskStatusInput",
+    "TransitionTaskStatusOutput",
+    "TransitionTaskStatusService",
     "ValidationAttempt",
     "ValidationExhaustedError",
 ]

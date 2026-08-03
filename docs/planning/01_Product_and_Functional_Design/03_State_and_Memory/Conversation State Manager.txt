@@ -1,13 +1,19 @@
-This tracks what is happening right now.
+Status: historical, non-authoritative planning fixture.
 
-MVP status: the Arch Dock object below is a historical fixture, not an active
-default project. MVP state is limited to the canonical conversation project,
-topic, task, previous task, expected output type, topic stack, and version.
-Completed/pending steps, file/version, application, accepted/rejected
-approaches, and unresolved-question tracking are Deferred Post-MVP unless they
-are represented by one of those canonical fields.
+TASK-0006 implementation is governed by
+tasks/TASK-0006-VERSIONED-CONVERSATION-STATE.md,
+docs/contracts/DomainAndDecisionRules.md, and DATABASE_SCHEMA.md. The sole persisted active project is conversations.project_id. Canonical conversation
+state contains only active topic, active task, previous task, expected output
+type, topic stack, version, and update time.
 
-Example:
+The Arch Dock object and tracking list below are retained only as historical
+design context. They are not an active default, schema, application contract,
+or TASK-0006 implementation requirement. In particular, active_project,
+referenced_item, completed/pending steps, file/version, application,
+accepted/rejected approaches, and unresolved questions must not be added to
+conversation_states by TASK-0006.
+
+Historical example (non-authoritative):
 {
   "active_project": "Arch Dock",
   "active_topic": "dock appearance",
@@ -17,7 +23,7 @@ Example:
   "current_output_type": "text",
   "referenced_item": "previous panel description"
 }
-It should track:
+Historical proposed fields (non-authoritative):
 active project
 active topic
 current task
@@ -30,4 +36,5 @@ current application
 accepted decisions
 rejected approaches
 unresolved questions
-This component prevents the AI from suddenly answering an older topic.
+The canonical topic stack and active-topic rules replace the historical final
+sentence's unspecified behavior.

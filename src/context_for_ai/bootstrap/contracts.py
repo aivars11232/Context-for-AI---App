@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from context_for_ai.application import (
+    ApplyConversationStateTransition,
+    ArchiveProject,
     CreateMemory,
     EditMemory,
     GetMemory,
@@ -16,6 +18,7 @@ from context_for_ai.application import (
     RunEvaluation,
     SelectProject,
     SoftDeleteMemory,
+    TransitionTaskStatus,
 )
 from context_for_ai.domain.ports import (
     ClarificationBuilder,
@@ -109,6 +112,9 @@ class ApplicationUseCases:
     process_user_message: ProcessUserMessage
     inspect_context: InspectContext
     select_project: SelectProject
+    apply_conversation_state_transition: ApplyConversationStateTransition
+    transition_task_status: TransitionTaskStatus
+    archive_project: ArchiveProject
     create_memory: CreateMemory
     get_memory: GetMemory
     list_memories: ListMemories

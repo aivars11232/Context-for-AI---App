@@ -49,7 +49,8 @@ explicitly includes the one-record clarification operations on
 operations on `ContextPacketRepository`. It defines inward contracts only; the
 deterministic builders/retriever, repository implementations, pipeline
 orchestration, and UI behavior remain assigned to their later tasks. D-014
-remains unresolved for `TASK-0004` through `TASK-0018`.
+remains unresolved for `TASK-0004`, `TASK-0005`, and `TASK-0007` through
+`TASK-0018`.
 
 ### TASK-0005 reconciliation
 
@@ -60,6 +61,25 @@ and `REVISION`/attempt-1-or-2 pairing, same-run consecutive correction lineage,
 and passed-validation assistant-message links. D-004 remains unresolved for
 `TASK-0014`, which owns application orchestration and recovery use of those
 repository guarantees.
+
+### TASK-0006 reconciliation
+
+The `TASK-0006` portion of D-014 is resolved by the authoritative reconciliation
+in `tasks/TASK-0006-VERSIONED-CONVERSATION-STATE.md`. TASK-0006 owns the
+dependency-free conversation-state transitions and the public use cases for
+project selection, prepared topic/task/output state changes, explicit task
+status changes, and project archival required by AT-003 state assertions. It
+uses `conversations.project_id` as the sole persisted active-project value,
+reuses the existing compare-and-swap and transaction ports, retries one
+deterministic state transition after a conflict, and does not own project or
+conversation creation.
+
+The historical `Conversation State Manager.txt` material is explicitly
+non-authoritative: its project duplicate, file/version, step, application,
+decision, and unresolved-question fields are not TASK-0006 state. Message admission and `BusyError` mapping, correction-constraint persistence,
+interpretation, packet construction, orchestration, recovery, and UI remain
+assigned to their later tasks. D-014 remains unresolved for `TASK-0007` through
+`TASK-0018`.
 
 ## Historical planning reconciliation
 

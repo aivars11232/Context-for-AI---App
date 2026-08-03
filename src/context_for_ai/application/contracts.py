@@ -8,13 +8,21 @@ from enum import StrEnum, unique
 from typing import Protocol
 
 from context_for_ai.domain.decisions import Constraint, ReferenceOutcome
-from context_for_ai.domain.entities import Conversation, ConversationState
+from context_for_ai.domain.entities import (
+    Conversation,
+    ConversationState,
+    ConversationTask,
+    Project,
+)
 from context_for_ai.domain.enums import (
     EvaluationProviderMode,
+    IntentType,
     MemoryScope,
     MemoryStatus,
     MemoryType,
+    OutputType,
     ProcessingRunStatus,
+    TaskStatus,
 )
 from context_for_ai.domain.errors import BusyError, LifecycleInvariantError
 from context_for_ai.domain.lifecycle import (
@@ -260,6 +268,127 @@ class SelectProjectOutput:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedTopicTransition:
+    """Canonical topic selection prepared without source-text parsing."""
+
+    topic_id: DomainId
+    confidence: UnitScore
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedTaskTransition:
+    """Canonical task selection prepared without source-text parsing."""
+
+    task_id: DomainId
+    confidence: UnitScore
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedOutputTransition:
+    """Canonical intent/output decision prepared by a later interpreter."""
+
+    intent: IntentType
+    expected_output_type: OutputType | None
+    confidence: UnitScore
+
+    def __post_init__(self) -> None:
+        if (
+            self.intent
+            not in {IntentType.CONTINUE, IntentType.CORRECT, IntentType.UNSUPPORTED}
+            and self.expected_output_type is None
+        ):
+            raise LifecycleInvariantError(
+                "A prepared non-control output transition requires an output type."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyConversationStateTransitionInput:
+    """Apply up to one prepared topic, task, and output proposal atomically."""
+
+    conversation_id: DomainId
+    expected_state_version: int
+    topic: PreparedTopicTransition | None = None
+    task: PreparedTaskTransition | None = None
+    output: PreparedOutputTransition | None = None
+
+    def __post_init__(self) -> None:
+        _non_negative_integer(
+            "ApplyConversationStateTransitionInput.expected_state_version",
+            self.expected_state_version,
+        )
+        if (
+            self.output is not None
+            and self.output.intent in {IntentType.CONTINUE, IntentType.CORRECT}
+            and (self.topic is not None or self.task is not None)
+        ):
+            raise LifecycleInvariantError(
+                "CONTINUE and CORRECT cannot carry topic or task proposals."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyConversationStateTransitionOutput:
+    """Resulting state and any task directly selected by the transition."""
+
+    state: ConversationState
+    selected_task: ConversationTask | None
+
+    def __post_init__(self) -> None:
+        if self.selected_task is not None and (
+            self.selected_task.conversation_id != self.state.conversation_id
+            or self.selected_task.id != self.state.active_task_id
+        ):
+            raise LifecycleInvariantError(
+                "Selected task must be the resulting state's active task."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TransitionTaskStatusInput:
+    """Apply one explicit named task-status operation."""
+
+    conversation_id: DomainId
+    task_id: DomainId
+    target_status: TaskStatus
+    expected_state_version: int
+
+    def __post_init__(self) -> None:
+        _non_negative_integer(
+            "TransitionTaskStatusInput.expected_state_version",
+            self.expected_state_version,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TransitionTaskStatusOutput:
+    """Updated task and the conversation's resulting state snapshot."""
+
+    task: ConversationTask
+    state: ConversationState
+
+    def __post_init__(self) -> None:
+        if self.task.conversation_id != self.state.conversation_id:
+            raise LifecycleInvariantError(
+                "Task-status output task and state must share a conversation."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveProjectInput:
+    """Name one existing project for explicit archival."""
+
+    project_id: DomainId
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveProjectOutput:
+    """Return the project after its explicit archive transition."""
+
+    project: Project
+
+
+@dataclass(frozen=True, slots=True)
 class CreateMemoryInput:
     """User-supplied data for one explicit manual memory creation."""
 
@@ -442,6 +571,28 @@ class SelectProject(Protocol):
     """Apply one explicit conversation project selection."""
 
     def execute(self, request: SelectProjectInput) -> SelectProjectOutput: ...
+
+
+class ApplyConversationStateTransition(Protocol):
+    """Apply prepared state proposals without interpreting source text."""
+
+    def execute(
+        self, request: ApplyConversationStateTransitionInput
+    ) -> ApplyConversationStateTransitionOutput: ...
+
+
+class TransitionTaskStatus(Protocol):
+    """Apply one explicit task-status lifecycle operation."""
+
+    def execute(
+        self, request: TransitionTaskStatusInput
+    ) -> TransitionTaskStatusOutput: ...
+
+
+class ArchiveProject(Protocol):
+    """Archive one active project under the canonical run guard."""
+
+    def execute(self, request: ArchiveProjectInput) -> ArchiveProjectOutput: ...
 
 
 class CreateMemory(Protocol):
