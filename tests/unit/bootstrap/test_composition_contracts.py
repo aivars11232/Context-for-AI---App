@@ -86,6 +86,8 @@ def test_system_and_deterministic_bundles_cover_required_ports() -> None:
         "transactions",
     }
     assert {field.name for field in fields(DeterministicComponents)} == {
+        "interpretation_engine",
+        "constraint_engine",
         "clarification_builder",
         "context_retriever",
         "response_validator",

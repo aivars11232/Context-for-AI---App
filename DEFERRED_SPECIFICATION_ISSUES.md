@@ -78,8 +78,32 @@ The historical `Conversation State Manager.txt` material is explicitly
 non-authoritative: its project duplicate, file/version, step, application,
 decision, and unresolved-question fields are not TASK-0006 state. Message admission and `BusyError` mapping, correction-constraint persistence,
 interpretation, packet construction, orchestration, recovery, and UI remain
-assigned to their later tasks. D-014 remains unresolved for `TASK-0007` through
+assigned to their later tasks. D-014 remains unresolved for `TASK-0008` through
 `TASK-0018`.
+
+### TASK-0007 reconciliation
+
+D-002 is resolved by the canonical source-preserving normalization, qualifier
+capture, evidence, and exact predicate-format rules in
+`docs/contracts/DomainAndDecisionRules.md`. D-003 is resolved there by the
+canonical target-key, lexical opposition, source-recency, soft/hard,
+override-evidence, conflict-group, conditional, and `ASSUMED` rules.
+
+The `TASK-0007` portion of D-014 is resolved by the immutable public request and
+result contracts in `docs/contracts/ContextEngine.md` and the bounded delivery
+contract in
+`tasks/TASK-0007-DETERMINISTIC-INTERPRETATION-AND-CONSTRAINTS.md`. An explicit
+request to write a text prompt is canonically `EDIT_TEXT`/`TEXT_ANSWER`; it does
+not add an intent/output enum or authorize image generation or an external
+action.
+
+The historical Context Interpreter taxonomy and Instruction and Constraint
+Manager priority descriptions are non-authoritative for TASK-0007. The
+canonical intent/output taxonomy, numeric bands, conditional/assumed behavior,
+and conflict rules named above replace those historical descriptions. Reference
+resolution, retrieval, packets, providers, orchestration, persistence, and UI
+remain assigned to their existing later tasks. D-014 remains unresolved for
+`TASK-0008` through `TASK-0018`.
 
 ## Historical planning reconciliation
 

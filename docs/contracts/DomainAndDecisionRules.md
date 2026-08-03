@@ -66,6 +66,25 @@ the same intent selects the lexicographically smaller rule ID. Configuration
 must include at least one rule for every supported primary intent used by the
 shipped fixture configuration.
 
+TASK-0007 matching uses one source-preserving normalization. Normalize the
+message to Unicode NFC, apply Unicode case-folding, collapse each non-empty
+whitespace run to one ASCII space, and trim leading/trailing whitespace. Phrase
+matches require Unicode word boundaries; a word phrase cannot match inside a
+larger alphanumeric word. The normalizer retains, for every normalized
+character, the half-open `[start, end)` offsets of the contributing original
+source text. Evidence therefore contains the exact source slice, normalized
+phrase, rule ID, original start/end offsets, and normalized captures. Intent
+candidates are ordered by priority descending, normalized phrase code-point
+length descending, rule ID ascending, then source start ascending. Every
+top-rank candidate needed to explain a selection or tie remains observable.
+
+A unique, completely captured exact rule match has interpretation confidence
+`1.00`. No match and a different-intent top tie have confidence `0.00`. A
+recognized qualifier whose mandatory operands cannot be captured lowers the
+interpretation result to `0.49` and requires clarification; it is never silently
+dropped. A command-only topic/task proposal does not invent a primary intent:
+ordinary intent matching still applies, and no intent match is `UNSUPPORTED`.
+
 The canonical default output mapping is fixed, not model-chosen:
 
 | Intent | Default output type | Permitted configured output types |
@@ -94,10 +113,42 @@ recognize a phrase but cannot change the fixed effect in the table below.
 | `same as before` (`PRIOR_REFERENCE`) | Emit a reference mention. Reuse only a uniquely resolved prior rule; otherwise request clarification. |
 | `one at a time` (`SEQUENTIAL`) | Add a `REQUIRED` text-structure rule to present one ordered step at a time. |
 
-An image/action request is `UNSUPPORTED` unless the explicit requested output is
-a text description or text prompt. The MVP never generates an image or invokes
-an external action. For every accepted text request, the constraint engine also
-persists one `FORBIDDEN` constraint with source
+Qualifier evidence is ordered by source start, longer normalized phrase first
+when matches overlap, then rule ID. The longer match owns an overlapping source
+range. Captures use the containing punctuation/conjunction-bounded clause,
+remove boundary punctuation, collapse whitespace, case-fold, and remove the
+object determiners `a`, `an`, and `the`. Capture and predicate behavior is:
+
+| Qualifier | Capture | Exact emitted predicate |
+|---|---|---|
+| `ONLY` | Governing action plus named object around `only` | `MUST_<ACTION>:<OBJECT>` plus `MUST_PRESERVE:UNSPECIFIED_CONTENT` |
+| `EXACTLY` | Governing action plus following target | `MUST_EXACTLY:<ACTION_AND_TARGET>` |
+| `APPROXIMATE` | Governed action/object after `could`/`might`, or around `roughly` | `PREFER_<ACTION>:<OBJECT>` |
+| `PROHIBITION` | Action/object following `do not` | `MUST_NOT_<ACTION>:<OBJECT>` |
+| `PRESERVATION` | Object following `without changing` | `MUST_PRESERVE:<OBJECT>` |
+| `SUBSTITUTION` | Explicit `<replacement> instead of <replaced>`; a governing action on the replacement is propagated to the replaced object | `MUST_NOT_<ACTION>:<REPLACED>` and `MUST_<ACTION>:<REPLACEMENT>` |
+| `PRIOR_REFERENCE` | The matched phrase itself | No constraint; one ordered unresolved reference mention |
+| `SEQUENTIAL` | The matched phrase itself | `MUST_PRESENT:ONE_ORDERED_STEP_AT_A_TIME` |
+
+`<ACTION>`, `<OBJECT>`, and composite values are uppercase underscore atoms made
+from normalized alphanumeric tokens. Non-alphanumeric runs become one
+underscore and boundary underscores are removed. The normalized lower-case
+capture remains separately observable. In the AT-004 combination, `anything
+else` following an `ONLY` target canonicalizes to `UNSPECIFIED_CONTENT`, so the
+explicit prohibition is `MUST_NOT_CHANGE:UNSPECIFIED_CONTENT`. Duplicate
+constraints with the same type, target key, source message, and priority are
+coalesced into one result whose evidence retains every contributing match.
+Unconfigured modal words have no qualifier effect.
+
+`context.yaml` also owns versioned `unsupported_request_rules`. Each rule has a
+unique ID, a category of `IMAGE_GENERATION` or `EXTERNAL_ACTION`, and one or more
+normalized phrases. A matched unsupported rule makes the result `UNSUPPORTED`
+unless intent evidence explicitly requests either a text description
+(`DESCRIBE`/`TEXT_DESCRIPTION`) or a written text prompt
+(`EDIT_TEXT`/`TEXT_ANSWER`). These exceptions return text only; they never
+execute the described action. The MVP never generates an image or invokes an
+external action. For every accepted text request, the constraint engine emits
+one `FORBIDDEN` constraint with source
 `DERIVED_OUTPUT_POLICY`, priority `1000`, normalized rule
 `MUST_NOT_EXECUTE:IMAGE_OR_ACTION`, and evidence naming the text-only policy.
 
@@ -126,6 +177,13 @@ and `correct` may be recognized only by configured primary-intent phrases.
   item is omitted and remaining weights are normalized. Comparisons use the
   unrounded value; only display rounds to two decimal places.
 
+The deterministic confidence gate takes the unrounded score and a materiality
+flag. `HIGH` never blocks. `MEDIUM` blocks only when the uncertain value would
+change topic, task, output type, a hard constraint, or a reference target.
+`LOW` blocks whenever the result is material. TASK-0007 does not perform
+reference resolution or retrieval; its weighted-confidence helper merely
+accepts optional already-computed factors for later callers.
+
 ## Clarification contract
 
 `NEEDS_CLARIFICATION` is a terminal non-failure outcome. It writes exactly one
@@ -146,10 +204,17 @@ Candidate labels and conflicting rules are normalized/sorted by the applicable
 canonical ranking/order. The `details_json` payload carries the reason, source
 IDs, candidates, and template inputs; it never stores a model-produced question.
 
+Only one blocking reason is selected. Precedence is: an interpretation block,
+then `UNSUPPORTED_CONDITION`, then `HARD_CONSTRAINT_CONFLICT`, then
+`MATERIAL_ASSUMPTION`. Reference-stage clarification remains owned by TASK-0008.
+TASK-0007 constructs the deterministic question and details but does not persist
+it or terminalize a processing run.
+
 ## Constraint priority and conflict rules
 
-The following numeric bands are canonical. Within a band, newer source message
-sequence wins; an exact tie is a conflict.
+The following numeric bands are canonical. Current-message `PREFERRED` and
+`OPTIONAL` rules use priority `1000`, but their soft type can never defeat a hard
+constraint.
 
 | Priority | Source |
 |---:|---|
@@ -162,19 +227,47 @@ sequence wins; an exact tie is a conflict.
 | 0 | `ASSUMED` hypothesis |
 
 `PREFERRED` and `OPTIONAL` use their source band but cannot defeat a hard
-constraint (`REQUIRED`, `FORBIDDEN`, or `PRESERVE`). When two equally
-authoritative hard constraints oppose each other, the run becomes
-`NEEDS_CLARIFICATION`; no model call occurs. When a higher rule defeats a lower
-one, retain both records and mark the lower rule `OVERRIDDEN` in the packet
-evidence. A conditional rule is inactive until its deterministic condition is
-true; unsupported conditions require clarification.
+constraint (`REQUIRED`, `FORBIDDEN`, or `PRESERVE`). Source recency is the
+immutable source-message sequence when both candidates have one; otherwise it
+is the immutable original-source UTC timestamp. Ordinal and source ID order
+evidence but do not create authority. Higher priority wins; within one priority,
+newer source recency wins. A hard rule defeats an opposing soft rule regardless
+of the soft rule's numeric source band. Opposing soft rules use priority,
+recency, normalized rule, then constraint UUID as a total ordering and mark the
+loser `OVERRIDDEN`; a soft-only tie never stops generation.
+
+Hard opposition is deliberately lexical. `REQUIRED` and `FORBIDDEN` oppose only
+when their canonical action/object target key is identical. A required `ADD`,
+`REMOVE`, `REPLACE`, `CHANGE`, `MODIFY`, `DELETE`, or `MOVE` action opposes
+`PRESERVE` only for the identical object. No synonym, entity, or semantic
+mutual-exclusion inference is permitted. Equal-priority, equal-recency opposing
+hard rules are both `CONFLICTING`; their conflict-group ID is
+`hard-conflict-<digest>`, where `<digest>` is the first 16 lowercase hexadecimal
+characters of SHA-256 over the target key and sorted constraint UUIDs. The
+result becomes `NEEDS_CLARIFICATION`; no provider-facing result is produced.
+
+When a winner defeats a loser, retain both records and mark the loser
+`OVERRIDDEN`. Resolution evidence contains both IDs, the normalized target key,
+and the deterministic comparison tuple. A conditional rule is inactive until
+its deterministic condition is true; unsupported conditions require
+clarification.
+
+An `ASSUMED` rule uses source `ASSUMPTION`, priority `0`, and an
+`ASSUME_<ACTION>:<OBJECT>` predicate. It is non-binding. An active explicit rule
+with the same compatible target entails it, leaving the assumption as
+`OVERRIDDEN` evidence. Otherwise an eligible assumption is material and returns
+`MATERIAL_ASSUMPTION`; it never reaches generation as an instruction.
 
 The only accepted conditional grammar is `mvp-condition-v1`, configured by the
 fixed `context.conditional_grammar_version` value. It accepts exactly one of:
 
 ```text
-if output type is <canonical OutputType>, <REQUIRED|FORBIDDEN|PRESERVE clause>
-if active project is "<exact normalized active-project name>", <REQUIRED|FORBIDDEN|PRESERVE clause>
+if output type is <canonical OutputType>, require <action/object clause>
+if output type is <canonical OutputType>, do not <action/object clause>
+if output type is <canonical OutputType>, preserve <object clause>
+if active project is "<exact normalized active-project name>", require <action/object clause>
+if active project is "<exact normalized active-project name>", do not <action/object clause>
+if active project is "<exact normalized active-project name>", preserve <object clause>
 ```
 
 The persisted condition object is
@@ -186,6 +279,16 @@ and makes it mandatory in the packet/validation; `FALSE` is `INACTIVE` and is
 kept only as packet evidence; a syntactically incomplete condition, unknown
 output type, or non-matching unquoted project expression is `UNSUPPORTED` and
 requires clarification. No other natural-language conditional is guessed.
+
+The public TASK-0007 boundary consists of immutable matched-rule evidence,
+intent candidates, unresolved reference mentions, one interpretation decision,
+constraint source evidence, conflict groups, the fixed response policy, and one
+constraint decision. Interpretation and constraint engines consume immutable
+requests and return those objects. They do not call repositories, persist
+results, construct a context packet, call a provider, or apply conversation
+state. A `same as before` match ends at the unresolved reference-mention output;
+candidate search, status selection, reuse, and reference clarification belong to
+TASK-0008.
 
 ## State transitions and concurrency
 

@@ -6,7 +6,7 @@ context:
   retrieved_memory_limit: 12
   minimum_relevance_score: 0.35
   topic_stack_limit: 10
-  rule_set_version: mvp-context-rules-v1
+  rule_set_version: mvp-context-rules-v2
   conditional_grammar_version: mvp-condition-v1
   intent_rules:
     - id: answer
@@ -19,7 +19,7 @@ context:
       priority: 50
     - id: describe
       intent: DESCRIBE
-      phrases: [describe]
+      phrases: [describe, give me a description, text description]
       priority: 50
     - id: plan
       intent: PLAN
@@ -39,7 +39,7 @@ context:
       priority: 50
     - id: edit-text
       intent: EDIT_TEXT
-      phrases: [edit text]
+      phrases: [edit text, remove, write a text prompt, text prompt]
       priority: 50
     - id: continue
       intent: CONTINUE
@@ -74,3 +74,10 @@ context:
     - id: sequential
       qualifier: SEQUENTIAL
       phrases: [one at a time]
+  unsupported_request_rules:
+    - id: image-generation
+      category: IMAGE_GENERATION
+      phrases: [generate an image, create an image, draw an image]
+    - id: external-action
+      category: EXTERNAL_ACTION
+      phrases: [execute an external action, send an email, call an api]

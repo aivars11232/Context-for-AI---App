@@ -1,0 +1,55 @@
+fixture_version: task-0007-deterministic-v1
+fixed:
+  conversation_id: 73000000-0000-4000-8000-000000000001
+  message_id: 73000000-0000-4000-8000-000000000002
+  processing_run_id: 73000000-0000-4000-8000-000000000003
+  evaluated_at: '2026-08-03T12:00:00Z'
+cases:
+  - {id: intent-answer, category: intent, message: answer, intent: ANSWER, output: TEXT_ANSWER}
+  - {id: intent-explain, category: intent, message: explain, intent: EXPLAIN, output: TEXT_EXPLANATION}
+  - {id: intent-describe, category: intent, message: describe, intent: DESCRIBE, output: TEXT_DESCRIPTION}
+  - {id: intent-plan, category: intent, message: plan, intent: PLAN, output: TEXT_PLAN}
+  - {id: intent-analyze, category: intent, message: analyze, intent: ANALYZE, output: TEXT_ANALYSIS}
+  - {id: intent-research, category: intent, message: research, intent: RESEARCH, output: TEXT_ANALYSIS}
+  - {id: intent-debug, category: intent, message: debug, intent: DEBUG, output: TEXT_ANALYSIS}
+  - {id: intent-edit, category: intent, message: edit text, intent: EDIT_TEXT, output: TEXT_ANSWER}
+  - {id: intent-continue, category: intent, message: continue, prior_output: TEXT_PLAN, intent: CONTINUE, output: TEXT_PLAN}
+  - {id: intent-correct, category: intent, message: correct, prior_output: TEXT_CODE, intent: CORRECT, output: TEXT_CODE}
+  - {id: qualifier-only, category: qualifier, message: remove only the blue line, qualifier: ONLY}
+  - {id: qualifier-exactly, category: qualifier, message: edit text use exactly three words, qualifier: EXACTLY}
+  - {id: qualifier-roughly, category: qualifier, message: edit text use roughly three words, qualifier: APPROXIMATE}
+  - {id: qualifier-could, category: qualifier, message: edit text could use python, qualifier: APPROXIMATE}
+  - {id: qualifier-might, category: qualifier, message: edit text might use python, qualifier: APPROXIMATE}
+  - {id: qualifier-prohibition, category: qualifier, message: describe; do not change layout, qualifier: PROHIBITION}
+  - {id: qualifier-preservation, category: qualifier, message: edit text without changing layout, qualifier: PRESERVATION}
+  - {id: qualifier-substitution, category: qualifier, message: use rust instead of python; edit text, qualifier: SUBSTITUTION}
+  - {id: qualifier-prior, category: qualifier, message: continue same as before, qualifier: PRIOR_REFERENCE}
+  - {id: qualifier-sequential, category: qualifier, message: plan one at a time, qualifier: SEQUENTIAL}
+  - {id: tie-same-intent, category: same_intent_tie, message: alpha bravo, expected_rule: plan-a}
+  - {id: tie-different-intent, category: different_intent_tie, message: alpha bravo, reason: LOW_CONFIDENCE_INTERPRETATION}
+  - {id: no-match, category: unsupported, message: unconfigured wording, reason: UNSUPPORTED_INTENT}
+  - {id: unsupported-image, category: unsupported, message: generate an image, reason: UNSUPPORTED_INTENT}
+  - {id: unsupported-action, category: unsupported, message: send an email, reason: UNSUPPORTED_INTENT}
+  - {id: text-description, category: permitted_text, message: describe how to generate an image, intent: DESCRIBE, output: TEXT_DESCRIPTION}
+  - {id: text-prompt, category: permitted_text, message: write a text prompt to generate an image, intent: EDIT_TEXT, output: TEXT_ANSWER}
+  - {id: topic-command, category: proposal, message: 'topic: Launch', topic: launch}
+  - {id: task-command, category: proposal, message: 'new task: Verify', task: verify}
+  - {id: condition-true, category: condition, message: 'if output type is text_answer, require use python', evaluation: "TRUE"}
+  - {id: condition-false, category: condition, message: 'if output type is text_answer, require use python', output: TEXT_PLAN, evaluation: "FALSE"}
+  - {id: condition-malformed, category: condition_error, message: 'if output type is text_answer require use python', reason: UNSUPPORTED_CONDITION}
+  - {id: condition-unknown, category: condition_error, message: 'if output type is unknown, require use python', reason: UNSUPPORTED_CONDITION}
+  - {id: condition-unquoted-project, category: condition_error, message: 'if active project is alpha, preserve layout', reason: UNSUPPORTED_CONDITION}
+  - {id: override-priority, category: override, target: USE:PYTHON, winner_priority: 1000, loser_priority: 600}
+  - {id: override-recency, category: override, target: USE:RUST, winner_sequence: 2, loser_sequence: 1}
+  - {id: hard-soft, category: hard_soft, target: USE:PYTHON, hard_priority: 400, soft_priority: 1000}
+  - {id: soft-soft, category: soft_soft, target: USE:RUST, expected_rule: 'MAY_USE:RUST'}
+  - {id: hard-conflict, category: conflict, target: USE:PYTHON, reason: HARD_CONSTRAINT_CONFLICT}
+  - {id: preserve-conflict, category: conflict, target: LAYOUT, reason: HARD_CONSTRAINT_CONFLICT}
+  - {id: assumed-redundant, category: assumption, target: USE:PYTHON, expected_status: OVERRIDDEN}
+  - {id: assumed-material, category: assumption, target: USE:RUST, reason: MATERIAL_ASSUMPTION}
+  - {id: confidence-high-edge, category: confidence, score: '0.80', band: HIGH, material_blocks: false}
+  - {id: confidence-medium-high, category: confidence, score: '0.799', band: MEDIUM, material_blocks: true}
+  - {id: confidence-medium-edge, category: confidence, score: '0.50', band: MEDIUM, material_blocks: true}
+  - {id: confidence-low-high, category: confidence, score: '0.499', band: LOW, material_blocks: true}
+  - {id: confidence-low-edge, category: confidence, score: '0', band: LOW, material_blocks: true}
+  - {id: confidence-weighted, category: weighted_confidence, interpretation: '0.80', reference: '0.60', retrieval: '0.40', score: '0.66'}

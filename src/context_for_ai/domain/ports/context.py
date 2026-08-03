@@ -7,11 +7,16 @@ from datetime import datetime
 from typing import Protocol
 
 from context_for_ai.domain.decisions import (
+    Constraint,
+    ConstraintDecision,
+    ConstraintSourceEvidence,
     ContextPacket,
+    InterpretationDecision,
+    ReferenceOutcome,
     RetrievalExclusion,
     RetrievalResult,
 )
-from context_for_ai.domain.entities import Memory
+from context_for_ai.domain.entities import ConversationState, Memory, Message
 from context_for_ai.domain.enums import ClarificationReason
 from context_for_ai.domain.errors import LifecycleInvariantError
 from context_for_ai.domain.lifecycle import ClarificationRequest, ValidationResult
@@ -21,6 +26,67 @@ from context_for_ai.domain.value_objects import (
     UnitScore,
     ensure_utc,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class InterpretationRequest:
+    """Exact immutable inputs for one deterministic interpretation."""
+
+    processing_run_id: DomainId
+    message: Message
+    state: ConversationState
+    evaluated_at: datetime
+
+    def __post_init__(self) -> None:
+        if self.message.conversation_id != self.state.conversation_id:
+            raise LifecycleInvariantError(
+                "Interpretation message and state must share a conversation."
+            )
+        object.__setattr__(self, "evaluated_at", ensure_utc(self.evaluated_at))
+
+
+@dataclass(frozen=True, slots=True)
+class ConstraintEvaluationRequest:
+    """Exact immutable inputs for one deterministic constraint decision."""
+
+    message: Message
+    state: ConversationState
+    interpretation: InterpretationDecision
+    reference_outcomes: tuple[ReferenceOutcome, ...]
+    eligible_constraints: tuple[Constraint, ...]
+    eligible_evidence: tuple[ConstraintSourceEvidence, ...]
+    active_project_name: str | None
+    evaluated_at: datetime
+
+    def __post_init__(self) -> None:
+        if self.message.conversation_id != self.state.conversation_id:
+            raise LifecycleInvariantError(
+                "Constraint message and state must share a conversation."
+            )
+        if (
+            self.interpretation.interpretation.source_message_id
+            != self.message.id
+        ):
+            raise LifecycleInvariantError(
+                "Constraint interpretation must belong to the request message."
+            )
+        references = tuple(self.reference_outcomes)
+        constraints = tuple(self.eligible_constraints)
+        evidence = tuple(self.eligible_evidence)
+        if {item.constraint_id for item in evidence} != {
+            constraint.id for constraint in constraints
+        }:
+            raise LifecycleInvariantError(
+                "Eligible constraints require exactly one source-evidence item each."
+            )
+        if self.active_project_name is not None and not self.active_project_name.strip():
+            raise LifecycleInvariantError(
+                "Active project name must be non-empty or null."
+            )
+        object.__setattr__(self, "reference_outcomes", references)
+        object.__setattr__(self, "eligible_constraints", constraints)
+        object.__setattr__(self, "eligible_evidence", evidence)
+        object.__setattr__(self, "evaluated_at", ensure_utc(self.evaluated_at))
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +212,18 @@ class ClarificationBuilder(Protocol):
     """Build one canonical clarification question without a model call."""
 
     def build(self, request: ClarificationBuildRequest) -> ClarificationRequest: ...
+
+
+class InterpretationEngine(Protocol):
+    """Return one source-preserving deterministic interpretation decision."""
+
+    def interpret(self, request: InterpretationRequest) -> InterpretationDecision: ...
+
+
+class ConstraintEngine(Protocol):
+    """Return one deterministic constraint decision without persistence."""
+
+    def evaluate(self, request: ConstraintEvaluationRequest) -> ConstraintDecision: ...
 
 
 class ContextRetriever(Protocol):

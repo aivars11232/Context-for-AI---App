@@ -12,16 +12,25 @@ from context_for_ai.domain.decisions import (
     CONTEXT_PACKET_SCHEMA_VERSION,
     Condition,
     Constraint,
+    ConstraintConflictGroup,
+    ConstraintDecision,
+    ConstraintSourceEvidence,
     ContextPacket,
+    IntentCandidate,
+    InterpretationDecision,
+    MatchedRuleEvidence,
     QualifierMatch,
+    ReferenceMention,
     ReferenceOutcome,
     RequestInterpretation,
+    ResponsePolicy,
     RetrievalExclusion,
     RetrievalResult,
 )
 from context_for_ai.domain.enums import (
     ConditionEvaluation,
     ConditionKind,
+    ClarificationReason,
     ConstraintResolutionStatus,
     ConstraintScope,
     ConstraintSourceKind,
@@ -71,6 +80,125 @@ def test_interpretation_and_qualifiers_are_immutable_value_results() -> None:
     assert first == second
     with pytest.raises(FrozenInstanceError):
         first.reason = "changed"  # type: ignore[misc]
+
+
+def test_task_0007_interpretation_evidence_preserves_offsets_and_captures() -> None:
+    evidence = MatchedRuleEvidence(
+        "intent.edit.remove",
+        "Remove",
+        "remove",
+        0,
+        6,
+        80,
+    )
+    qualifier = QualifierMatch(
+        QualifierKind.ONLY,
+        "qualifier.only",
+        "only",
+        "only",
+        7,
+        11,
+        FrozenJsonObject({"target": "remove blue line"}),
+    )
+    interpretation = RequestInterpretation(
+        identifier(1),
+        identifier(2),
+        IntentType.EDIT_TEXT,
+        OutputType.TEXT_ANSWER,
+        evidence.rule_id,
+        (qualifier,),
+        UnitScore("1"),
+        "selected intent.edit.remove",
+        NOW,
+    )
+    decision = InterpretationDecision(
+        interpretation,
+        "mvp-context-rules-v2",
+        (IntentCandidate(IntentType.EDIT_TEXT, OutputType.TEXT_ANSWER, evidence),),
+        None,
+        None,
+        (ReferenceMention(0, "same as before", "same as before", "prior", 12, 26),),
+        ClarificationReason.LOW_CONFIDENCE_INTERPRETATION,
+        FrozenJsonObject({"candidate_intents": ["EDIT_TEXT"]}),
+    )
+
+    assert qualifier.captures["target"] == "remove blue line"
+    assert decision.intent_candidates[0].evidence.matched_text == "Remove"
+    assert not hasattr(decision.reference_mentions[0], "resolved_entity_id")
+    with pytest.raises(FrozenInstanceError):
+        decision.rule_set_version = "changed"  # type: ignore[misc]
+
+
+def test_task_0007_constraint_decision_requires_complete_evidence() -> None:
+    constraint = Constraint(
+        identifier(10),
+        identifier(1),
+        identifier(2),
+        0,
+        ConstraintType.FORBIDDEN,
+        None,
+        ConstraintScope.CURRENT_RESPONSE,
+        "MUST_NOT_EXECUTE:IMAGE_OR_ACTION",
+        1000,
+        ConstraintSourceKind.DERIVED_OUTPUT_POLICY,
+        "text-only policy",
+        UnitScore("1"),
+        ConstraintResolutionStatus.ACTIVE,
+        None,
+        None,
+        NOW,
+    )
+    evidence = ConstraintSourceEvidence(
+        constraint.id,
+        "EXECUTE:IMAGE_OR_ACTION",
+        ("policy.text-only",),
+        ("text-only policy",),
+        None,
+        NOW,
+        ("1000", "HARD", NOW.isoformat()),
+    )
+    policy = ResponsePolicy(OutputType.TEXT_ANSWER, "mvp-context-rules-v2")
+    decision = ConstraintDecision(
+        (constraint,),
+        (evidence,),
+        (),
+        policy,
+        None,
+        None,
+    )
+
+    assert decision.response_policy.text_only is True
+    assert decision.response_policy.actions_allowed is False
+    with pytest.raises(LifecycleInvariantError, match="one evidence"):
+        ConstraintDecision((constraint,), (), (), policy, None, None)
+
+    second = Constraint(
+        identifier(11),
+        identifier(1),
+        identifier(2),
+        1,
+        ConstraintType.REQUIRED,
+        None,
+        ConstraintScope.CURRENT_RESPONSE,
+        "MUST_EXECUTE:IMAGE_OR_ACTION",
+        1000,
+        ConstraintSourceKind.CURRENT_MESSAGE,
+        "execute image action",
+        UnitScore("1"),
+        ConstraintResolutionStatus.CONFLICTING,
+        "hard-conflict-example",
+        None,
+        NOW,
+    )
+    with pytest.raises(LifecycleInvariantError, match="decision constraints"):
+        ConstraintDecision(
+            (constraint,),
+            (evidence,),
+            (ConstraintConflictGroup("group", "EXECUTE:IMAGE_OR_ACTION", (constraint.id, second.id)),),
+            policy,
+            ClarificationReason.HARD_CONSTRAINT_CONFLICT,
+            FrozenJsonObject({"rule_a": constraint.normalized_rule, "rule_b": second.normalized_rule}),
+        )
 
 
 def test_reference_outcome_enforces_resolved_entity_presence() -> None:

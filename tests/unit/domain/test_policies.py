@@ -32,6 +32,7 @@ from context_for_ai.domain.policies import (
     PriorityBand,
     confidence_band,
     memory_effective_status,
+    overall_confidence,
     require_active_task_consistency,
     require_memory_provenance,
     require_model_request_transition,
@@ -39,6 +40,7 @@ from context_for_ai.domain.policies import (
     require_processing_run_transition,
     require_project_transition,
     require_task_transition,
+    requires_confidence_clarification,
 )
 from context_for_ai.domain.value_objects import DomainId, UnitScore
 
@@ -116,6 +118,40 @@ def test_confidence_band_uses_unrounded_thresholds(
     expected: ConfidenceBand,
 ) -> None:
     assert confidence_band(UnitScore(score)) is expected
+
+
+def test_overall_confidence_uses_exact_weights_and_renormalizes_omissions() -> None:
+    assert overall_confidence(interpretation=UnitScore("0.73")) == UnitScore("0.73")
+    assert overall_confidence(
+        interpretation=UnitScore("0.80"),
+        reference_resolution=UnitScore("0.60"),
+        retrieval=UnitScore("0.40"),
+    ) == UnitScore("0.66")
+    assert overall_confidence(
+        interpretation=UnitScore("0.80"),
+        retrieval=UnitScore("0.40"),
+    ) == UnitScore("0.6857142857142857142857142857")
+
+
+@pytest.mark.parametrize(
+    ("score", "material", "expected"),
+    [
+        ("0.80", True, False),
+        ("0.799", True, True),
+        ("0.50", False, False),
+        ("0.499", True, True),
+        ("0", False, False),
+    ],
+)
+def test_confidence_gate_blocks_only_material_non_high_results(
+    score: str,
+    material: bool,
+    expected: bool,
+) -> None:
+    assert requires_confidence_clarification(
+        UnitScore(score),
+        material=material,
+    ) is expected
 
 
 def test_project_transition_is_archive_only_and_blocks_active_runs() -> None:

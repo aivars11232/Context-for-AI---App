@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from enum import IntEnum, StrEnum, unique
 
 from context_for_ai.domain.entities import (
@@ -150,6 +151,42 @@ def confidence_band(score: UnitScore) -> ConfidenceBand:
     if score.value >= UnitScore("0.50").value:
         return ConfidenceBand.MEDIUM
     return ConfidenceBand.LOW
+
+
+def overall_confidence(
+    *,
+    interpretation: UnitScore,
+    reference_resolution: UnitScore | None = None,
+    retrieval: UnitScore | None = None,
+) -> UnitScore:
+    """Return the exact normalized weighted mean of applicable confidence factors."""
+
+    factors = ((interpretation, Decimal("0.50")),)
+    optional_factors = (
+        (reference_resolution, Decimal("0.30")),
+        (retrieval, Decimal("0.20")),
+    )
+    applicable = factors + tuple(
+        (score, weight) for score, weight in optional_factors if score is not None
+    )
+    total_weight = sum((weight for _, weight in applicable), Decimal(0))
+    weighted_score = sum(
+        (score.value * weight for score, weight in applicable),
+        Decimal(0),
+    )
+    return UnitScore(weighted_score / total_weight)
+
+
+def requires_confidence_clarification(
+    score: UnitScore,
+    *,
+    material: bool,
+) -> bool:
+    """Return whether an unrounded confidence result blocks a material decision."""
+
+    if not isinstance(material, bool):
+        raise LifecycleInvariantError("Confidence materiality must be boolean.")
+    return material and confidence_band(score) is not ConfidenceBand.HIGH
 
 
 def is_terminal_task(status: TaskStatus) -> bool:

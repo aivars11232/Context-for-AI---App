@@ -25,6 +25,7 @@ from context_for_ai.domain.ports import (
     ClarificationRepository,
     Clock,
     ConfigurationLoader,
+    ConstraintEngine,
     ConstraintRepository,
     ContextPacketRepository,
     ContextRetriever,
@@ -34,6 +35,7 @@ from context_for_ai.domain.ports import (
     EntityRepository,
     EvaluationRepository,
     IdGenerator,
+    InterpretationEngine,
     MemoryRepository,
     MessageRepository,
     ModelCallRepository,
@@ -90,6 +92,8 @@ class SystemPorts:
 class DeterministicComponents:
     """Context components invoked abstractly by application services."""
 
+    interpretation_engine: InterpretationEngine
+    constraint_engine: ConstraintEngine
     clarification_builder: ClarificationBuilder
     context_retriever: ContextRetriever
     response_validator: ResponseValidator

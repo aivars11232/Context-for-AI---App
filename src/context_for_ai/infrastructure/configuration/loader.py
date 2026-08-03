@@ -58,6 +58,9 @@ _QUALIFIER_KINDS = frozenset(
         "SEQUENTIAL",
     }
 )
+_UNSUPPORTED_REQUEST_CATEGORIES = frozenset(
+    {"IMAGE_GENERATION", "EXTERNAL_ACTION"}
+)
 _MODEL_OUTPUT_TYPES = frozenset(
     {
         "TEXT_ANSWER",
@@ -93,6 +96,10 @@ _QUALIFIER_BASELINES: dict[str, frozenset[str]] = {
     "SUBSTITUTION": frozenset({"instead of"}),
     "PRIOR_REFERENCE": frozenset({"same as before"}),
     "SEQUENTIAL": frozenset({"one at a time"}),
+}
+_UNSUPPORTED_REQUEST_BASELINES: dict[str, frozenset[str]] = {
+    "IMAGE_GENERATION": frozenset({"generate an image"}),
+    "EXTERNAL_ACTION": frozenset({"execute an external action"}),
 }
 _PRESERVE_VERB_BASELINE = frozenset(
     {"add", "remove", "replace", "change", "modify", "delete", "move"}
@@ -136,6 +143,13 @@ class QualifierRule:
 
 
 @dataclass(frozen=True, slots=True)
+class UnsupportedRequestRule:
+    id: str
+    category: str
+    phrases: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ContextSettings:
     tokenizer_estimator: str
     maximum_prompt_tokens: int
@@ -148,6 +162,7 @@ class ContextSettings:
     conditional_grammar_version: str
     intent_rules: tuple[IntentRule, ...]
     qualifier_rules: tuple[QualifierRule, ...]
+    unsupported_request_rules: tuple[UnsupportedRequestRule, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -586,6 +601,7 @@ def _validate_configuration(
             "conditional_grammar_version",
             "intent_rules",
             "qualifier_rules",
+            "unsupported_request_rules",
         ),
         required=(
             "tokenizer_estimator",
@@ -595,6 +611,7 @@ def _validate_configuration(
             "conditional_grammar_version",
             "intent_rules",
             "qualifier_rules",
+            "unsupported_request_rules",
         ),
         defaults={
             "reserved_response_tokens": 512,
@@ -666,6 +683,9 @@ def _validate_configuration(
     )
     intent_rules = _intent_rules(context_values["intent_rules"])
     qualifier_rules = _qualifier_rules(context_values["qualifier_rules"])
+    unsupported_request_rules = _unsupported_request_rules(
+        context_values["unsupported_request_rules"]
+    )
     context = ContextSettings(
         tokenizer_estimator,
         maximum_prompt_tokens,
@@ -678,6 +698,7 @@ def _validate_configuration(
         conditional_grammar_version,
         intent_rules,
         qualifier_rules,
+        unsupported_request_rules,
     )
 
     memory_values = _section_values(
@@ -1081,6 +1102,70 @@ def _qualifier_rules(value: Any) -> tuple[QualifierRule, ...]:
                 "context.yaml",
                 "context.qualifier_rules",
                 f"baseline phrases for {qualifier}",
+            )
+    return tuple(rules)
+
+
+def _unsupported_request_rules(value: Any) -> tuple[UnsupportedRequestRule, ...]:
+    raw_rules = _list(value, "context.yaml", "context.unsupported_request_rules")
+    rules: list[UnsupportedRequestRule] = []
+    seen_ids: set[str] = set()
+    phrase_owners: dict[str, str] = {}
+    phrases_by_category: dict[str, set[str]] = {
+        category: set() for category in _UNSUPPORTED_REQUEST_CATEGORIES
+    }
+    for index, raw_rule in enumerate(raw_rules):
+        location = f"context.unsupported_request_rules[{index}]"
+        rule = _rule_values(
+            "context.yaml",
+            location,
+            raw_rule,
+            allowed=("id", "category", "phrases"),
+            required=("id", "category", "phrases"),
+        )
+        identifier = _identifier(rule["id"], "context.yaml", f"{location}.id")
+        if identifier in seen_ids:
+            raise ConfigurationError(
+                "context.yaml", f"{location}.id", "a unique rule id"
+            )
+        seen_ids.add(identifier)
+        category = _enum(
+            rule["category"],
+            "context.yaml",
+            f"{location}.category",
+            _UNSUPPORTED_REQUEST_CATEGORIES,
+        )
+        phrases = tuple(
+            _normalised_phrase(
+                phrase,
+                "context.yaml",
+                f"{location}.phrases[{phrase_index}]",
+            )
+            for phrase_index, phrase in enumerate(
+                _list(rule["phrases"], "context.yaml", f"{location}.phrases")
+            )
+        )
+        if len(set(phrases)) != len(phrases):
+            raise ConfigurationError(
+                "context.yaml", f"{location}.phrases", "unique normalized phrases"
+            )
+        for phrase in phrases:
+            owner = phrase_owners.get(phrase)
+            if owner is not None:
+                raise ConfigurationError(
+                    "context.yaml",
+                    f"{location}.phrases",
+                    "phrases owned by one unsupported-request rule",
+                )
+            phrase_owners[phrase] = identifier
+            phrases_by_category[category].add(phrase)
+        rules.append(UnsupportedRequestRule(identifier, category, phrases))
+    for category, baseline in _UNSUPPORTED_REQUEST_BASELINES.items():
+        if not baseline.issubset(phrases_by_category[category]):
+            raise ConfigurationError(
+                "context.yaml",
+                "context.unsupported_request_rules",
+                f"baseline phrases for {category}",
             )
     return tuple(rules)
 

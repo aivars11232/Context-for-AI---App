@@ -16,6 +16,7 @@ type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 type OutputShape = Literal[
     "NON_EMPTY_TEXT", "NUMBERED_LIST", "FENCED_CODE", "COMPARISON_LIST"
 ]
+type UnsupportedRequestCategory = Literal["IMAGE_GENERATION", "EXTERNAL_ACTION"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,15 @@ class QualifierRule:
 
 
 @dataclass(frozen=True, slots=True)
+class UnsupportedRequestRule:
+    """One validated deterministic unsupported image/action rule."""
+
+    id: str
+    category: UnsupportedRequestCategory
+    phrases: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ContextSettings:
     """Validated deterministic context-construction settings."""
 
@@ -74,6 +84,7 @@ class ContextSettings:
     conditional_grammar_version: str
     intent_rules: tuple[IntentRule, ...]
     qualifier_rules: tuple[QualifierRule, ...]
+    unsupported_request_rules: tuple[UnsupportedRequestRule, ...]
 
 
 @dataclass(frozen=True, slots=True)

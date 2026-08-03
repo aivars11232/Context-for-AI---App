@@ -21,6 +21,10 @@ def test_complete_valid_configuration_loads(fixture_application_root: Path) -> N
     assert configuration.app.environment == "development"
     assert configuration.model.name == "fixture-model"
     assert configuration.context.maximum_prompt_tokens == 2048
+    assert configuration.context.rule_set_version == "mvp-context-rules-v2"
+    assert {
+        rule.category for rule in configuration.context.unsupported_request_rules
+    } == {"IMAGE_GENERATION", "EXTERNAL_ACTION"}
     assert configuration.app.data_directory == fixture_application_root / "data"
     assert configuration.logging.directory == fixture_application_root / "data" / "logs"
     assert len(configuration.configuration_fingerprint) == 64
@@ -150,6 +154,39 @@ def test_cross_intent_duplicate_phrase_at_one_priority_is_rejected(
         load_configuration(application_root=fixture_application_root, environ={})
 
     assert "context.yaml:context.intent_rules[1].phrases" in str(error.value)
+
+
+def test_unsupported_request_rules_validate_category_and_phrase_ownership(
+    fixture_application_root: Path,
+) -> None:
+    context_path = fixture_application_root / "config" / "context.yaml"
+    context_document = read_yaml(context_path)
+    rules = context_document["context"]["unsupported_request_rules"]
+    rules[1]["phrases"].append("generate an image")
+    write_yaml(context_path, context_document)
+
+    with pytest.raises(ConfigurationError) as error:
+        load_configuration(application_root=fixture_application_root, environ={})
+
+    assert "context.yaml:context.unsupported_request_rules[1].phrases" in str(
+        error.value
+    )
+
+
+def test_unsupported_request_rules_require_each_canonical_baseline(
+    fixture_application_root: Path,
+) -> None:
+    context_path = fixture_application_root / "config" / "context.yaml"
+    context_document = read_yaml(context_path)
+    context_document["context"]["unsupported_request_rules"][0]["phrases"] = [
+        "draw an image"
+    ]
+    write_yaml(context_path, context_document)
+
+    with pytest.raises(ConfigurationError) as error:
+        load_configuration(application_root=fixture_application_root, environ={})
+
+    assert "baseline phrases for IMAGE_GENERATION" in str(error.value)
 
 
 @pytest.mark.parametrize(

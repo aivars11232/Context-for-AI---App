@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
-from dataclasses import fields
+from dataclasses import fields, is_dataclass
 import inspect
 from typing import Protocol, get_type_hints
 
 from context_for_ai.domain.lifecycle import ClarificationRequest, ValidationResult
+from context_for_ai.domain.decisions import ConstraintDecision, InterpretationDecision
 from context_for_ai.domain.ports import (
     CancellationToken,
     ClarificationBuildRequest,
@@ -16,11 +17,15 @@ from context_for_ai.domain.ports import (
     CompletedGeneration,
     ConfigurationLoader,
     ConfigurationSnapshot,
+    ConstraintEngine,
+    ConstraintEvaluationRequest,
     ContextRetriever,
     CorrectionController,
     CorrectionDecision,
     GenerationRequest,
     IdGenerator,
+    InterpretationEngine,
+    InterpretationRequest,
     ModelGateway,
     ResponseValidator,
     RetrievalDecision,
@@ -38,9 +43,11 @@ SERVICE_PROTOCOLS = (
     ClarificationBuilder,
     Clock,
     ConfigurationLoader,
+    ConstraintEngine,
     ContextRetriever,
     CorrectionController,
     IdGenerator,
+    InterpretationEngine,
     ModelGateway,
     ResponseValidator,
     TraceLogger,
@@ -98,6 +105,14 @@ def test_trace_event_has_identifiers_but_no_raw_content_fields() -> None:
 
 
 def test_deterministic_component_ports_have_typed_single_operation_contracts() -> None:
+    assert get_type_hints(InterpretationEngine.interpret) == {
+        "request": InterpretationRequest,
+        "return": InterpretationDecision,
+    }
+    assert get_type_hints(ConstraintEngine.evaluate) == {
+        "request": ConstraintEvaluationRequest,
+        "return": ConstraintDecision,
+    }
     assert get_type_hints(ClarificationBuilder.build) == {
         "request": ClarificationBuildRequest,
         "return": ClarificationRequest,
@@ -118,3 +133,8 @@ def test_deterministic_component_ports_have_typed_single_operation_contracts() -
         if name != "self"
     )
     assert correction_hints["return"] == CorrectionDecision
+
+    for request_type in (InterpretationRequest, ConstraintEvaluationRequest):
+        assert is_dataclass(request_type)
+        assert request_type.__dataclass_params__.frozen is True
+        assert "__slots__" in vars(request_type)
