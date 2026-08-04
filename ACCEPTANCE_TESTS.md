@@ -196,11 +196,52 @@ rows.
 
 ### AT-010 Model abstraction and buffering
 
-**Fixture:** `MockModelProvider` yielding one complete result and a static
-import-boundary check. **Action:** run a packet through the gateway. **Pass:**
-application/domain modules do not import the Ollama implementation; only the
-composition root wires it; the UI receives no partial output; the persisted
-request/response contains trace IDs and completion status.
+**TASK-0011 component fixture:** one fixed `GenerationRequest` compatible with
+the `PromptRenderResult` handoff, fixed UUIDs/settings, an immutable
+`mock-model-provider-v1` script covering complete success, provider unavailable,
+model not found, timeout, invalid provider response, and a held success step, a
+thread-safe test cancellation token, and a static absolute/relative import
+boundary check.
+
+**TASK-0011 action:** call the gateway directly for every terminal outcome; hold
+one success before its terminal checkpoint; separately exercise pre-call and
+held-checkpoint cancellation; inspect the mock's immutable call snapshot.
+
+**TASK-0011 pass:**
+
+- every valid matched, non-exhausted invocation returns exactly one value in the
+  documented `GenerationOutcome` sum, with the exact fixed safe code/message
+  mapping; malformed scripts, request mismatches, and exhaustion instead produce
+  the documented deterministic fixture errors and no terminal call record;
+- the mock selects only by call order, exactly matches the complete request,
+  consumes/repeats/exhausts as documented, and is value-deterministic across
+  fresh equal scripts;
+- before a held step is released, the call has not returned, no terminal call
+  record exists, and no response text or result is observable; release returns
+  exactly one `CompletedGeneration` containing the full fixture text;
+- timeout, cancellation, unavailable-provider, unavailable-model, and invalid
+  provider response return no complete or partial text; cancellation wins at a
+  shared terminal checkpoint and never force-terminates a worker;
+- request correlation is preserved exactly through the mock call record:
+  `processing_run_id`, `context_packet_id`, `model_request_id`, and
+  `attempt_number` are neither allocated nor changed by the gateway;
+- the request and outcome expose every provider-independent input required by
+  the documented later persistence mapping, but the gateway/mock performs no
+  persistence or trace emission; and
+- domain and application modules import no mock or Ollama implementation;
+  context-engine modules have no gateway dependency; and presentation/QML
+  import application use-case interfaces only, with no gateway or provider
+  dependency. Test composition injects the mock through the existing gateway
+  port; positive Ollama construction is not a TASK-0011 claim.
+
+**Integrated assertions outside TASK-0011:** when broader pipeline integration
+exists, the already-created request row carries the same run/packet/request IDs,
+attempt, model, prompt, and terminal request status; a completed response links
+through `model_request_id`; a failure creates no response row; trace events use
+the same correlation set; and no partial provider text reaches persistence or
+the UI. QML behavior, UI responsiveness, actual lifecycle persistence,
+response validation, and broader pipeline orchestration are not TASK-0011 exit
+criteria.
 
 ### AT-011 Response validation
 

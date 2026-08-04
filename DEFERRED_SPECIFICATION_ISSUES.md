@@ -21,7 +21,7 @@ also agree.
 | D-003 | Define same-target normalization, hard-rule opposition, conflict grouping, non-hard current `PREFERRED`/`OPTIONAL` priority, and source sequencing for non-message constraints. | `TASK-0007` |
 | D-004 | Complete processing/model-request/correction integrity rules: legal timestamps, `INITIAL`/attempt-0 and `REVISION`/attempt-1-or-2 pairing, same-run correction links, and repository enforcement. | `TASK-0005`, `TASK-0014` |
 | D-005 | Reconcile restart recovery with the foreground UI controller: specify how an already accepted run resumes without becoming a prohibited background worker. | `TASK-0014`, `TASK-0015` |
-| D-006 | Correct `ModelGateway` ownership so it returns typed timeout/cancellation outcomes while application/repository code persists lifecycle state; define cancellation ownership during recovery. | `TASK-0011`, `TASK-0012` |
+| D-006 | Resolved for the provider-independent contract below: `ModelGateway` returns typed values, application/repository code persists lifecycle state, and live/recovery token ownership is explicit. TASK-0012 must preserve this contract at the Ollama transport boundary. | `TASK-0011`, `TASK-0012` |
 | D-007 | Update `docs/diagrams/SEQUENCES.md` for duplicate-key and Busy branches, clarification persistence, `PENDING` claim, context-stage state update, and recovery. | `TASK-0014` |
 | D-008 | Resolved for TASK-0010 below: the fixed prompt-policy/schema versions, versioning rules, complete packet/aggregate shapes, rendering grammar, evidence, retrieval, budgeting, omission, and typed-overflow contracts are authoritative. | `TASK-0010` |
 | D-009 | Define evaluation-case and evaluation-run JSON shapes, category taxonomy, fixture linkage, expected observables, and repository/use-case boundary; alternatively defer runtime evaluation persistence consistently. | `TASK-0005`, `TASK-0018` |
@@ -183,8 +183,42 @@ context-stage persistence outcomes.
 The reconciliation does not assign interpretation, reference resolution,
 constraint resolution, retrieval selection, provider/model calls, response
 validation, correction control/persistence, later pipeline orchestration,
-trace-event integration, or UI behavior to TASK-0010. D-014 remains unresolved
-for `TASK-0011` through `TASK-0018`; no later-task issue is resolved here.
+trace-event integration, or UI behavior to TASK-0010. After the TASK-0011
+reconciliation below, D-014 remains unresolved for `TASK-0012` through
+`TASK-0018`; no later-task issue is resolved here.
+
+### TASK-0011 reconciliation
+
+D-006 and the TASK-0011 portion of D-014 are resolved by the exact
+`PromptRenderResult` handoff in `docs/contracts/ContextPacket.md`, the exhaustive
+returned-value and safe-mapping contract in `docs/contracts/ModelGateway.md`,
+the application-owned mapping in `docs/contracts/ProcessUserMessage.md`, the
+bounded component/integration split in AT-010, and the delivery contract in
+`tasks/TASK-0011-MODEL-GATEWAY-AND-DETERMINISTIC-MOCK-PROVIDER.md`.
+
+The gateway returns one immutable `GenerationOutcome`; expected provider
+failures are typed values rather than exceptions. The gateway and provider
+adapters never persist lifecycle state. The Model Gateway contract fixes the
+diagnostic code, safe message, request/run status, canonical failure code, and
+no-response persistence expectation for every failure variant.
+
+The foreground request owner owns a monotonic thread-safe token; the gateway
+only observes it. Cancellation wins when it is observable at the same terminal
+checkpoint as timeout or another outcome. Tokens are not persisted or inferred
+after restart. If existing recovery policy permits a not-yet-sent call, its
+application initiator supplies a fresh token; this does not define recovery
+scheduling or presentation. An uncertain durable `IN_FLIGHT` request is never
+repeated.
+
+TASK-0011 owns the deterministic test adapter, test composition, correlation
+preservation, safe persistence inputs, import isolation, cancellation, and
+complete-buffering component assertions. It does not own Ollama transport,
+production composition, lifecycle persistence, application trace events,
+response validation, broader pipeline orchestration, QML, or UI behavior.
+
+TASK-0011 is specification-ready but remains implementation-blocked until the
+TASK-0010 implementation and exit criteria pass. This reconciliation does not
+resolve any separate TASK-0012-or-later specification issue.
 
 ## Historical planning reconciliation
 

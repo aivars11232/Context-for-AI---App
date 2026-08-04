@@ -803,6 +803,15 @@ metadata: its included and omitted arrays are the packet arrays. Correction
 result arrays follow the correction-local rule above. Rendered prompt text is
 returned only to its in-process caller; this task does not persist or log it.
 
+`PromptRenderResult` is the complete TASK-0010-to-model-gateway handoff object.
+The application caller copies its `rendered_prompt` byte-for-byte and its
+`context_packet_id` unchanged into the provider-independent generation request.
+The gateway receives neither the packet nor the render result itself and must
+not trim, normalize, prefix, suffix, parse, or re-render the prompt. Render
+estimates, inclusion/omission evidence, policy version, and render kind remain
+caller-side context evidence. `ContextBudgetExceeded` contains no prompt and
+must never cause a gateway invocation.
+
 ## `CONTEXT_BUDGET_EXCEEDED` and context-stage persistence
 
 Initial overflow occurs exactly when the complete mandatory initial prompt

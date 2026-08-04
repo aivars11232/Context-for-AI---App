@@ -42,7 +42,9 @@ existing in-progress result, or a pre-acceptance busy result.
    hard-constraint conflict. Persist exactly one deterministic clarification
    request and no `pipeline_failures` row for this outcome.
 5. Start one provider request in a short transaction, then call the gateway
-   outside a database transaction. Buffer a complete result.
+   outside a database transaction. Receive exactly one typed
+   `GenerationOutcome`; expected transport failures are returned values, not
+   exceptions.
 6. Persist and validate every received candidate. A valid candidate is linked to
    one assistant message and ends the run successfully.
 7. On validation failure, create at most two correction attempts. Revisions use
@@ -62,13 +64,20 @@ boundary.
 Direct SQL, provider-specific HTTP, UI work, model routing, hidden requirement
 inference, automatic memory mutation, or an unbounded/automatic retry.
 
-## Error contract
+## Error and gateway-outcome contract
 
-The use case maps infrastructure failures to typed application outcomes:
-`ConfigurationError`, `PersistenceError`, `ConcurrencyConflictError`, `BusyError`,
-`ContextConstructionError`, `ClarificationRequired`, `ProviderUnavailableError`,
-`ModelNotFoundError`, `ModelTimeoutError`, `ModelCancelledError`,
-`InvalidProviderResponseError`, `ContextBudgetExceededError`, and
-`ValidationExhaustedError`. Terminal failures write `pipeline_failures` with a
-safe user message and trace IDs when persistence is available; clarification and
-pre-acceptance busy are not failures.
+The use case maps non-gateway failures to typed application outcomes:
+`ConfigurationError`, `PersistenceError`, `ConcurrencyConflictError`,
+`BusyError`, `ContextConstructionError`, `ClarificationRequired`,
+`ContextBudgetExceededError`, and `ValidationExhaustedError`.
+
+Expected gateway conditions do not join that exception list. The gateway
+returns `CompletedGeneration` or one of
+`ProviderUnavailableFailure`, `ModelNotFoundFailure`,
+`ModelTimeoutFailure`, `ModelCancelledFailure`, and
+`InvalidProviderResponseFailure`. The application maps each returned failure
+exactly according to the status/code/message/persistence table in
+`docs/contracts/ModelGateway.md`; it does not inspect provider exceptions or
+invent a message. Terminal failures write `pipeline_failures` with the safe
+message and request correlation fields when persistence is available.
+Clarification and pre-acceptance busy are not failures.
