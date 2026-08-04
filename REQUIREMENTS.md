@@ -3,7 +3,8 @@
 The detailed deterministic behavior for these requirements is normative in
 `docs/contracts/DomainAndDecisionRules.md`, `docs/contracts/ContextPacket.md`,
 `docs/contracts/ProcessUserMessage.md`, `docs/contracts/ModelGateway.md`,
-`docs/contracts/Persistence.md`, and `docs/contracts/ResponseValidation.md`.
+`docs/contracts/OllamaAdapter.md`, `docs/contracts/Persistence.md`, and
+`docs/contracts/ResponseValidation.md`.
 
 ## Functional requirements
 
@@ -82,10 +83,15 @@ conditional and conflict evidence.
 
 ### FR-011 AI provider abstraction
 
-The system shall call one configured local Ollama text-generation model through
-an inward-facing provider-independent gateway. It shall buffer complete output
-before validation and shall not stream, route, fall back to another provider,
-call tools, or execute actions in the MVP.
+The system shall call one configured local-only Ollama text-generation model
+through an inward-facing provider-independent gateway. Before every
+prompt-bearing request, the Ollama adapter shall fail closed unless the direct
+numeric-loopback daemon is healthy, reports its native cloud features disabled,
+and reports the exact configured model as local. It shall buffer complete output
+before validation and shall not stream, route, pull or substitute a model, fall
+back to another provider, call tools, or execute actions in the MVP. The exact
+provider wire and failure behavior is normative in
+`docs/contracts/OllamaAdapter.md`.
 
 ### FR-012 Response validation
 
@@ -142,8 +148,16 @@ events and redaction fields are acceptance-tested.
 
 ### NFR-001 Local-first
 
-The application shall operate locally by default and shall send message content
-only to the configured local Ollama endpoint.
+The application shall operate locally and shall send message content only through
+a direct numeric-loopback transport to the configured Ollama daemon after an
+uncached native cloud-disabled and local-model attestation. It shall not send
+content through any DNS name, redirect, proxy, tunnel, API-key/cloud-provider
+path, or response-supplied location that it configures, discovers, or follows.
+The configured loopback endpoint is a trusted operational prerequisite and must
+identify the daemon directly; undisclosed local-host interception is outside the
+MVP threat model. If the application cannot establish its defined locality
+conditions, it shall send no prompt and return the canonical safe gateway
+failure.
 
 ### NFR-002 Modular monolith
 
@@ -154,7 +168,9 @@ testing boundaries.
 ### NFR-003 Deterministic tests
 
 Core context rules and the complete pipeline with a mock provider shall be
-testable without a live AI model, real clock, or shared user database.
+testable without a live AI model, real clock, or shared user database. Required
+Ollama-adapter protocol tests shall use a controlled transport and require no
+daemon; every live-daemon test is separately marked and opt-in.
 
 ### NFR-004 Traceability
 

@@ -6,8 +6,9 @@
 text-generation port used by application orchestration. Its public vocabulary
 belongs with the existing inward domain/application ports. Outward provider
 adapters implement the port; neither the port nor an adapter persists lifecycle
-state, emits application trace events, validates response content, or mutates a
-context packet.
+state, emits application trace events, semantically validates candidate response
+content, or mutates a context packet. Provider media-type, JSON, and terminal
+envelope validation remains outward-adapter transport behavior.
 
 The application calls the gateway outside a database transaction and maps its
 one returned outcome to later persistence and orchestration. Expected provider
@@ -118,11 +119,17 @@ exceptions, request/response headers, authorization data, endpoint URLs, or
 configuration secrets. Token metadata is optional because a provider may not
 report it.
 
-`InvalidProviderResponseFailure` is transport/protocol validation only. It
-means the provider returned no terminal complete response, a missing/null/
-non-string response field, an empty or whitespace-only response, or a malformed
-completion envelope. It does not inspect topic, intent, constraints, output
-shape, or any other response-content rule.
+`OllamaAdapter.md` defines the exact TASK-0012 metadata allowlist and normalization
+into this provider-independent shape. That adapter-specific schema does not add a
+field to `CompletedGeneration` or otherwise expand the inward port.
+
+`InvalidProviderResponseFailure` is transport/protocol validation only. It means
+the provider returned no terminal complete response, a missing/null/non-string
+response field, an empty or whitespace-only response, or a malformed completion
+envelope. It does not inspect topic, intent, constraints, output shape, or any
+other semantic response-content rule. Provider-specific health and model-check
+failures remain provider-availability observations unless the final contract
+assigns a more specific canonical outcome.
 
 Every live provider call is bounded by
 `GenerationSettings.request_timeout_seconds`. If that deadline expires, the
@@ -218,7 +225,7 @@ response-text or partial-text field.
 
 The port exposes no iterator, generator, async generator, chunk/text callback,
 signal, progress payload containing provider text, partial-result object, or
-provider buffer. Internal chunks may exist only inside a future transport
+provider buffer. Internal chunks may exist only inside an outward transport
 adapter and are discarded on failure.
 
 TASK-0011 buffering verification must use a content-free deterministic hold
@@ -228,6 +235,15 @@ result. Releasing a successful step produces exactly one result with the exact
 complete fixture string. Cancellation or failure produces exactly one typed
 failure and zero response text. Merely asserting that no `stream` method exists
 is necessary but not sufficient.
+
+TASK-0012 verifies the same boundary with a controlled transport that can provide
+only part of an HTTP response body and hold before the terminal envelope is
+complete. HTTP body fragmentation is not provider streaming and is never exposed
+through this port. While held, `generate` has returned no value and no response
+text is observable. Only a complete valid terminal envelope may produce one
+`CompletedGeneration`; timeout, cancellation, transport failure, or an invalid
+envelope closes the pending transport and discards the entire internal buffer.
+This is gateway-boundary evidence only and makes no persistence or UI claim.
 
 ## Deterministic `MockModelProvider`
 
@@ -314,25 +330,42 @@ ordinary test bodies receive the inward port and do not construct adapters ad
 hoc. TASK-0011 does not finish the production composition root and does not
 change `main.py` runtime provider selection.
 
-TASK-0012 remains responsible for the Ollama transport adapter and its later
-production construction at the same outer composition boundary. No Ollama
-client, transport, placeholder, provider factory, runtime router, or fallback is
-part of TASK-0011.
+TASK-0012 may begin only after the TASK-0011 exit criteria and TASK-0011 AT-010
+component assertions pass. It consumes this final port unchanged and owns the
+infrastructure Ollama adapter described by `OllamaAdapter.md`. No Ollama client,
+transport, placeholder, provider factory, runtime router, or fallback is part of
+TASK-0011.
+
+Production construction may occur only at an outer composition boundary, which
+passes the validated endpoint and bound model identity to the Ollama adapter and
+injects it into
+`SystemPorts.model_gateway`. TASK-0012 does not finish the complete production
+composition root, application pipeline, or QML composition. Its required default
+tests construct the adapter through a test composition fixture with a controlled
+transport. Its optional live tests use a separate test composition fixture and
+the `ollama` marker/opt-in contract. Broader application and pipeline tests
+continue to inject the TASK-0011 deterministic mock.
 
 Application orchestration depends only on the inward `ModelGateway` vocabulary,
 which remains in the innermost port layer. Domain and application code import
 neither the test mock nor an Ollama implementation. Context-engine code has no
 gateway dependency. Presentation and QML import application use-case interfaces
 only and import neither gateway vocabulary nor any provider implementation.
-Only the test-composition fixture may import and construct the mock; only outer
-production composition may later import and construct the Ollama adapter.
-Static import checks must cover absolute and relative imports and prove these
-package boundaries. TASK-0011 can prove the negative Ollama-import boundary but
-cannot claim positive Ollama construction before that adapter exists.
+Only the mock test-composition fixture may import and construct the mock. Only
+TASK-0012 adapter test-composition fixtures and the outer production composition
+boundary may import and construct the Ollama adapter; ordinary test bodies
+receive the inward port and do not construct it ad hoc. Static import checks must
+cover absolute and relative imports and prove these package boundaries.
+Configuration or adapter discovery must not occur in domain, context-engine,
+application, presentation, or QML code. TASK-0011 can prove the negative
+Ollama-import boundary but cannot claim positive Ollama construction before that
+adapter exists.
 
 ## Prohibited behavior
 
 The gateway and mock never interpret intent, retrieve memory, mutate a packet,
-validate response content, persist data, emit application trace events, retry
-transport, route/fallback models, stream output, call tools, execute actions,
-use a cloud provider, or expose provider output to QML.
+semantically validate candidate response content, persist data, emit application
+trace events, retry transport, route/fallback models, stream output, call tools,
+execute actions, use a cloud provider, or expose provider output to QML. An
+outward live adapter still validates its provider's media type, JSON, and
+terminal protocol envelope before it can construct this port's result.

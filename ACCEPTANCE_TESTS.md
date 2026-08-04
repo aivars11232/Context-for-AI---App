@@ -2,14 +2,19 @@
 
 ## Test harness rules
 
-- Every deterministic acceptance case uses fixed UUIDs, an injected UTC clock,
-  an isolated temporary SQLite database, fixture YAML, and `MockModelProvider`.
+- Every deterministic application/pipeline acceptance case uses fixed UUIDs, an
+  injected UTC clock, an isolated temporary SQLite database, fixture YAML, and
+  `MockModelProvider`. The isolated TASK-0011 mock and TASK-0012 controlled-
+  transport gateway component cases use their explicitly defined fixtures and
+  no application database.
 - A case asserts observable data, UI state, or returned result; it does not only
   assert that a mock method was called.
 - Fixture files are versioned, synthetic, and free of prior private
   conversations. The fixture version is persisted in evaluation results.
-- Live Ollama is excluded from the default test command and has one explicit
-  opt-in criterion, AT-016.
+- Every test that contacts live Ollama is marked `ollama` and excluded from the
+  default test command. AT-016 is the sole live-model complete-pipeline
+  criterion; TASK-0012's marked live adapter test execution is component
+  evidence and neither executes nor satisfies AT-016.
 - The implementation must map each ID below to a named pytest test or evaluation
   fixture. A test may cover multiple IDs only when its assertions identify each
   ID independently.
@@ -234,14 +239,37 @@ held-checkpoint cancellation; inspect the mock's immutable call snapshot.
   dependency. Test composition injects the mock through the existing gateway
   port; positive Ollama construction is not a TASK-0011 claim.
 
-**Integrated assertions outside TASK-0011:** when broader pipeline integration
-exists, the already-created request row carries the same run/packet/request IDs,
-attempt, model, prompt, and terminal request status; a completed response links
-through `model_request_id`; a failure creates no response row; trace events use
-the same correlation set; and no partial provider text reaches persistence or
-the UI. QML behavior, UI responsiveness, actual lifecycle persistence,
-response validation, and broader pipeline orchestration are not TASK-0011 exit
-criteria.
+**TASK-0012 component extension:** after the TASK-0011 component pass is green,
+construct the real Ollama adapter through a test composition fixture using
+validated fixture configuration and a controlled transport. The unmarked,
+daemon-free assertions must prove the exact uncached
+version/status/show/generate order, local-only fail-closed behavior, one bound
+model, payload and terminal-envelope mapping, canonical typed failures, shared
+timeout, cancellation-driven transport closure, metadata allowlisting, and no
+retry, redirect, proxy, authentication, routing, fallback, or streaming path.
+Hold a fragmented response body before its terminal envelope is complete: the
+call has not returned and no content is observable. Release of a complete valid
+envelope returns one complete result; timeout, cancellation, transport failure,
+or an invalid envelope discards the full internal buffer and returns no content.
+
+The marked live TASK-0012 transport test definitions and fixture are required
+TASK-0012 test surface; executing them against a daemon is optional. They use the
+same adapter contract, are marked `ollama`, and require
+`CONTEXT_FOR_AI_RUN_OLLAMA=1`. When explicitly selected, an absent variable skips
+as environment absence; a present value other than `1` fails as an invalid
+opt-in; exact `1` runs the tests and every invalid configuration, non-local
+endpoint, local-only attestation failure, unavailable daemon, missing model,
+timeout, malformed response, or failed assertion is a failure rather than a
+dynamic skip. The default selection excludes these tests.
+
+**Integrated assertions outside the TASK-0011/TASK-0012 gateway component
+scopes:** when broader pipeline integration exists, the already-created request
+row carries the same run/packet/request IDs, attempt, model, prompt, and terminal
+request status; a completed response links through `model_request_id`; a failure
+creates no response row; trace events use the same correlation set; and no
+partial provider text reaches persistence or the UI. QML behavior, UI
+responsiveness, actual lifecycle persistence, response validation, correction,
+and broader pipeline orchestration are not TASK-0011 or TASK-0012 exit criteria.
 
 ### AT-011 Response validation
 
@@ -310,26 +338,35 @@ AT-007, AT-012, AT-014, and AT-015 cover every required trace event name.
 
 ### AT-016 Local Ollama smoke acceptance
 
-This is the only live-model acceptance criterion. It is marked `ollama` and is
-skipped only when `CONTEXT_FOR_AI_RUN_OLLAMA=1` is absent. When that flag is
-present, every preflight condition below is executed and a missing/invalid
-condition fails the opt-in test:
+This is the only live-model complete-pipeline acceptance criterion. TASK-0012's
+marked live Ollama transport test execution is isolated adapter component
+verification; it neither executes nor satisfies AT-016. Both scopes use the
+`ollama` marker and `CONTEXT_FOR_AI_RUN_OLLAMA` convention, while the default
+suite excludes all marked live tests.
 
-1. The fixture configuration uses loopback Ollama, `temperature: 0.0`, timeout
-   `60`, and a named installed model supplied through
-   `CONTEXT_FOR_AI__MODEL__NAME`.
-2. The test records `ollama show <model>` output or equivalent model metadata,
+When AT-016 is explicitly selected, an absent variable skips as environment
+absence and never counts as evidence. A present value other than exactly `1`
+fails as an invalid opt-in. With exact value `1`, every preflight condition below
+is executed and a missing or invalid condition fails the test:
+
+1. The fixture configuration uses a direct numeric-loopback Ollama endpoint,
+   `temperature: 0.0`, timeout `60`, and a named installed local model supplied
+   through `CONTEXT_FOR_AI__MODEL__NAME`.
+2. The daemon health, native cloud-disabled status, and exact local-model
+   preflight from `OllamaAdapter.md` succeed before the prompt is sent.
+3. The test records only normalized allowlisted model/provider metadata,
    configuration fingerprint, Ollama version, OS, and elapsed time as an
-   artifact without recording message/prompt/response content in logs.
-3. The deterministic fixture asks for the exact text token
+   artifact. It records no raw CLI/provider response, endpoint, header, secret,
+   message, prompt, partial output, or response content in logs or metadata.
+4. The deterministic fixture asks for the exact text token
    `CONTEXT_FOR_AI_SMOKE_OK`; packet constraints require that token.
 
 **Action:** run the complete one-process pipeline against local Ollama.
 **Pass:** health check succeeds, one buffered response arrives within timeout,
 validation passes the token constraint, every lifecycle/trace record persists,
 and the QML UI displays the linked accepted assistant text. A missing daemon,
-model, timeout, or token mismatch is a failed opt-in acceptance result—not a
-silently skipped pass.
+cloud-disable attestation, local model, timeout, malformed response, or token
+mismatch is a failed opt-in acceptance result—not a silently skipped pass.
 
 ## Requirement traceability
 

@@ -44,8 +44,11 @@ Implement the mock gateway, bounded foreground provider port, local Ollama
 adapter, deterministic validation, and correction controller. No streaming,
 routing, fallback, cloud provider, or transport retry is permitted.
 
-**Exit:** AT-010 through AT-012 pass with the mock provider; Ollama adapter has
-isolated optional transport tests.
+**Exit:** AT-010 through AT-012 pass with deterministic providers, and
+TASK-0012's controlled-transport adapter tests pass in the default suite. Live
+adapter transport test definitions are included, but their execution is
+separately marked and opt-in; it does not exercise or satisfy AT-016's complete
+local-Ollama pipeline acceptance.
 
 ## Stage 6 — Complete mock-provider pipeline (`TASK-0014`)
 

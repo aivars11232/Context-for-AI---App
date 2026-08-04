@@ -7,10 +7,13 @@ process using PySide6, Qt 6, and QML. Its UI, application orchestration,
 context intelligence, domain model, SQLite adapters, configuration, logging,
 and Ollama client live in one repository with explicit inward interfaces.
 
-The application connects to a separately installed, locally configured Ollama
-daemon. It does not host an HTTP API or a separate context-service process.
-FastAPI, cloud providers, model routing, streaming, embeddings, vector stores,
-file indexing, and background-worker systems are deferred post-MVP work.
+The application connects directly to a separately installed, locally configured
+Ollama daemon on a numeric loopback address. The daemon must use its native
+cloud-disable setting; the adapter verifies that state before every prompt. It
+does not host an HTTP API or a separate context-service process. FastAPI, cloud
+providers or cloud execution through Ollama, model routing, streaming,
+embeddings, vector stores, file indexing, and background-worker systems are
+deferred post-MVP work.
 
 ## Dependency direction
 
@@ -36,6 +39,11 @@ Composition root ───────────→ Presentation, Application,
 - Infrastructure implements inward ports. `ModelGateway` is an application port;
   `OllamaModelProvider` is its infrastructure implementation.
 - The composition root is the sole place allowed to construct concrete adapters.
+- Configuration loading owns static endpoint/model validation and normalization;
+  it performs no provider request. Ollama adapter construction receives only the
+  immutable normalized endpoint and bound model identity. Per-call generation
+  settings remain in `GenerationRequest`; the adapter performs no configuration
+  discovery.
 
 ## Layers
 
@@ -94,11 +102,46 @@ structured logging, and local filesystem paths needed by those functions. It
 does not include embeddings, vector stores, files/indexing, cloud integrations,
 or background workers in MVP.
 
+The Ollama adapter owns only direct transport communication, its ordered
+health/local-only/model checks, private complete-body buffering, timeout and
+cancellation propagation, provider-envelope validation, safe metadata
+normalization, and translation into the canonical gateway outcomes. It does not
+persist, emit application trace events, publish UI state, validate response
+meaning, correct output, or coordinate application lifecycle state.
+
+The static model configuration accepts only a direct numeric-loopback HTTP
+endpoint and no credential, proxy, cloud-provider, fallback, or bypass field.
+For every generation call, the adapter performs uncached health, native
+cloud-disabled, and exact local-model checks before the prompt-bearing request.
+It disables redirects, proxies, ambient authentication, and provider fallback.
+The exact wire, timeout, buffering, failure, and metadata contract is
+`docs/contracts/OllamaAdapter.md`.
+
+The local host, operator-supplied direct endpoint, and separately installed
+daemon are trusted runtime dependencies. The endpoint must identify Ollama
+directly; accidental or deliberate configuration of a loopback intermediary is
+unsupported and cannot be proven away by URL parsing. The daemon's status
+endpoint is the fail-closed evidence for its native cloud policy, not
+cryptographic attestation against a compromised loopback process. An absent or
+incompatible status capability makes the provider unavailable and never enables
+a less strict path.
+
+TASK-0012 supplies the infrastructure adapter and its construction inputs, but
+does not complete `main.py`, the full bootstrap graph, the application pipeline,
+or QML composition. A later outer production composition root constructs the
+adapter from the already validated endpoint/model identity and injects it into
+`SystemPorts.model_gateway`. TASK-0012 test composition constructs it with a
+controlled transport; application/pipeline test composition continues to inject
+the deterministic mock.
+
 ### 6. Testing and evaluation
 
 Contains unit tests, isolated SQLite integration tests, mock-provider complete
 pipeline tests, UI acceptance tests, deterministic evaluation cases, and an
-optional marked local-Ollama smoke test.
+optional marked local-Ollama smoke test. Required Ollama-adapter component tests
+use a controlled transport in the default suite and require no daemon. Tests that
+contact a live daemon are marked `ollama`, opt-in, and separate from complete
+pipeline acceptance.
 
 ## Proposed MVP source layout
 

@@ -109,15 +109,65 @@ app:
 ```text
 model:
   provider: ollama                                  # fixed MVP value
-  base_url: http://127.0.0.1:<port>                 # loopback only
-  name: non-empty-string                            # required
+  base_url: http://<numeric-loopback>:<port>        # required
+  name: local-ollama-model-reference                # required
   context_window_tokens: integer >= 1024            # required
   request_timeout_seconds: integer 1..300           # default 60
   temperature: number 0.0..2.0                      # default 0.0
 ```
 
-The loader rejects non-loopback hosts, cloud URLs, provider values other than
-`ollama`, and a missing model name. No API key field exists in MVP.
+`model.base_url` is valid only when all of these are true:
+
+- it is an absolute URL whose scheme is exactly lowercase `http`;
+- its host is a numeric IPv4 or IPv6 literal that parses as loopback;
+- an IPv6 literal uses the URL-required bracketed serialization;
+- its port is explicit and in `1..65535`;
+- its path is empty or `/`, which normalizes to the endpoint root; and
+- user information, query, fragment, IPv6 zone identifier, encoded-host form,
+  and every other URL component are absent.
+
+DNS names, including `localhost`, non-loopback addresses, wildcard/listen
+addresses, Unix-socket URL forms, HTTPS, and cloud URLs are rejected. Reverse
+proxies and tunnels cannot be distinguished from a numeric URL by static parsing,
+so they are explicitly unsupported: the configured address must identify the
+Ollama daemon directly. The normalized value retains only `http`, the numeric
+loopback address, and the explicit port.
+
+`model.name` uses the narrow MVP `model[:tag]` form with optional namespace path.
+It is parsed as follows:
+
+- the string is non-empty and contains no whitespace or control character;
+- splitting on `/` produces only non-empty segments;
+- `:` may occur only in the final segment and may occur there at most once;
+- when `:` is present, both its model portion and tag are non-empty; and
+- when it is absent, normalization appends `:latest` to the final segment.
+
+`model_tag` is the explicit or inserted suffix. No other normalization occurs.
+The explicit `cloud` tag and any tag ending in `-cloud` are rejected. That
+denylist comparison is ASCII case-insensitive and is defense in depth, not the
+proof of locality; accepted identities otherwise remain case-sensitive and
+unchanged. The loader does not resolve an alias, expand a registry/namespace,
+download a model, or select a different tag.
+
+The loader rejects provider values other than `ollama`. There is no API key,
+authorization, proxy, cloud-provider, fallback-provider, or local-only bypass
+field or override in MVP; the existing unknown-key rule rejects attempts to add
+one. Local-only behavior is a fixed invariant, not a configurable preference.
+
+After all configuration is validated, the loader returns one immutable normalized
+model configuration containing the endpoint, model identity, and generation
+settings. It performs no Ollama network I/O. Only an outer composition boundary
+may pass the normalized endpoint and model identity to the Ollama adapter
+constructor. Per-call generation settings remain authoritative only in the final
+TASK-0011 `GenerationRequest`; the adapter constructor does not retain a second
+settings copy. The adapter must not re-read YAML, `.env`, process overrides,
+`OLLAMA_HOST`, proxy variables, or ambient credentials.
+
+The separately installed Ollama daemon must use its native cloud-disable setting.
+This is a runtime prerequisite rather than another application configuration
+field. `OllamaAdapter.md` defines the uncached runtime attestation that verifies
+the daemon before any prompt is sent; successful static validation alone never
+claims that the daemon is healthy, cloud-disabled, or has the configured model.
 
 ### `context.yaml`
 
@@ -254,9 +304,11 @@ canonical failure code. The three memory correlation fields are required for the
 matching memory events and null otherwise.
 
 Routine log output must never include original message text, rendered prompts,
-model responses, API keys, authorization headers, full configuration, or raw
-memory content. Database trace records retain the data required by the schema;
-logs retain identifiers, safe error codes, lengths, hashes, and rule IDs only.
+model responses, raw provider bodies or exceptions, endpoint URLs, request or
+response headers, API keys, authorization data, cookies, full configuration, or
+raw memory content. Database trace records retain the data required by the
+schema; logs retain identifiers, safe error codes, lengths, hashes, normalized
+allowlisted provider metadata, and rule IDs only.
 
 ## Startup and test behavior
 
