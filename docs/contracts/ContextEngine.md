@@ -107,11 +107,46 @@ every accepted text interpretation. It parses only `mvp-condition-v1`, applies
 canonical priority/recency rules, and performs only canonical lexical
 opposition. It does not persist constraints or clarification data.
 
+## MemoryManager
+
+TASK-0009 owns application use cases for explicit create, edit, get, stored-
+status list, and soft-delete operations. The manager receives only inward
+`MemoryRepository`, `TransactionBoundary`, `Clock`, and `IdGenerator` ports.
+Create, edit, and delete each use one clock reading and atomically write one
+source plus one consecutive `memory-revision-v1` revision. Get/list return the
+complete memory, ordered sources, ordered revisions, evaluated-at time, and the
+computed `MemoryEffectiveStatus` defined in `DomainAndDecisionRules.md`.
+
+The manager rejects edit, repeated delete, and restore attempts for a deleted
+memory. It performs no automatic creation, extraction, merge, rewrite, cleanup,
+expiry mutation, or background operation. Presentation invokes these use cases
+later; UI rendering, pipeline orchestration, and trace-event emission are not
+TASK-0009 `MemoryManager` behavior.
+
 ## ContextRetriever
 
-Input: message, state, project, topic, eligible memories, injected clock, and
-retrieval limits. Output: ordered selected memories with score/rank/reasons and
-recorded exclusions. It does not create, merge, or mutate memory.
+`RetrievalRequest` contains processing-run, source-message, conversation,
+optional project, and caller-supplied context-packet IDs; exact request text;
+optional active-topic label; a tuple of distinct considered memories that may
+include scope mismatches, deleted records, and expired records; validated
+threshold/limit values; and one injected-clock `evaluated_at` value. The caller
+reads the clock once. The retriever is constructed with an `IdGenerator`; it
+does not read a repository, clock, configuration file, or packet.
+
+`RetrievalDecision` partitions every considered memory ID exactly once between
+ordered `RetrievalResult` selections and ordered `RetrievalExclusion` evidence.
+It contains the highest selected score as confidence, or null for no selection.
+Normalization, decimal arithmetic, eligibility, exclusion precedence, score,
+threshold, sort, retrieval-only duplicate collapse, limit, zero-based rank,
+reason strings, evidence shapes, and timestamps follow the complete canonical
+rules in `DomainAndDecisionRules.md`.
+
+The retriever is pure: it never creates, merges, rewrites, deletes, or otherwise
+mutates a memory. TASK-0009 persistence tests may attach its already-computed
+results/exclusions to a caller-supplied existing context-packet fixture through
+the existing `ContextPacketRepository`; the retriever does not construct that packet
+or orchestrate persistence. Packet construction, pipeline integration,
+UI/presentation, trace events, and provider interaction remain later work.
 
 ## ContextPacketBuilder
 

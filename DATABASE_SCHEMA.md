@@ -241,7 +241,8 @@ The application validates scope ownership: conversation-scoped records require
 `conversation_id`; project-scoped records require `project_id`; global records
 require neither. A record must have at least one source row. `DELETED` requires
 non-null `deleted_at`; `ACTIVE` requires null `deleted_at`. Expiry is a computed
-effective retrieval status, never a stored automatic lifecycle mutation.
+effective retrieval status, never a stored automatic lifecycle mutation. A
+deleted row is retained for inspection and cannot be edited or restored.
 
 ### `memory_sources`
 
@@ -253,7 +254,10 @@ effective retrieval status, never a stored automatic lifecycle mutation.
 - `created_at` non-null
 
 `USER_MESSAGE` requires `source_message_id`; manual entries use
-`MANUAL_ENTRY` and a non-empty user-entered description.
+`MANUAL_ENTRY` and a non-empty user-entered description. TASK-0009 manual create
+uses `MANUAL_ENTRY`; manual edit and soft delete use `USER_EDIT`. Each successful
+manual mutation inserts exactly one source and its corresponding revision in
+the same transaction.
 
 ### `memory_revisions`
 
@@ -269,6 +273,12 @@ effective retrieval status, never a stored automatic lifecycle mutation.
 
 Expiry is evaluated at retrieval time and creates no automatic revision or
 deletion. The MVP has no automatic merge; user edits/deletes resolve duplicates.
+`content_snapshot` and the exact `memory-revision-v1` metadata object defined in
+`docs/contracts/DomainAndDecisionRules.md` form a complete historical snapshot.
+Its `source_id` is the UUID of the source inserted by the same operation. Create
+starts at revision `1`; edit and soft-delete revisions are consecutive. These
+are repository/application invariants over the existing columns and require no
+TASK-0009 schema migration.
 
 ## Processing, packets, retrieval, and model lineage
 
@@ -311,6 +321,13 @@ persisted correction envelope; they never mutate packet JSON.
 - unique `(context_packet_id, rank)`
 - unique `(context_packet_id, memory_id)`
 
+Ranks are contiguous and zero-based after threshold filtering, canonical sort,
+retrieval-only duplicate collapse, and limit application. `reasons_json` is the
+exact seven-string ordered factor array defined in
+`docs/contracts/DomainAndDecisionRules.md`. `score` is the canonical 28-digit
+decimal decision value represented by the existing SQLite real column, and
+`created_at` equals retrieval `evaluated_at`.
+
 ### `retrieval_exclusions`
 
 - `id` primary key
@@ -323,7 +340,16 @@ persisted correction envelope; they never mutate packet JSON.
 - unique `(context_packet_id, memory_id, exclusion_reason)`
 
 This audit table records every considered-but-unselected memory. It is not a
-memory mutation and does not expose raw memory content to logs.
+memory mutation and does not expose raw memory content to logs. Every distinct considered memory appears exactly once
+in either `retrieval_results` or
+`retrieval_exclusions`. TASK-0009 writes one primary exclusion per unselected
+memory using the canonical precedence. `computed_score` is null for
+`SCOPE_MISMATCH`, `DELETED`, and `EXPIRED`, and is the canonical score for
+`SCORE_BELOW_THRESHOLD`, `DUPLICATE_CONTENT`, and `LIMIT_EXCEEDED`.
+`details_json` has exactly the reason-specific keys defined in
+`docs/contracts/DomainAndDecisionRules.md`; it contains no raw or normalized
+memory content. These are logical persistence rules over the existing table and
+require no TASK-0009 schema migration.
 
 ### `model_requests`
 

@@ -28,7 +28,7 @@ also agree.
 | D-010 | Add exact acceptance assertions for required trace-event names, correlation fields, and redaction rather than merely claiming combined coverage. | `TASK-0014` |
 | D-011 | Reconcile local-Ollama opt-in semantics in `TASK-0012` and `TASK-0018`: no flag skips; flag present makes invalid daemon/model/configuration a failed opt-in test. | `TASK-0018` |
 | D-012 | Move full AT-012 ownership from `TASK-0013` to `TASK-0014`; keep Task 0013 limited to validator/correction-controller behavior. | `TASK-0013`, `TASK-0014` |
-| D-013 | Narrow premature acceptance claims: Task 0009 may cover retrieval portions of AT-014 only; Task 0015 may cover responsiveness portions of AT-013 only; define whether memory history is inspectable only or supports an explicit restore operation. | `TASK-0009`, `TASK-0015`, `TASK-0017` |
+| D-013 | The TASK-0009 portion is resolved below: history is inspectable only and there is no restore operation. Remaining work must keep Task 0015 to responsiveness portions of AT-013 and Task 0017 to UI/presentation portions of manual memory control. | `TASK-0015`, `TASK-0017` |
 | D-014 | Align detailed task scopes with the repaired contracts: Task 0002 enums/types; Task 0003 clarification/retrieval ports; Task 0004 schema additions/indexes; Task 0005 repositories/recovery; Task 0006 lifecycle; Tasks 0007–0010 deterministic contracts; Tasks 0011–0018 provider, pipeline, UI, and smoke criteria. | `TASK-0002` through `TASK-0018` |
 | D-015 | Reconcile roadmap/backlog/implementation-plan wording with the global single-run admission rule, recovery matrix, clarification persistence, and task-stage acceptance ownership. | `TASK-0014` |
 
@@ -124,7 +124,43 @@ presentation. The bounded delivery contract is
 
 No model, semantic inference, file ingestion/indexing, memory, context-packet,
 pipeline, or UI behavior is added to TASK-0008. D-014 remains unresolved for
-`TASK-0009` through `TASK-0018`.
+`TASK-0010` through `TASK-0018`.
+
+### TASK-0009 reconciliation
+
+The TASK-0009 portions of D-013 and D-014 are resolved. TASK-0008 specification
+reconciliation is complete at HEAD `8432241`, but TASK-0008 implementation is
+not a runtime dependency of TASK-0009. TASK-0009 consumes no entity-registry,
+reference-extraction, resolution, or `ReferenceDecision` output and may proceed
+independently after its own implementation approval. It neither implements nor
+claims TASK-0008 behavior; later pipeline composition owns integration order.
+
+TASK-0009 owns explicit create, edit, get/inspect, stored-status list, and
+soft-delete use cases; atomic source/revision persistence; computed effective
+status; pure deterministic retrieval; and retrieval-result/exclusion
+persistence assertions. History is inspectable only. There is no restore,
+automatic creation/edit/merge/rewrite/cleanup/expiry/deletion, background
+mutation, or model-based memory decision.
+
+`docs/contracts/DomainAndDecisionRules.md` now fixes the complete Unicode
+normalization, decimal precision, inclusive threshold, total ordering,
+zero-based rank, reason formatting, exclusion precedence/details,
+`memory-revision-v1`, effective status, scope, and retrieval-only duplicate
+rules. `docs/contracts/ContextEngine.md` fixes the `MemoryManager` and pure
+`ContextRetriever` ownership; `DATABASE_SCHEMA.md` maps those decisions to the
+existing columns without a migration. The canonical formula replaces the
+illustrative historical retrieval formulas, and the text-only/no-autonomous-
+mutation boundary supersedes the obsolete historical correction example.
+
+AT-008 and AT-014 now separate TASK-0009 component/use-case and persistence
+assertions from later orchestration, packet construction, UI/presentation,
+trace-event, and provider integration assertions. Exact trace-event contracts
+remain assigned to D-010. The bounded delivery contract is
+`tasks/TASK-0009-MANUAL-MEMORY-LIFECYCLE-AND-DETERMINISTIC-RETRIEVAL.md`.
+
+D-013 remains open only for its TASK-0015/TASK-0017 portions. D-014 remains
+unresolved for `TASK-0010` through `TASK-0018`. No later-task issue is resolved
+by this section.
 
 ## Historical planning reconciliation
 

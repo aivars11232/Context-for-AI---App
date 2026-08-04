@@ -563,40 +563,134 @@ scanning, ingestion, indexing, and resolution remain excluded.
 
 ## Memory lifecycle and deterministic retrieval
 
-- Memory creation, edits, and deletion are explicit user operations only. The
-  UI does not offer automatic merging; duplicate records remain separate until
-  the user edits or deletes one. Every change writes an immutable revision.
-- A memory must have at least one `memory_sources` record. A manual entry uses
-  source kind `MANUAL_ENTRY`; it never leaves provenance blank.
-- `memories.status` stores only `ACTIVE` or `DELETED`. An elapsed `expires_at`
-  computes an effective retrieval status of `EXPIRED`; it does not write a
-  revision or mutate the stored record. `DELETED` requires non-null `deleted_at`
-  and is excluded from retrieval while retaining revisions/sources; an `ACTIVE`
-  memory requires null `deleted_at`.
-- Eligible records are active and in the same conversation, same project, or
-  global scope as appropriate. Cross-project project memories are ineligible.
-- Normalize words by lowercase Unicode case-folding, punctuation removal, and
-  whitespace splitting. The score is:
+### Manual lifecycle ownership and revision history
+
+- Memory creation, editing, inspection, stored-status listing, and soft deletion
+  are explicit `LOCAL_USER` operations owned by the TASK-0009 `MemoryManager`
+  use cases. There is no automatic creation, extraction, merge, rewrite,
+  cleanup, expiry mutation, background mutation, or restore operation.
+- Every successful create, edit, or soft-delete operation writes exactly one
+  `memory_sources` row and one immutable `memory_revisions` row in the same
+  transaction. A direct manual create uses source kind `MANUAL_ENTRY`; edits and
+  soft deletions use `USER_EDIT`. Their non-empty user-entered descriptions are
+  retained. Failed operations write neither row.
+- Create writes an `ACTIVE` memory and revision number `1` with operation
+  `CREATE`. Edit preserves the memory ID, creation time, type, scope, and owner
+  IDs, replaces only content, keywords, topic terms, importance, confidence,
+  and expiry, and appends the next consecutive `EDIT` revision. Soft delete
+  preserves content and provenance, sets `status=DELETED`, sets `deleted_at`
+  and `updated_at` from one injected-clock reading, and appends the next
+  consecutive `SOFT_DELETE` revision. A deleted memory remains inspectable but
+  cannot be edited, deleted again, or restored.
+- `content_snapshot` is the exact content at that revision. Every revision's
+  `metadata_json` is exactly a `memory-revision-v1` object with these keys:
+
+  | Key | Value |
+  |---|---|
+  | `schema_version` | The literal `memory-revision-v1`. |
+  | `source_id` | UUID of the source row written by the same operation. |
+  | `memory_type` | Canonical `MemoryType` value. |
+  | `scope` | Canonical `MemoryScope` value. |
+  | `conversation_id` | Memory conversation UUID or null. |
+  | `project_id` | Memory project UUID or null. |
+  | `status` | Stored `MemoryStatus` value at the revision. |
+  | `keywords` | Exact ordered JSON string array at the revision. |
+  | `topic_terms` | Exact ordered JSON string array at the revision. |
+  | `importance` | Canonical decimal string at the revision. |
+  | `confidence` | Canonical decimal string at the revision. |
+  | `expires_at` | Canonical UTC timestamp or null. |
+  | `memory_created_at` | Canonical immutable creation timestamp. |
+  | `updated_at` | Canonical update timestamp at the revision. |
+  | `deleted_at` | Canonical deletion timestamp or null. |
+
+  Together with `memory_id`, `revision_number`, `operation`,
+  `content_snapshot`, `performed_by`, and the revision creation time, this
+  object reconstructs the complete memory snapshot and links it to inspectable
+  provenance without a schema change.
+
+### Effective status and scope eligibility
+
+- `memories.status` stores only `ACTIVE` or `DELETED`. Effective status is
+  computed at an injected UTC `evaluated_at`: stored `DELETED` always computes
+  `DELETED`; otherwise `expires_at <= evaluated_at` computes `EXPIRED`; all
+  other records compute `ACTIVE`. Expiry writes no row, changes no stored value,
+  and creates no source or revision. Deleted and expired memories are excluded
+  from retrieval; both remain inspectable.
+- A conversation-scoped memory is eligible exactly when its non-null
+  `conversation_id` equals the retrieval conversation ID; any `project_id` on
+  that record does not affect eligibility. A project-scoped memory is eligible
+  exactly when the retrieval project ID is non-null and equals its non-null
+  `project_id`; any `conversation_id` on that record does not affect
+  eligibility. A global memory is eligible for every conversation and has null
+  conversation/project owner IDs. Other-conversation and other-project records
+  are retained as considered inputs with `SCOPE_MISMATCH` evidence.
+
+### Retrieval normalization and score
+
+- Retrieval word normalization applies Unicode NFC, then Unicode case-folding,
+  deletes every code point whose Unicode General Category begins with `P`,
+  splits with Unicode whitespace semantics, and discards empty tokens.
+  Punctuation is deleted rather than replaced, so `foo-bar` becomes `foobar`;
+  non-punctuation symbols remain part of their token. Keyword/topic arrays are
+  normalized entry by entry and flattened. Request, keyword, and topic
+  comparisons use unique token sets. Normalized content is the normalized token
+  sequence joined by one ASCII space; equal normalized strings, including the
+  empty string, are exact retrieval duplicates.
+- All score arithmetic uses a private decimal context with precision `28` and
+  `ROUND_HALF_EVEN`; binary floating-point and the ambient process decimal
+  context do not participate. No two-decimal display rounding or other manual
+  quantization occurs before comparison or ordering. A canonical decimal string
+  uses fixed-point notation, removes trailing fractional zeroes and a trailing
+  decimal point, and represents zero as `0`.
+- The score is:
 
   `0.30 project_match + 0.20 topic_match + 0.20 keyword_jaccard + 0.10 recency + 0.10 importance + 0.05 scope_match + 0.05 correction_match`.
 
-  `project_match` is `1` only when a project-scoped memory has the same
-  non-null project ID as the conversation; otherwise `0`. `topic_match` is `1`
-  only when the normalized non-empty active-topic label shares a token with the
-  memory's normalized `topic_terms_json`; otherwise `0`. `keyword_jaccard` is
-  the size of the intersection divided by the size of the union of unique
-  normalized request tokens and unique normalized `keywords_json` tokens (zero
-  for an empty union). `recency = max(0, 1 - age_days / 90)`, where `age_days`
-  is the non-negative UTC-clock difference from `updated_at`; boolean matches
-  are `0` or `1`; `importance` is the stored score. `scope_match` is `1.00` for
-  conversation, `0.80` for project, and `0.60` for global.
-  `correction_match` is `1` only when a `CORRECTION_RULE` memory has a non-empty
-  normalized keyword intersection with the request; otherwise `0`.
-- Include records at or above `context.minimum_relevance_score`; sort by score
-  descending, importance descending, updated time descending, then UUID
-  ascending. Retrieval-only deduplication collapses exact normalized content,
-  retaining the first record under that order. Apply
-  `context.retrieved_memory_limit` after deduplication. Persist each selected
-  record's rank, score, and reasons, and persist every rejected eligible/input
-  memory with `SCOPE_MISMATCH`, `DELETED`, `EXPIRED`, `SCORE_BELOW_THRESHOLD`,
-  `DUPLICATE_CONTENT`, or `LIMIT_EXCEEDED` evidence.
+  `project_match` is `1` only for an eligible project-scoped memory with the
+  same non-null project ID as the retrieval request; otherwise `0`.
+  `topic_match` is `1` only when the normalized non-empty active-topic token set
+  intersects the memory's normalized topic-term set; otherwise `0`.
+  `keyword_jaccard` is the size of the request/keyword token-set intersection
+  divided by the size of their union, or `0` for an empty union. `age_days` is
+  the exact non-negative UTC duration from `updated_at` to `evaluated_at`
+  divided by `86400` seconds; future update times therefore have age zero.
+  `recency = max(0, 1 - age_days / 90)`. `importance` is the stored score.
+  `scope_match` is `1.00` for conversation, `0.80` for project, and `0.60` for
+  global. `correction_match` is `1` only for a `CORRECTION_RULE` memory whose
+  normalized keyword set intersects the request token set; otherwise `0`.
+- Compare the canonical unrounded score inclusively with
+  `context.minimum_relevance_score`; equality is selected. Sort qualifying
+  records by score descending, importance descending, `updated_at` descending,
+  then canonical UUID text ascending.
+
+### Selection, duplicates, rank, reasons, and exclusions
+
+- After threshold filtering and canonical sorting, retrieval-only duplicate
+  collapse retains the first record for each normalized content string. It
+  never merges, rewrites, or deletes stored memories. Apply
+  `context.retrieved_memory_limit` after duplicate collapse; a zero limit
+  selects none. Selected records receive contiguous zero-based ranks.
+- Every selected record stores exactly seven reason strings in this order, with
+  each `<value>` rendered as a canonical decimal string:
+  `project_match=<value>`, `topic_match=<value>`,
+  `keyword_jaccard=<value>`, `recency=<value>`, `importance=<value>`,
+  `scope_match=<value>`, and `correction_match=<value>`.
+- Each distinct considered memory ID appears exactly once as either selected or
+  excluded. Select one exclusion by this precedence:
+  `SCOPE_MISMATCH`, `DELETED`, `EXPIRED`, `SCORE_BELOW_THRESHOLD`,
+  `DUPLICATE_CONTENT`, then `LIMIT_EXCEEDED`. Exclusion fields are:
+
+  | Reason | `computed_score` | Exact `details_json` keys |
+  |---|---|---|
+  | `SCOPE_MISMATCH` | null | `scope`, `request_conversation_id`, `request_project_id`, `memory_conversation_id`, `memory_project_id` |
+  | `DELETED` | null | `stored_status`, `deleted_at` |
+  | `EXPIRED` | null | `stored_status`, `expires_at`, `evaluated_at` |
+  | `SCORE_BELOW_THRESHOLD` | canonical score | `minimum_relevance_score` as a canonical decimal string |
+  | `DUPLICATE_CONTENT` | canonical score | `retained_memory_id` |
+  | `LIMIT_EXCEEDED` | canonical score | `result_limit`, `pre_limit_rank` (zero-based after deduplication) |
+
+  The listed keys are complete; details contain no raw or normalized memory
+  content. Result and exclusion creation times equal `evaluated_at`. Retrieval
+  confidence is the highest selected score, or null when no record is selected.
+  The decision has no side effects; existing context-packet persistence stores
+  its selected and excluded evidence later without changing the decision.

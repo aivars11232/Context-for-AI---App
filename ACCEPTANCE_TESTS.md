@@ -97,11 +97,21 @@ TASK-0008.
 
 **Fixture:** active-project, different-project, conversation, global,
 expired, deleted, and duplicate memories with known dates/importance/keywords.
-**Action:** retrieve for a Context for AI message using the fixed clock.
-**Pass:** only eligible non-expired/non-deleted memories above threshold are
-selected; cross-project records are excluded; exact duplicates collapse only in
-the retrieval result; ranks, scores, and reasons exactly follow the canonical
-formula and tie-break order.
+**Action:** run the TASK-0009 retriever for a Context for AI message using the
+fixed clock, then persist its returned evidence against a caller-supplied
+existing context-packet fixture. **TASK-0009 component pass:** every considered
+memory appears exactly once as selected or excluded; only scope-eligible,
+non-expired, non-deleted memories at or above threshold are selected;
+cross-project and cross-conversation records are excluded; exact duplicates
+collapse only in the retrieval result; zero-based ranks, 28-digit decimal
+scores, ordered reasons, exclusion details, and tie-breaking exactly follow the
+canonical contract and round-trip through the existing repository without any
+memory mutation or packet construction.
+
+**Later full-pipeline pass:** orchestration supplies the considered input set
+and injected-clock time, persists the already-computed decision with the packet,
+and passes selected memories to later packet/provider stages. Those integration
+assertions do not change TASK-0009 retrieval decisions and are not owned here.
 
 ### AT-009 Context-packet completeness and truncation
 
@@ -156,12 +166,21 @@ signal is the only UI state mutation path.
 ### AT-014 Manual memory lifecycle
 
 **Fixture:** a manual memory create, edit, duplicate candidate, expiry timestamp,
-and delete request. **Action:** perform explicit UI/use-case operations. **Pass:**
-each mutation creates a source and immutable revision; duplicate records are not
-automatically merged; expiry computes `EXPIRED` for retrieval while stored status
-remains `ACTIVE`; delete writes a `DELETED` tombstone; provenance/history remain
-inspectable; matching redacted `memory_*` trace events carry memory/revision IDs
-and no raw content.
+and delete request. **Action:** perform the explicit TASK-0009 use-case
+operations with an injected clock. **TASK-0009 component pass:** each successful
+create, edit, and soft delete atomically creates exactly one source and one
+consecutive immutable `memory-revision-v1` revision; get/list expose the complete
+source/revision history and computed effective status; duplicate records are not
+automatically merged; expiry computes `EXPIRED` while stored status remains
+`ACTIVE` and creates no revision; delete writes an inspectable `DELETED`
+tombstone that cannot be edited or restored. No automatic lifecycle operation,
+UI, trace event, orchestration, or provider call is exercised by this pass.
+
+**Later integration/presentation pass:** presentation invokes the same use cases
+through explicit user actions, and later pipeline ownership supplies the exact
+redacted `memory_*` trace events with memory/revision IDs and no raw content.
+Exact trace-event names and correlation assertions remain with D-010; UI,
+trace, orchestration, and provider integration are not TASK-0009 work.
 
 ### AT-015 Complete mock-provider pipeline, idempotency, and recovery
 
