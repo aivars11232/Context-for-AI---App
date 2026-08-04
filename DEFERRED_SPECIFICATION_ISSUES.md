@@ -23,7 +23,7 @@ also agree.
 | D-005 | Reconcile restart recovery with the foreground UI controller: specify how an already accepted run resumes without becoming a prohibited background worker. | `TASK-0014`, `TASK-0015` |
 | D-006 | Correct `ModelGateway` ownership so it returns typed timeout/cancellation outcomes while application/repository code persists lifecycle state; define cancellation ownership during recovery. | `TASK-0011`, `TASK-0012` |
 | D-007 | Update `docs/diagrams/SEQUENCES.md` for duplicate-key and Busy branches, clarification persistence, `PENDING` claim, context-stage state update, and recovery. | `TASK-0014` |
-| D-008 | Define the fixed `prompt_policy_version`, versioning rule, and remaining nested context-packet evidence/retrieval/token-budget shapes. | `TASK-0010` |
+| D-008 | Resolved for TASK-0010 below: the fixed prompt-policy/schema versions, versioning rules, complete packet/aggregate shapes, rendering grammar, evidence, retrieval, budgeting, omission, and typed-overflow contracts are authoritative. | `TASK-0010` |
 | D-009 | Define evaluation-case and evaluation-run JSON shapes, category taxonomy, fixture linkage, expected observables, and repository/use-case boundary; alternatively defer runtime evaluation persistence consistently. | `TASK-0005`, `TASK-0018` |
 | D-010 | Add exact acceptance assertions for required trace-event names, correlation fields, and redaction rather than merely claiming combined coverage. | `TASK-0014` |
 | D-011 | Reconcile local-Ollama opt-in semantics in `TASK-0012` and `TASK-0018`: no flag skips; flag present makes invalid daemon/model/configuration a failed opt-in test. | `TASK-0018` |
@@ -123,8 +123,9 @@ presentation. The bounded delivery contract is
 `tasks/TASK-0008-ENTITY-REGISTRY-AND-REFERENCE-RESOLUTION.md`.
 
 No model, semantic inference, file ingestion/indexing, memory, context-packet,
-pipeline, or UI behavior is added to TASK-0008. D-014 remains unresolved for
-`TASK-0010` through `TASK-0018`.
+pipeline, or UI behavior is added to TASK-0008. After the TASK-0010
+reconciliation below, D-014 remains unresolved for `TASK-0011` through
+`TASK-0018`.
 
 ### TASK-0009 reconciliation
 
@@ -158,9 +159,32 @@ trace-event, and provider integration assertions. Exact trace-event contracts
 remain assigned to D-010. The bounded delivery contract is
 `tasks/TASK-0009-MANUAL-MEMORY-LIFECYCLE-AND-DETERMINISTIC-RETRIEVAL.md`.
 
-D-013 remains open only for its TASK-0015/TASK-0017 portions. D-014 remains
-unresolved for `TASK-0010` through `TASK-0018`. No later-task issue is resolved
-by this section.
+D-013 remains open only for its TASK-0015/TASK-0017 portions. After the
+TASK-0010 reconciliation below, D-014 remains unresolved for `TASK-0011`
+through `TASK-0018`. No later-task issue is resolved by this section.
+
+### TASK-0010 reconciliation
+
+D-008 and the TASK-0010 portion of D-014 are resolved by the complete immutable
+packet, prompt-rendering, and public component contracts in
+`docs/contracts/ContextPacket.md`; the bounded delivery contract in
+`tasks/TASK-0010-IMMUTABLE-CONTEXT-PACKET-AND-PROMPT-RENDERING.md`; and the
+direct component and narrow persistence assertions in AT-009.
+
+TASK-0010 consumes already-computed interpretation, reference, constraint, and
+retrieval decisions through an explicit provider-independent
+`ContextPacketBuildRequest`. It owns the recursively immutable
+`mvp-context-packet-v1` aggregate, `mvp-prompt-policy-v1` grammar,
+`mvp-correction-envelope-v1` render input, canonical JSON,
+`conservative_utf8_v1`, deterministic whole-item budgeting/omission evidence,
+typed initial/correction budget outcomes, and its two atomic initial
+context-stage persistence outcomes.
+
+The reconciliation does not assign interpretation, reference resolution,
+constraint resolution, retrieval selection, provider/model calls, response
+validation, correction control/persistence, later pipeline orchestration,
+trace-event integration, or UI behavior to TASK-0010. D-014 remains unresolved
+for `TASK-0011` through `TASK-0018`; no later-task issue is resolved here.
 
 ## Historical planning reconciliation
 

@@ -115,14 +115,84 @@ assertions do not change TASK-0009 retrieval decisions and are not owned here.
 
 ### AT-009 Context-packet completeness and truncation
 
-**Fixture:** a message, state, references, hard/optional/conditional constraints,
-memories, and a small configured token budget. **Action:** build a packet.
-**Pass:** it has schema version `mvp-context-packet-v1`, all required top-level
-fields/types, exact original text, all active hard/true-conditional constraints,
-conflict/override evidence, immutable reference/constraint order, deterministic
-omission records, and no omitted mandatory content. A budget smaller than
-mandatory content produces `CONTEXT_BUDGET_EXCEEDED` before any model request or
-packet row.
+**TASK-0010 component fixture:** fixed immutable run/message/state/project
+objects; already-computed interpretation, admissible reference and constraint
+decisions, and retrieval decision; one complete packet-lineage companion per
+constraint; selected memory snapshots; a preallocated packet ID already used by
+retrieval evidence; fixed caller-supplied creation time; scalar budget values;
+and a correction limit. Include resolved/not-applicable references, active
+hard/true-conditional/preferred/optional constraints, inactive conditionals,
+complete override evidence, ranked memories, strings that resemble every prompt
+marker, every canonical TASK-0008 candidate score/reason pairing, and budgets
+that exercise fit and overflow.
+
+**Component action:** call
+`ContextPacketBuilder.build(ContextPacketBuildRequest)` and
+`PromptRenderer.render(PromptRenderRequest)` directly. Exercise the narrow
+`ContextPacketStage.execute(ContextPacketBuildRequest)` separately with a fixed
+ID generator and temporary SQLite; do not construct a provider mock or broader
+pipeline service.
+
+**Pass — complete packet and initial render:** the success is one
+`ContextPacketBuildSuccess` containing an immutable `ContextPacketRecord` and
+initial `PromptRenderResult`. Outer identity/time remain outside
+`packet_json`; `trace.state_version` identifies the represented state snapshot;
+the payload has schema `mvp-context-packet-v1`, exact original text, all required
+fields, complete ordered decision/evidence data, and selected memory snapshots.
+Retrieval exclusions remain aggregate evidence outside the payload in canonical
+memory-UUID order, and retrieval confidence equals the upstream decision value
+without recomputation. The prompt uses `mvp-prompt-policy-v1`, the exact section
+bytes/order and canonical JSON, and includes every mandatory item. Rebuilding
+and rerendering the same fixture is byte-for-byte identical. Successful inputs
+contain only `RESOLVED`/`NOT_APPLICABLE` references, no active material
+`ASSUMED` constraint, and no `CONFLICTING` constraint; ambiguous, unresolved,
+assumed, conflicting, incomplete-lineage, and mismatched-lineage pre-packet
+fixtures produce no packet or render. `OVERRIDDEN` records retain complete
+mandatory source and winner/related evidence.
+
+**Pass — estimator and truncation:** `conservative_utf8_v1` returns `0` for
+`""`, `1` for `"abc"`, `2` for `"abcd"`, `1` for `"é"`, and `2` for `"😀"`,
+and estimates the complete UTF-8 render. Equality with the effective budget
+fits. Smaller fitting budgets tail-prune only whole items from the fixed total
+sequence—references, inactive-condition evidence, preferred constraints,
+retrieval by rank, then optional constraints—rerendering the whole prompt after
+each removal with no backfill. Exact projection/item-key omission records and
+included sections are deterministic, including a fixture whose whole-item
+removal has zero marginal estimated tokens; packet evidence and mandatory
+content are unchanged.
+
+**Pass — canonicalization, injection, and correction:** marker-like user,
+reference, constraint `source_texts`/resolution evidence, memory, and violation
+strings—including quotes, backslashes, CR/LF, U+2028, and U+2029—remain inside
+one canonical-JSON data line and cannot create, close, or reorder a trusted
+section. Reordered input object keys render identically; exact decimals render
+in fixed-point form. TASK-0008 source candidate scores `0.0`, `0.6`, `0.8`,
+`0.9`, and `1.0` project to exact packet decimals `0`, `0.6`, `0.8`, `0.9`, and
+`1`; a noncanonical score/reason pair is invalid, and every other binary
+floating-point value reaching canonical JSON is rejected. A valid
+`mvp-correction-envelope-v1` names the same packet, has an attempt within its
+packet correction limit, and inserts the exact fixed correction blocks before
+`@@CFA/END@@`; a cross-packet, zero-limit, or out-of-range envelope is rejected
+as invalid input. A correction starts from the initial retained optional prefix,
+can only prune further, reports final included sections and only additional
+correction token omissions, and does not repeat initial omissions or mutate
+packet bytes/initial rendering metadata. Correction mandatory overflow returns
+`ContextBudgetExceeded(phase=CORRECTION)` and no prompt, persistence, or run
+transition.
+
+**Pass — persistence and impossible budget:** success atomically writes exactly
+one packet aggregate, including retrieval result/exclusion rows, and changes
+the run from `PERSISTED` to `CONTEXT_READY`; an induced write failure rolls back
+both. An initial budget below the complete mandatory estimate returns
+`ContextBudgetExceeded(phase=INITIAL)` with code
+`CONTEXT_BUDGET_EXCEEDED`, estimator, required estimate, and effective budget,
+and no packet or prompt. The packet application stage atomically writes exactly
+one specified terminal `SafeFailure` with the generated failure ID, request
+processing-run ID, `stage=CONTEXT`, and the exact code/message/details/time, then
+changes the run from `PERSISTED` to `CONTROLLED_FAILURE`; an induced failure
+rolls back both. It writes zero packet, retrieval-result, retrieval-exclusion,
+model-request, model-response, validation, correction, or assistant-message
+rows.
 
 ### AT-010 Model abstraction and buffering
 
