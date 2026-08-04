@@ -64,23 +64,34 @@ the MVP does not invoke an image generator.
 
 ### AT-006 Reference resolution
 
-**Fixture:** an entity-registry row for project `Context for AI`, an active
-project, a source message ID that introduced it, and one explicit named-item
-declaration. **Action:** submit `correct the app structure` and register the
-named item through the canonical declaration/UI operation. **Pass:** `the app`
-becomes one
-`reference_resolutions` row with `RESOLVED`, the entity ID, source message ID,
-confidence `>= 0.80`, immutable mention ordinal, and ranked candidate evidence;
-the named item has an owning `named_items` row and no model-inferred registry
-entry exists.
+**Fixture:** an active project `Context for AI`, its entity-registry row, the
+explicit user message that supplied its creation name, and a separate message
+`name "architecture"`. **Action:** atomically register the declared named item,
+then submit `correct the app structure` and run the TASK-0008 mention extractor,
+resolver, and outcome persistence against isolated SQLite. **Pass:** `the app`
+is the sole final mention at ordinal `0`; the active-project candidate uniquely
+wins at `0.90`; one `reference_resolutions` row has `RESOLVED`, the project
+entity ID, project source-message ID, confidence `0.90`, and the exact ranked
+candidate-evidence shape. The named item has one owning `named_items` row and
+one registry row with its declaration source, and no inferred registry entry
+exists.
 
 ### AT-007 Ambiguous reference clarification
 
-**Fixture:** two equally ranked named entities matching `the app`. **Action:**
-resolve the mention. **Pass:** outcome is `AMBIGUOUS`, no model request exists,
-the run becomes `NEEDS_CLARIFICATION`, exactly one `clarification_requests` row
-uses the canonical template/evidence, and the UI result contains that one safe
-clarification question.
+**Fixture:** an in-scope active project and explicit named item both normalized
+as `app`, so `the app` gives both an exact-name score of `1.00`. **Action:** run
+the TASK-0008 extractor and resolver. **TASK-0008 component pass:** the sole
+outcome is `AMBIGUOUS` with confidence `1.00`, null resolved/source entity
+selection, both tied candidates in canonical evidence order, and a blocking
+`ReferenceDecision` carrying the canonical `AMBIGUOUS_REFERENCE` reason and
+question inputs. The resolver has no model/provider dependency and performs no
+run, clarification, or UI mutation.
+
+**Later full-pipeline pass:** orchestration persists the outcome and exactly one
+canonical `clarification_requests` row, terminalizes the run as
+`NEEDS_CLARIFICATION`, creates no model request, and exposes the one safe
+question to the UI. These integration/presentation assertions are not owned by
+TASK-0008.
 
 ### AT-008 Deterministic context retrieval
 

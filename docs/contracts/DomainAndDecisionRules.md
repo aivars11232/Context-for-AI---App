@@ -32,7 +32,7 @@ routing, or background workers.
 | `MemoryStatus` | `ACTIVE`, `DELETED` | Stored lifecycle state. `DELETED` is a retained tombstone. |
 | `MemoryEffectiveStatus` | `ACTIVE`, `EXPIRED`, `DELETED` | Computed retrieval state; `EXPIRED` is never written as an automatic mutation. |
 | `EntityType` | `PROJECT`, `TOPIC`, `TASK`, `NAMED_ITEM` | `NAMED_ITEM` is an explicit user-introduced entity, not model-inferred NER. |
-| `ReferenceStatus` | `RESOLVED`, `AMBIGUOUS`, `UNRESOLVED`, `NOT_APPLICABLE` | All outcomes are persisted. |
+| `ReferenceStatus` | `RESOLVED`, `AMBIGUOUS`, `UNRESOLVED`, `NOT_APPLICABLE` | One outcome is persisted for every final TASK-0008 mention; no synthetic outcome is created when there is no mention. |
 | `ProcessingRunStatus` | `PERSISTED`, `CONTEXT_READY`, `GENERATING`, `REVISING`, `SUCCEEDED`, `NEEDS_CLARIFICATION`, `CONTROLLED_FAILURE`, `FAILED`, `CANCELLED` | A run has exactly one terminal status. |
 | `ModelRequestStatus` | `PENDING`, `IN_FLIGHT`, `SUCCEEDED`, `TIMED_OUT`, `CANCELLED`, `FAILED` | Model transport lifecycle. |
 | `ValidationStatus` | `PASSED`, `FAILED`, `NOT_RUN` | One result exists for every completed candidate response. |
@@ -204,11 +204,15 @@ Candidate labels and conflicting rules are normalized/sorted by the applicable
 canonical ranking/order. The `details_json` payload carries the reason, source
 IDs, candidates, and template inputs; it never stores a model-produced question.
 
-Only one blocking reason is selected. Precedence is: an interpretation block,
-then `UNSUPPORTED_CONDITION`, then `HARD_CONSTRAINT_CONFLICT`, then
-`MATERIAL_ASSUMPTION`. Reference-stage clarification remains owned by TASK-0008.
-TASK-0007 constructs the deterministic question and details but does not persist
-it or terminalize a processing run.
+Only one blocking reason is selected. Inside the TASK-0007 boundary, precedence
+is an interpretation block, then `UNSUPPORTED_CONDITION`, then
+`HARD_CONSTRAINT_CONFLICT`, then `MATERIAL_ASSUMPTION`. When a TASK-0008
+reference decision is composed with that result, global precedence is the
+interpretation block, the lowest-ordinal blocking reference, then the three
+constraint-stage reasons in their existing order. TASK-0007 constructs a
+deterministic question and details but does not persist it or terminalize a
+processing run. TASK-0008 likewise returns reference-stage clarification data;
+later orchestration owns persistence and run terminalization.
 
 ## Constraint priority and conflict rules
 
@@ -288,7 +292,9 @@ requests and return those objects. They do not call repositories, persist
 results, construct a context packet, call a provider, or apply conversation
 state. A `same as before` match ends at the unresolved reference-mention output;
 candidate search, status selection, reuse, and reference clarification belong to
-TASK-0008.
+TASK-0008. TASK-0007 does not inspect the entity registry. TASK-0008 preserves
+the TASK-0007 mention as source evidence and merges it with the additional
+finite-form and exact-registry-name mentions defined below.
 
 ## State transitions and concurrency
 
@@ -353,21 +359,207 @@ another request, assistant message, state update, or correction row.
 
 ## Entity and reference rules
 
-The entity registry contains projects, topics, tasks, and explicit
-user-introduced named items. A project/topic/task row creates and owns exactly
-one registry row whose `native_id` equals the owning row ID; its activity mirrors
-the owning project's archive status and task terminal status. A named item has
-its own durable `named_items` row and may be registered only by the explicit UI
-operation or one of these user declarations: `name "<label>"` or `call this
-"<label>"`. It records the source message and owning conversation/project when
-present; free-form model-inferred NER is prohibited. A reference candidate is
-ranked deterministically: exact explicit name
-match `1.00`; active task/topic/project `0.90`; most recent tracked entity
-matching the phrase `0.80`; most recent matching source-message text `0.60`.
-The unique highest candidate resolves only when it is at least `0.80` and does
-not tie another candidate. A tie or lower score is `AMBIGUOUS`/`UNRESOLVED` and
-requires clarification if the target is material. File references are unresolved
-in MVP because file ingestion/indexing is excluded.
+### Registry identity, ownership, lifecycle, and provenance
+
+The registry contains only `PROJECT`, `TOPIC`, `TASK`, and `NAMED_ITEM`. Every
+owner receives exactly one registry row in the same transaction. The registry
+UUID is distinct from, and never derived from, the durable owner UUID;
+`native_id` equals that owner UUID and `(entity_type, native_id)` is immutable.
+Physical deletion is not an MVP registry operation.
+
+- A `PROJECT` entity has `project_id` equal to its `native_id`. It is active
+  exactly while the project is `ACTIVE`.
+- A `TOPIC` entity belongs to its topic's conversation and has the
+  conversation's current `project_id`. It is active while that project is null
+  or `ACTIVE`.
+- A `TASK` entity belongs to its task's conversation and has the conversation's
+  current `project_id`. It is active only while its project is null or `ACTIVE`
+  and its task is `OPEN` or `IN_PROGRESS`.
+- A `NAMED_ITEM` entity has the immutable conversation and optional project
+  ownership stored by its `named_items` row. It is active while that project is
+  null or `ACTIVE`.
+
+Archiving a project retains its registry rows and makes the project and every
+project-owned entity inactive. Completing or cancelling a task retains its row
+and makes it inactive; explicitly reopening it restores activity when its
+project is eligible. A conversation project change updates its topic/task
+registry `project_id` and activity in the same transaction. Owner renames update
+registry display/normalized names atomically. Registry ID, entity type,
+`native_id`, `created_at`, and `source_message_id` never change.
+
+`entity_registry.source_message_id` is the immutable user message that supplied
+an explicit creation name. It is nullable for an explicit UI creation that has
+no message. For a topic, task, or named item, a non-null source must be a `USER`
+message from the owning conversation. A project source must be a `USER` message
+used by its explicit local creation operation; it is not required to predate a
+conversation-project association. The registry is the canonical source field
+for project/topic/task because those owner tables have no source column. A
+named-item owner and its registry row carry the same source value. A null source
+never denotes inference.
+
+### Explicit named-item registration
+
+A named item is created only by an explicit UI operation or by a whole-message
+declaration matching exactly `name "<label>"` or `call this "<label>"` after
+trimming outer whitespace and case-folding the command words. Quotes are ASCII
+double quotes; the label cannot contain a double quote or a Unicode control
+character and must be non-empty after normalization. There is no escape syntax
+in MVP.
+
+The display name is the label normalized to Unicode NFC, with leading/trailing
+whitespace removed and each internal non-empty whitespace run collapsed to one
+ASCII space. `normalized_name` is that display name Unicode-case-folded; name
+punctuation is preserved. Uniqueness is exact on `(conversation_id,
+normalized_name)`. A duplicate is rejected without creating either row. The
+owning conversation is required and `project_id` copies its current project for
+a message declaration or the project explicitly selected by the UI operation.
+Message registration writes the declaration message as source; UI registration
+writes null. The `named_items` and registry rows are created atomically.
+
+The quoted label in its own declaration is registration data, not a reference
+mention. In `call this "<label>"`, the word `this` is still recorded as the one
+deterministically non-applicable mention described below. No other prose,
+automatic named-entity extraction, model result, fuzzy match, or inferred label
+can create an entity.
+
+### Reference-mention ownership and complete MVP forms
+
+TASK-0007 continues to own intent/qualifier interpretation and emits
+`same as before` as a `ReferenceMention`. TASK-0008 owns a separate deterministic
+mention-extraction step before resolution. It accepts the exact current message,
+the immutable TASK-0007 mentions, and the scoped registry candidates; it never
+changes the TASK-0007 objects. It copies their source evidence into a new final
+ordered `ReferenceMention` sequence and adds only these forms:
+
+| Form class | Exact normalized forms | Candidate types |
+|---|---|---|
+| Generic singular | `it`, `this`, `that` | all entity types |
+| Application | `the app`, `this app`, `that app` | `PROJECT`, `NAMED_ITEM` |
+| Project | `the project`, `this project`, `that project` | `PROJECT` |
+| Topic | `the topic`, `this topic`, `that topic` | `TOPIC` |
+| Task | `the task`, `this task`, `that task` | `TASK` |
+| Prior | `same as before` | all entity types |
+| Unsupported file | `the file`, `this file`, `that file` | none |
+| Explicit name | an in-scope registry row's complete `normalized_name` | that entity |
+
+Fixed forms and explicit names use the TASK-0007 NFC/case-fold/whitespace
+normalization, exact original half-open offsets, and Unicode alphanumeric word
+boundaries. For a fixed noun form, the lookup key removes its leading `the`,
+`this`, or `that`; an explicit-name form uses the complete normalized name.
+Inactive in-scope entity names are still extracted so stale references retain
+evidence. A quoted label inside its own registration declaration is excluded.
+
+Candidate spans are scanned left-to-right. At the same source start, prefer the
+longer span; for an identical span, prefer TASK-0007 evidence, then an explicit
+registry-name match, then a fixed form, then lexicographically smaller source
+rule ID. After accepting a span, discard every candidate span that overlaps it.
+Sort accepted spans by start offset, end offset, and source rule ID, then assign
+new contiguous final ordinals `0..n-1`. The original TASK-0007 objects and their
+local ordinals remain immutable; only the final sequence ordinals are persisted.
+TASK-0008-created mentions use stable rule IDs `reference-form:<normalized
+form>` or `reference-name:<entity UUID>` in the existing source-rule field.
+
+All gendered/plural pronouns (`he`, `she`, `they`, `them`, `these`, `those`),
+`former`/`latter`, possessive forms, partial names, synonyms, misspellings, and
+unlisted deictic phrases are unsupported. They create no mention and no outcome.
+This is deterministic omission, not `UNRESOLVED`. No semantic inference is
+performed.
+
+### Candidate eligibility, matching, and ranking
+
+The scoped registry input contains the conversation's topics, tasks, and named
+items plus its associated project, including inactive rows for stale evidence;
+cross-conversation and cross-project rows are absent. A tracked entity is an
+active, in-scope entity targeted by a prior persisted `RESOLVED` outcome whose
+message is in the ordered recent-message input. Its recency tuple is source
+message sequence descending, then prior mention ordinal descending. A
+source-message match is an exact word-bounded occurrence of the entity's full
+`normalized_name` in a prior recent message; its recency is message sequence.
+
+For each type-compatible active candidate, take the maximum applicable score:
+
+| Score | Rank reason | Exact trigger |
+|---:|---|---|
+| `1.00` | `EXACT_NAME` | Mention lookup key equals the candidate's complete `normalized_name`. |
+| `0.90` | `ACTIVE_STATE` | Candidate is the conversation project, active topic, or active task; this band does not apply to `same as before`. |
+| `0.80` | `RECENT_TRACKED` | Candidate has the greatest tracked-entity recency tuple among compatible candidates. |
+| `0.60` | `SOURCE_MESSAGE` | Candidate has the greatest matching-source-message sequence among otherwise unmatched compatible candidates. |
+
+An inactive compatible entity is retained with score `0.00` and reason
+`STALE_ENTITY`; it can never win. Only candidates sharing the greatest
+applicable tracked/source recency tuple receive `0.80`/`0.60`; older matches
+remain evidence with the matching rank reason and score `0.00`. An active
+candidate with no applicable band is omitted. Candidate scores are not added.
+`same as before` uses tracked and source bands only. File forms do not search
+entity candidates.
+
+Candidate evidence is presented by score descending, rank-reason order
+`EXACT_NAME`, `ACTIVE_STATE`, `RECENT_TRACKED`, `SOURCE_MESSAGE`,
+`STALE_ENTITY`, then recency descending where applicable, normalized name
+ascending, entity-type value ascending, and entity UUID ascending. Presentation
+keys never break a resolution tie: every candidate sharing the highest positive
+score is a top candidate.
+
+### Status, confidence, and source-message rules
+
+| Status | Exact trigger | Stored confidence |
+|---|---|---:|
+| `RESOLVED` | Exactly one top candidate, score at least `0.80`. | Winning score (`1.00`, `0.90`, or `0.80`). |
+| `AMBIGUOUS` | Two or more candidates share the highest positive score, at any band. | Shared highest score. |
+| `UNRESOLVED` | No positive candidate, or exactly one top candidate below `0.80`; all file forms use this status. | Unique positive top score, otherwise `0.00`; file forms are `0.00`. |
+| `NOT_APPLICABLE` | Exactly the `this` token serving as the declaration target in `call this "<label>"`; it is not an entity target. | `1.00`. |
+
+No final mention sequence means no reference rows; no synthetic
+`NOT_APPLICABLE` row is created. `resolved_entity_id` is non-null only for
+`RESOLVED`. The outcome `source_message_id` is the winner's evidence message,
+falling back to its entity source for `RESOLVED`; it is null for `AMBIGUOUS`; it
+is the unique below-threshold candidate's evidence/source message for that form
+of `UNRESOLVED`, otherwise null; and it is the current declaration message for
+`NOT_APPLICABLE`.
+
+All extracted entity/file references are material in MVP because changing or
+omitting their target can change the response. `NOT_APPLICABLE` is non-material
+and omitted from the reference-confidence factor. A material `AMBIGUOUS` result
+uses `AMBIGUOUS_REFERENCE`; a material `UNRESOLVED` result uses
+`UNRESOLVED_REFERENCE`. Either blocks the TASK-0008 decision before provider use.
+The lowest mention ordinal supplies the single reference question. A resolved
+or non-applicable outcome does not create reference clarification.
+
+For ambiguity, clarification `entity_type` is the shared lower-case type label,
+or `entity` for mixed types. Candidate labels contain only the tied top
+candidates in evidence order; append `(<lower-case entity type>)` when types are
+mixed or display names repeat. Details retain mention ordinal, exact surface,
+candidate evidence, and every non-null source-message ID. TASK-0008 returns this
+blocking reason/details but does not persist a clarification, terminalize a run,
+create a model request, or present UI.
+
+### Persisted candidate evidence
+
+`candidate_evidence_json` is a non-empty array in the presentation order above.
+Every candidate object has exactly these keys:
+
+```text
+rank                         one-based integer
+entity_id                    UUID or null
+entity_type                  EntityType string or null
+display_name                 text or null
+normalized_name              text or null
+score                        number in [0, 1]
+rank_reason                  canonical reason string
+entity_source_message_id     UUID or null
+evidence_message_id          UUID or null
+evidence_message_sequence    non-negative integer or null
+prior_mention_ordinal        non-negative integer or null
+is_active                    boolean or null
+```
+
+When there is no entity candidate, the array contains exactly one evidence
+object with rank `1`, null entity fields, score `0.00`, and reason
+`NO_CANDIDATE`, `FILE_CONTEXT_UNSUPPORTED`, or `DECLARATION_TARGET`. Entity
+candidate reasons are exactly the five ranking reasons above. This structure
+retains stale, losing, and tied evidence without implying a winner. File
+references are always `UNRESOLVED` with `FILE_CONTEXT_UNSUPPORTED`; project file
+scanning, ingestion, indexing, and resolution remain excluded.
 
 ## Memory lifecycle and deterministic retrieval
 

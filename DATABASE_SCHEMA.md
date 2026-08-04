@@ -117,6 +117,9 @@ message until validation passes.
 A named item is created only by the explicit registration/declaration contract
 in `DomainAndDecisionRules.md`. A null `source_message_id` means the explicit UI
 registration operation; it never means model-inferred extraction.
+Display and normalized names, declaration grammar, conversation/project
+ownership, and duplicate rejection follow that contract. The named-item row and
+its registry row are inserted atomically and carry the same source value.
 
 ### `entity_registry`
 
@@ -139,6 +142,22 @@ to `projects`, `TOPIC` to `topics`, `TASK` to `tasks`, and `NAMED_ITEM` to
 has one. SQLite cannot express this polymorphic foreign key, so the migration
 adds repository-level invariant tests. No model-inferred entities are stored.
 
+The registry UUID, `entity_type`, `native_id`, `created_at`, and
+`source_message_id` are immutable. `PROJECT.project_id` equals its `native_id`;
+topic/task project ownership follows their conversation; named-item ownership
+matches its owner row. Owner names, conversation project changes, project
+archiving, and task terminal/reopen transitions update the affected registry
+display name, normalized name, project ID, and activity atomically under the
+rules in `DomainAndDecisionRules.md`.
+
+For every entity type, a non-null `source_message_id` is the immutable `USER`
+message used by an explicit creation operation. It is null for an explicit UI
+creation without message evidence. Topic, task, and named-item sources belong to
+their owning conversation; the registry is the canonical project/topic/task
+source because those owner tables have no source column. These are
+repository-level polymorphic/provenance invariants and require no additional
+schema column.
+
 ### `reference_resolutions`
 
 - `id` primary key
@@ -154,8 +173,22 @@ adds repository-level invariant tests. No model-inferred entities are stored.
 - `created_at` non-null
 - unique `(processing_run_id, mention_ordinal)`
 
-`resolved_entity_id` is non-null only for `RESOLVED`. Ambiguous and unresolved
-results preserve candidate evidence and remain visible to the UI.
+`resolved_entity_id` is non-null only for `RESOLVED`. One row exists for every
+final TASK-0008 mention and none is synthesized when there is no mention.
+`message_id` is always the current user message; `source_message_id` follows the
+winning/unique-evidence/null/non-applicable rules in
+`DomainAndDecisionRules.md`. Ambiguous and unresolved results preserve evidence
+and remain inspectable by later presentation code.
+
+`candidate_evidence_json` is a non-empty ordered array. Each object contains
+exactly `rank`, `entity_id`, `entity_type`, `display_name`, `normalized_name`,
+`score`, `rank_reason`, `entity_source_message_id`, `evidence_message_id`,
+`evidence_message_sequence`, `prior_mention_ordinal`, and `is_active`. Null
+entity fields plus `NO_CANDIDATE`, `FILE_CONTEXT_UNSUPPORTED`, or
+`DECLARATION_TARGET` record explicit non-candidate evidence. Repository
+validation enforces the status-specific entity/source/confidence invariants and
+the evidence object shape. These logical requirements use the existing JSON
+column and do not require a TASK-0008 migration.
 
 ### `constraints`
 

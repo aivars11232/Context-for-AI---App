@@ -78,7 +78,7 @@ The historical `Conversation State Manager.txt` material is explicitly
 non-authoritative: its project duplicate, file/version, step, application,
 decision, and unresolved-question fields are not TASK-0006 state. Message admission and `BusyError` mapping, correction-constraint persistence,
 interpretation, packet construction, orchestration, recovery, and UI remain
-assigned to their later tasks. D-014 remains unresolved for `TASK-0008` through
+assigned to their later tasks. D-014 remains unresolved for `TASK-0009` through
 `TASK-0018`.
 
 ### TASK-0007 reconciliation
@@ -102,8 +102,29 @@ Manager priority descriptions are non-authoritative for TASK-0007. The
 canonical intent/output taxonomy, numeric bands, conditional/assumed behavior,
 and conflict rules named above replace those historical descriptions. Reference
 resolution, retrieval, packets, providers, orchestration, persistence, and UI
-remain assigned to their existing later tasks. D-014 remains unresolved for
-`TASK-0008` through `TASK-0018`.
+remain assigned to their existing later tasks.
+
+### TASK-0008 reconciliation
+
+D-001 is resolved by the exhaustive fixed/deictic/file form table, exact scoped
+registry-name matching, TASK-0007 seed-mention merge, source-preserving
+normalization, overlap precedence, left-to-right scan, and final contiguous
+ordinal rules in `docs/contracts/DomainAndDecisionRules.md` and
+`docs/contracts/ContextEngine.md`.
+
+The `TASK-0008` portion of D-014 is resolved by the canonical registry identity,
+ownership, lifecycle, provenance, explicit named-item grammar, candidate
+ranking, status/confidence, materiality, evidence JSON, and pure
+`ReferenceDecision` contracts. `DATABASE_SCHEMA.md` defines their persistence
+semantics without a new migration. AT-006 now fixes the active-project outcome;
+AT-007 separates TASK-0008 ambiguity/blocking evidence from later
+orchestration, terminalization, provider-prevention integration, and UI
+presentation. The bounded delivery contract is
+`tasks/TASK-0008-ENTITY-REGISTRY-AND-REFERENCE-RESOLUTION.md`.
+
+No model, semantic inference, file ingestion/indexing, memory, context-packet,
+pipeline, or UI behavior is added to TASK-0008. D-014 remains unresolved for
+`TASK-0009` through `TASK-0018`.
 
 ## Historical planning reconciliation
 
