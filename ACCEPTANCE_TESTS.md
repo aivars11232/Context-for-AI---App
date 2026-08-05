@@ -123,13 +123,14 @@ assertions do not change TASK-0009 retrieval decisions and are not owned here.
 **TASK-0010 component fixture:** fixed immutable run/message/state/project
 objects; already-computed interpretation, admissible reference and constraint
 decisions, and retrieval decision; one complete packet-lineage companion per
-constraint; selected memory snapshots; a preallocated packet ID already used by
-retrieval evidence; fixed caller-supplied creation time; scalar budget values;
-and a correction limit. Include resolved/not-applicable references, active
-hard/true-conditional/preferred/optional constraints, inactive conditionals,
-complete override evidence, ranked memories, strings that resemble every prompt
-marker, every canonical TASK-0008 candidate score/reason pairing, and budgets
-that exercise fit and overflow.
+constraint; the immutable active-topic snapshot; the complete normalized
+validation configuration; selected memory snapshots; a preallocated packet ID
+already used by retrieval evidence; fixed caller-supplied creation time; and
+scalar budget values. Include resolved/not-applicable references, active hard/
+true-conditional/preferred/optional constraints, inactive conditionals,
+complete override evidence, ranked memories, strings that resemble every
+prompt marker, every canonical TASK-0008 candidate score/reason pairing, and
+budgets that exercise fit and overflow.
 
 **Component action:** call
 `ContextPacketBuilder.build(ContextPacketBuildRequest)` and
@@ -142,8 +143,11 @@ pipeline service.
 `ContextPacketBuildSuccess` containing an immutable `ContextPacketRecord` and
 initial `PromptRenderResult`. Outer identity/time remain outside
 `packet_json`; `trace.state_version` identifies the represented state snapshot;
-the payload has schema `mvp-context-packet-v1`, exact original text, all required
-fields, complete ordered decision/evidence data, and selected memory snapshots.
+the payload has schema `mvp-context-packet-v2`, exact original text, the closed
+topic/rule `validation_context`, all other required fields, complete ordered
+decision/evidence data, and selected memory snapshots. Validation context is
+not rendered or budgeted, and the prompt policy remains
+`mvp-prompt-policy-v1`.
 Retrieval exclusions remain aggregate evidence outside the payload in canonical
 memory-UUID order, and retrieval confidence equals the upstream decision value
 without recomputation. The prompt uses `mvp-prompt-policy-v1`, the exact section
@@ -167,10 +171,11 @@ removal has zero marginal estimated tokens; packet evidence and mandatory
 content are unchanged.
 
 **Pass — canonicalization, injection, and correction:** marker-like user,
-reference, constraint `source_texts`/resolution evidence, memory, and violation
-strings—including quotes, backslashes, CR/LF, U+2028, and U+2029—remain inside
-one canonical-JSON data line and cannot create, close, or reorder a trusted
-section. Reordered input object keys render identically; exact decimals render
+reference, constraint `source_texts`/resolution evidence, and memory strings—
+including quotes, backslashes, CR/LF, U+2028, and U+2029—remain inside one
+canonical-JSON data line and cannot create, close, or reorder a trusted section.
+The correction block uses only the closed typed violation and compact-evidence
+objects. Reordered input object keys render identically; exact decimals render
 in fixed-point form. TASK-0008 source candidate scores `0.0`, `0.6`, `0.8`,
 `0.9`, and `1.0` project to exact packet decimals `0`, `0.6`, `0.8`, `0.9`, and
 `1`; a noncanonical score/reason pair is invalid, and every other binary
@@ -273,23 +278,64 @@ and broader pipeline orchestration are not TASK-0011 or TASK-0012 exit criteria.
 
 ### AT-011 Response validation
 
-**Fixture:** a packet with one required phrase, one forbidden phrase, one
-preservation predicate, active topic, and text output type. **Action:** validate
-separate passing and failing candidates. **Pass:** each failed candidate has the
-expected typed violation, deterministic evidence, and score; each configured
-output shape, action marker, preserve verb, and true conditional predicate
-follows its documented grammar; preferred, optional, assumed, and repetition
-rules are warnings only; no model call occurs during validation.
+**TASK-0013 fixture:** immutable `mvp-context-packet-v2` values with fixed topic
+terms and validation configuration covering one required predicate, one
+forbidden predicate, one preservation predicate, each output shape, action
+markers, true and false conditionals, preferred and optional rules, one retained
+overridden assumption, repetition, and empty candidates. Include malformed and
+unknown predicates only as invalid-input fixtures.
+
+**TASK-0013 action:** call the validator directly for separate passing, failing,
+and warning candidates; repeat each complete request unchanged. No provider or
+repository is supplied to the validator.
+
+**TASK-0013 pass:** identical requests produce value-identical aggregate status,
+exact decimal score, ordered violations, and ordered evidence. Every canonical
+check follows the documented lexical/structural grammar; empty content, topic,
+shape, phrase, marker, preservation, conditional, and repetition behavior is
+exact. Violations contain only errors; preferred/optional misses and an
+overridden assumption are warning evidence only and have zero score impact;
+each distinct repeated sentence is warning evidence with exactly one `0.05`
+deduction. Warnings never change pass/fail. Malformed/unknown predicates fail as
+invalid component input with no validation result or correction decision. The
+validator performs no model call, lookup, packet mutation, or fact judgment.
 
 ### AT-012 Bounded correction and controlled exhaustion
 
-**Fixture:** mock responses that fail a hard validation rule, parameterized with
-`validation.max_revisions` values `0`, `1`, and `2`. **Action:** run the full
-correction flow. **Pass:** it makes exactly one, two, or three model requests
-respectively with consecutive attempts beginning at `0`; it creates exactly the
-matching number of correction rows; all candidates and reports persist; exhausted
-runs are `CONTROLLED_FAILURE`; no assistant message links an invalid response;
-UI gets a safe failure rather than candidate text.
+**TASK-0013 component fixture:** immutable packets whose correction limits are
+`0`, `1`, and `2`; fixed failed validation reports containing errors and
+warnings; explicit succeeded/unlinked candidate lineage for attempts `0`, `1`,
+and `2`; invalid cross-run, cross-packet, skipped-attempt, and out-of-range
+lineage; and preconstructed repository records for the bounded durable
+projections. No provider or complete pipeline use case is used.
+
+**TASK-0013 component action:** call the correction controller directly and
+exercise the validation, correction-attempt, and exhaustion repository
+projections independently.
+
+**TASK-0013 component pass:** attempt `N` below the packet limit yields exactly
+one envelope for attempt `N+1`; attempt `N` equal to the limit yields the exact
+typed exhaustion value; invalid lineage yields an invariant error and no
+decision or write. Limits `0`, `1`, and `2` permit exactly zero, one, and two
+correction envelopes. Every envelope retains the original packet ID and bytes,
+names the immediately failed response, contains ordered violations but no
+warnings/candidate/full evidence, and never weakens a constraint. Exact
+validation reports persist; a successful correction projection atomically
+persists one adjacent revision request and correction row whose `reason_json`
+is the violation array; exhaustion persists the canonical safe failure with no
+correction row or assistant link. These assertions are bounded component
+evidence and do not by themselves satisfy complete AT-012.
+
+**TASK-0014 full fixture/action:** use mock responses that fail a hard rule,
+parameterized with `validation.max_revisions` values `0`, `1`, and `2`, and run
+the complete correction lifecycle.
+
+**TASK-0014 full pass:** the lifecycle makes exactly one, two, or three model
+requests respectively with consecutive attempts beginning at `0`; creates
+exactly zero, one, or two correction rows; persists every candidate and report;
+and ends exhausted runs as `CONTROLLED_FAILURE`. No assistant message links an
+invalid response, and the UI gets the canonical safe failure rather than
+candidate text. TASK-0014 owns final application acceptance of AT-012.
 
 ### AT-013 Context inspection UI
 

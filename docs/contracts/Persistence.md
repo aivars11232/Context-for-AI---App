@@ -50,15 +50,67 @@ these short transactions:
    request by changing it to `IN_FLIGHT`; commit before the provider call.
 4. **Candidate transaction:** persist the provider result and `SUCCEEDED`
    request status, then deterministically validate the complete candidate and
-   persist its validation report in the same transaction. A transport outcome
-   instead persists the terminal request status, a failure record, and terminal
-   run status in one transaction.
+   persist its validation report in the same transaction. Candidate text is
+   never eligible for assistant linkage in this transaction. A transport
+   outcome instead persists the terminal request status, a failure record, and
+   terminal run status in one transaction.
 5. **Terminal transaction:** on a pass, create the linked assistant message and
    mark the run `SUCCEEDED`; deterministic state was already committed with the
    packet, so this transaction does not perform a second state update. On
    exhausted validation, cancel,
    or a recovery-determined failure, persist `pipeline_failures` and a terminal
    run status. Memory records are not automatically changed by this pipeline.
+
+## TASK-0013 validation and correction projections
+
+`ValidationRepository` persists the exact closed `ValidationResult` from
+`ResponseValidation.md`. `violations_json` is the ordered array of failing
+`ValidationViolation` objects only. `evidence_json` is the complete ordered
+array of `ValidationEvidence`, including `WARNING` items. Warnings are never
+duplicated into `violations_json`; `NOT_RUN` is never written for a received
+candidate; and repositories do not recompute status, score, ordering, or
+deduplication.
+
+The correction controller is pure and does not write repositories. When it
+returns a `CorrectionEnvelope` and rendering succeeds, the request-preparation
+transaction atomically creates:
+
+- the one `PENDING` `REVISION` model request for envelope attempt `N`; and
+- one `correction_attempts` row with attempt `N`, the immediately failed
+  response ID, the new request ID, and `reason_json` equal value-for-value to the
+  envelope's ordered `violations` array.
+
+`reason_json` therefore contains fixed violation messages and compact evidence,
+but no warning, candidate text, match location, or full validation evidence. A
+correction row is not created when the controller returns exhaustion, lineage
+is invalid, correction rendering exceeds its mandatory budget, or no revised
+request is created. The row and request either both commit or neither does.
+
+The complete envelope is reconstructed when durable inspection or restart
+recovery needs it. Its schema version and instruction are contract constants;
+its packet ID comes from the revised request's immutable packet; its failed
+response ID and attempt come from the correction row; and its violations are
+`reason_json`. The revised request and correction row must satisfy the same-run,
+adjacent-attempt lineage invariants below. `request_json` is not a second
+authority for an envelope, and no new database column or table is required.
+
+For validation exhaustion, the final candidate transaction first commits the
+failed response and exact failed validation result. The full pipeline owner then
+uses a separate terminal transaction to persist exactly the `SafeFailure`
+projection from `ResponseValidation.md` and move the run to
+`CONTROLLED_FAILURE`. The row has stage `VALIDATION`, code
+`VALIDATION_EXHAUSTED`, safe message
+`The response did not pass validation.`, the exact six-key `details_json`
+defined by that contract, `is_terminal=true`, and `created_at` equal to the
+run's `completed_at` from one injected clock reading. No correction row or
+assistant message is created for exhaustion. The database stores that safe
+failure projection, never a `ValidationExhaustedError` object.
+
+TASK-0013 owns bounded component/repository contract evidence for these exact
+projections using preconstructed requests, responses, validation results,
+envelopes, and exhaustion values. TASK-0014 owns invoking the candidate,
+request-preparation, and terminal transactions as one complete provider-facing
+application lifecycle.
 
 ## Idempotency, recovery, and concurrency
 

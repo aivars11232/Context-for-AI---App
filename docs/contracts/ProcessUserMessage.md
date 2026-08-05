@@ -45,19 +45,41 @@ existing in-progress result, or a pre-acceptance busy result.
    outside a database transaction. Receive exactly one typed
    `GenerationOutcome`; expected transport failures are returned values, not
    exceptions.
-6. Persist and validate every received candidate. A valid candidate is linked to
-   one assistant message and ends the run successfully.
-7. On validation failure, create at most two correction attempts. Revisions use
-   the original immutable packet plus a violation envelope.
-8. On exhaustion, provider failure, cancellation, context-budget failure, or
-   persistence failure, follow the terminal/best-effort persistence contract.
-   Never expose an invalid candidate as final output.
+6. Persist and validate every received candidate using only the immutable
+   packet's validation snapshot. A valid candidate is linked to one assistant
+   message and ends the run successfully.
+7. On validation failure, pass the unchanged packet, failed-candidate lineage,
+   and exact failed report to the pure correction controller. The packet's
+   `response_policy.correction_limit` is the sole revision-limit authority.
+   Each returned envelope names the immediately failed response, carries only
+   typed violations, and produces the next consecutive attempt. No caller
+   supplies a second maximum or mutates the packet.
+8. When the controller returns `CorrectionExhausted`, persist the exact
+   `VALIDATION/VALIDATION_EXHAUSTED` safe failure and terminal
+   `CONTROLLED_FAILURE` transition defined in `ResponseValidation.md` and
+   `Persistence.md`. On provider failure, cancellation, context-budget failure,
+   or persistence failure, follow the corresponding terminal/best-effort
+   persistence contract. Never expose an invalid candidate as final output.
 
 ## Dependencies
 
 Repository ports, deterministic context components, model-gateway port,
 response validator, correction controller, clock/ID ports, and transaction
 boundary.
+
+## TASK-0013/TASK-0014 ownership boundary
+
+TASK-0013 defines and verifies the pure validator, typed validation reports,
+score/warning behavior, pure correction-envelope/controller decisions, and the
+bounded repository projections for validation, correction attempts, and
+exhaustion. Its fixtures may supply already-persisted lineage objects and do not
+execute this complete sequence.
+
+TASK-0014 owns this use case's complete lifecycle: provider invocation,
+candidate/request/terminal transaction coordination, repeated validation and
+correction decisions, final assistant linkage, safe UI result, recovery entry,
+and complete AT-012 execution. This split does not move repository or
+transaction ownership into the validator or controller.
 
 ## Never does
 
@@ -70,6 +92,10 @@ The use case maps non-gateway failures to typed application outcomes:
 `ConfigurationError`, `PersistenceError`, `ConcurrencyConflictError`,
 `BusyError`, `ContextConstructionError`, `ClarificationRequired`,
 `ContextBudgetExceededError`, and `ValidationExhaustedError`.
+
+`ValidationExhaustedError` is an application return only after the exact
+`SafeFailure` has been durably projected when persistence is available. It is
+not stored in `pipeline_failures`, and it never contains candidate text.
 
 Expected gateway conditions do not join that exception list. The gateway
 returns `CompletedGeneration` or one of

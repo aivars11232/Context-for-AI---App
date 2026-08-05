@@ -36,6 +36,11 @@ routing, or background workers.
 | `ProcessingRunStatus` | `PERSISTED`, `CONTEXT_READY`, `GENERATING`, `REVISING`, `SUCCEEDED`, `NEEDS_CLARIFICATION`, `CONTROLLED_FAILURE`, `FAILED`, `CANCELLED` | A run has exactly one terminal status. |
 | `ModelRequestStatus` | `PENDING`, `IN_FLIGHT`, `SUCCEEDED`, `TIMED_OUT`, `CANCELLED`, `FAILED` | Model transport lifecycle. |
 | `ValidationStatus` | `PASSED`, `FAILED`, `NOT_RUN` | One result exists for every completed candidate response. |
+| `ValidationCheckId` | `TOPIC`, `OUTPUT_SHAPE`, `ACTION_MARKER`, `REQUIRED_CONSTRAINT`, `FORBIDDEN_CONSTRAINT`, `PRESERVE_CONSTRAINT`, `CONDITIONAL_CONSTRAINT`, `PREFERRED_CONSTRAINT`, `OPTIONAL_CONSTRAINT`, `ASSUMED_CONSTRAINT`, `REPETITION` | Stable deterministic validator check identity. |
+| `ValidationSeverity` | `INFO`, `WARNING`, `ERROR` | Evidence severity; warnings never fail a candidate. |
+| `ValidationOutcome` | `PASSED`, `FAILED`, `WARNING`, `NOT_APPLICABLE` | Outcome of one deterministic check/evidence item, distinct from aggregate `ValidationStatus`. |
+| `ValidationViolationCode` | `TOPIC_MISMATCH`, `OUTPUT_TYPE_MISMATCH`, `MISSING_REQUIREMENT`, `FORBIDDEN_ACTION`, `PRESERVATION_VIOLATION`, `CONDITIONAL_VIOLATION` | Candidate-failing validation code. |
+| `ValidationWarningCode` | `PREFERRED_CONSTRAINT_UNSATISFIED`, `OPTIONAL_CONSTRAINT_UNSATISFIED`, `ASSUMED_CONSTRAINT_NON_BINDING`, `UNNECESSARY_REPETITION` | Non-failing warning stored in validation evidence only. |
 | `QualifierKind` | `ONLY`, `EXACTLY`, `APPROXIMATE`, `PROHIBITION`, `PRESERVATION`, `SUBSTITUTION`, `PRIOR_REFERENCE`, `SEQUENTIAL` | A matched phrase category; its effect is fixed below. |
 | `ConstraintSourceKind` | `CURRENT_MESSAGE`, `TASK_POLICY`, `CORRECTION_MEMORY`, `PREFERENCE_MEMORY`, `RETRIEVED_MEMORY`, `ASSUMPTION`, `DERIVED_OUTPUT_POLICY` | Canonical origin of a constraint. |
 | `ConstraintResolutionStatus` | `ACTIVE`, `INACTIVE`, `OVERRIDDEN`, `CONFLICTING` | `INACTIVE` is a false conditional; `CONFLICTING` never reaches generation. |
@@ -139,6 +144,43 @@ explicit prohibition is `MUST_NOT_CHANGE:UNSPECIFIED_CONTENT`. Duplicate
 constraints with the same type, target key, source message, and priority are
 coalesced into one result whose evidence retains every contributing match.
 Unconfigured modal words have no qualifier effect.
+
+### Canonical constraint predicate grammar
+
+This constraint-engine grammar is the single authoritative MVP predicate
+grammar for both packet construction and response validation:
+
+```text
+ATOM       = UPPER_ALNUM ("_" UPPER_ALNUM)*
+POSITIVE   = "MUST_" ATOM ":" ATOM
+FORBIDDEN  = "MUST_NOT_" ATOM ":" ATOM
+PRESERVE   = "MUST_PRESERVE:" ATOM
+PREFERRED  = "PREFER_" ATOM ":" ATOM
+OPTIONAL   = "MAY_" ATOM ":" ATOM
+ASSUMED    = "ASSUME_" ATOM ":" ATOM
+```
+
+`UPPER_ALNUM` is one or more ASCII `A` through `Z` or `0` through `9`.
+`REQUIRED` uses `POSITIVE`; `FORBIDDEN` uses `FORBIDDEN`; `PRESERVE`,
+`PREFERRED`, `OPTIONAL`, and `ASSUMED` use their same-named production.
+`CONDITIONAL` uses the production selected by its non-null `underlying_type` of
+`REQUIRED`, `FORBIDDEN`, or `PRESERVE`.
+Because the raw `MUST_` prefixes overlap, the constraint type is part of the
+grammar discriminator: a `REQUIRED` action atom may not begin `NOT_` and may
+not equal `PRESERVE`; those forms are legal only for their corresponding
+`FORBIDDEN` or `PRESERVE` type. A type/production mismatch is malformed input.
+
+The reserved valid instances `MUST_EXACTLY:<ACTION_AND_TARGET>` and
+`MUST_PRESENT:ONE_ORDERED_STEP_AT_A_TIME` use the `POSITIVE` production.
+`MUST_NOT_EXECUTE:IMAGE_OR_ACTION` and
+`MUST_NOT_CHANGE:UNSPECIFIED_CONTENT` use the `FORBIDDEN` production. Their
+special deterministic evaluation semantics, as well as phrase matching, are
+owned by `ResponseValidation.md`; they do not create additional grammar.
+
+`MUST_INCLUDE`, `MUST_STRUCTURE`, `MUST_NOT_INCLUDE`, and a three-part
+`MUST_NOT_CHANGE:<target>:<verb-list-id>` are not legal MVP predicates. A
+packet containing one is invalid component input; validation never guesses an
+equivalent predicate or silently selects between vocabularies.
 
 `context.yaml` also owns versioned `unsupported_request_rules`. Each rule has a
 unique ID, a category of `IMAGE_GENERATION` or `EXTERNAL_ACTION`, and one or more

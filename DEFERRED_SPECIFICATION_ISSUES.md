@@ -174,7 +174,7 @@ direct component and narrow persistence assertions in AT-009.
 TASK-0010 consumes already-computed interpretation, reference, constraint, and
 retrieval decisions through an explicit provider-independent
 `ContextPacketBuildRequest`. It owns the recursively immutable
-`mvp-context-packet-v1` aggregate, `mvp-prompt-policy-v1` grammar,
+`mvp-context-packet-v2` aggregate, `mvp-prompt-policy-v1` grammar,
 `mvp-correction-envelope-v1` render input, canonical JSON,
 `conservative_utf8_v1`, deterministic whole-item budgeting/omission evidence,
 typed initial/correction budget outcomes, and its two atomic initial

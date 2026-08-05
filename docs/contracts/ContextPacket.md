@@ -3,7 +3,7 @@
 ## Status and ownership
 
 This document defines the immutable context-packet payload schema
-`mvp-context-packet-v1`, the prompt policy `mvp-prompt-policy-v1`, and the
+`mvp-context-packet-v2`, the prompt policy `mvp-prompt-policy-v1`, and the
 provider-independent TASK-0010 builder and renderer boundary. A packet is a
 data contract, not an unstructured transcript.
 
@@ -39,8 +39,8 @@ ContextPacket {
   id: uuid,
   processing_run_id: uuid,
   message_id: uuid,
-  packet_json: mvp-context-packet-v1 object,
-  schema_version: "mvp-context-packet-v1",
+  packet_json: mvp-context-packet-v2 object,
+  schema_version: "mvp-context-packet-v2",
   prompt_policy_version: "mvp-prompt-policy-v1",
   configuration_fingerprint: non-empty string,
   created_at: utc
@@ -72,7 +72,10 @@ snapshot represented by `active_state`. It is not an alias for
 `processing_runs.state_version_at_start`; the two are equal only when no
 accepted deterministic state transition occurred between those snapshots.
 `active_state.project_id` comes from `conversations.project_id`, read with the
-versioned state as one logical snapshot.
+versioned state as one logical snapshot. The caller also reads the active
+`Topic` named by that state, when present, in the same logical snapshot and
+supplies it as immutable builder input; a later topic update cannot alter the
+persisted validation terms.
 
 The complete persistence aggregate is:
 
@@ -97,16 +100,17 @@ collection are recursively immutable. Prompt omission removes content only
 from a render projection; it never removes evidence from `packet_json` or
 changes retrieval ranks, reasons, or exclusions.
 
-## Complete `mvp-context-packet-v1` payload
+## Complete `mvp-context-packet-v2` payload
 
 Every payload has exactly these top-level keys:
 
 ```text
 {
-  schema_version: "mvp-context-packet-v1",
+  schema_version: "mvp-context-packet-v2",
   trace: Trace,
   request: Request,
   active_state: ActiveState,
+  validation_context: ValidationContext,
   references: [Reference],
   constraints: [Constraint],
   retrieval: [SelectedMemory],
@@ -169,6 +173,51 @@ interpretation is a pre-packet clarification or unsupported result.
 ```
 
 IDs and topic-stack order are exact copies of the logical state snapshot.
+
+### Validation context
+
+Validation needs topic terms and normalized rule configuration that were not
+present in `mvp-context-packet-v1`. Persisting this closed snapshot in the
+immutable packet makes initial validation, revisions, and restart recovery use
+the same inputs without a validator repository lookup or mutable ambient
+configuration.
+
+```text
+{
+  rule_set_version: non-empty string,
+  active_topic: {
+    topic_id: uuid,
+    terms: [normalized non-empty token, ...]
+  } or null,
+  output_shape_rule: {
+    id: non-empty string,
+    output_type: canonical model-eligible OutputType,
+    shape: NON_EMPTY_TEXT | NUMBERED_LIST | FENCED_CODE | COMPARISON_LIST
+  },
+  preserve_change_verb_list_id: non-empty string,
+  preserve_change_verbs: [normalized non-empty token, ...],
+  action_markers: [exact non-empty literal, ...]
+}
+```
+
+`active_topic` is null exactly when `active_state.topic_id` is null. Otherwise
+its ID equals `active_state.topic_id`, and `terms` is the ordered unique result
+of applying the canonical retrieval word normalization to the exact active
+topic label supplied in `ContextPacketBuildRequest`; first occurrence wins.
+The array may be empty only when that non-empty label normalizes to no tokens,
+in which case the topic check is not applicable.
+
+`output_shape_rule` is the one configured rule whose output type equals both
+`request.expected_output_type` and `response_policy.output_type`. The remaining
+values are exact ordered copies of the startup-validated `validation`
+configuration. Rule IDs and list order are configuration semantics and are not
+reordered by the builder. The complete settings, run, outer packet, and trace
+all have the same configuration fingerprint.
+
+`validation_context` is packet-only evidence. It is not rendered, counted in a
+prompt budget, eligible for prompt omission, or exposed as model instruction.
+Its addition therefore changes packet schema bytes but does not change any
+emitted prompt byte.
 
 ### References and candidate evidence
 
@@ -345,7 +394,7 @@ its normalized rule is never a trusted instruction. A material active
 `ASSUMED` rule blocks before packet construction; an entailed/overridden
 assumption may remain as override evidence only. A `CONFLICTING` hard decision
 is a pre-packet clarification and is not legal successful-builder input, so a
-persisted v1 packet has no `CONFLICTING` constraint or conflict-group ID. Its
+persisted v2 packet has no `CONFLICTING` constraint or conflict-group ID. Its
 conflict evidence remains in the upstream constraint/clarification records.
 
 ### Selected retrieval snapshots and aggregate exclusions
@@ -424,7 +473,8 @@ confidence rules.
 }
 ```
 
-`correction_limit` is the caller-supplied validated integer in `[0,2]`.
+`correction_limit` is copied from the validated
+`validation_configuration.max_revisions` integer in `[0,2]`.
 `output_type` must equal both the interpretation's expected output type and the
 TASK-0007 constraint decision's response-policy output type. The builder also
 requires the upstream policy to remain text-only with actions disallowed.
@@ -494,6 +544,16 @@ fingerprint distinguishes them. A renderer uses the version stored on the
 packet, rejects an unknown version, and never silently re-renders an old packet
 with the newest policy. Corrections use the original packet's policy version.
 
+`mvp-context-packet-v2` replaces the pre-validation `v1` schema by adding the
+closed `validation_context` snapshot. This bump is required because topic
+labels and validation rules can otherwise change between packet construction,
+candidate validation, and recovery. It requires no SQL migration or new
+column: `context_packets.packet_json` remains the immutable schema-versioned
+JSON payload and the existing outer `schema_version` records `v2`. The prompt
+policy remains `mvp-prompt-policy-v1` because validation context is never
+rendered. A `v1` payload is not accepted where this contract requires `v2` and
+is never silently upgraded or supplemented by lookup.
+
 ## Canonical JSON `CJ`
 
 Every prompt payload below is serialized by `CJ`:
@@ -519,9 +579,9 @@ Every prompt payload below is serialized by `CJ`:
   `\uXXXX`; `/` and other Unicode scalar values are not escaped; and
 - the result is one physical line encoded as UTF-8.
 
-Explicit open `evidence` objects in validation violations may contain arbitrary
-schema-valid keys; `CJ` still sorts and validates them. All other packet and
-envelope objects reject unknown keys.
+The compact correction `evidence` object is closed by the validation contract;
+it contains exactly `check_id`, `rule_id`, and `evidence_ordinal`. All packet
+and envelope objects reject unknown keys.
 
 Because untrusted strings cannot contain a literal physical line break, text
 that resembles a section marker remains inside one JSON value and cannot create
@@ -661,28 +721,34 @@ The immutable in-memory correction envelope is not part of `packet_json`:
   violations: [
     {
       ordinal: contiguous uint starting at 0,
-      code: non-empty canonical string,
-      message: exact non-empty text,
+      code: canonical ValidationViolationCode,
+      message: exact canonical message,
       constraint_id: uuid or null,
-      evidence: immutable JSON object
+      evidence: {
+        check_id: canonical ValidationCheckId,
+        rule_id: non-empty string or null,
+        evidence_ordinal: uint
+      }
     }
   ]
 }
 ```
 
-Violations retain ascending ordinal order. Candidate response text is not copied
-into the envelope. Validation owns producing the typed values; TASK-0010 treats
-their message/evidence as untrusted data and does not validate a candidate or
-decide whether a revision is allowed.
+Violations are the exact `validation_results.violations_json` objects and retain
+ascending ordinal order. Warnings, candidate response text, match locations,
+and full validation evidence are not copied into the envelope. Validation owns
+producing the typed values; TASK-0010 treats their message/evidence as
+untrusted data and does not validate a candidate or decide whether a revision
+is allowed.
 
 For a correction render, `correction_envelope.context_packet_id` must equal
 `packet.id`, and `attempt_number` must be in
 `[1, packet.packet_json.response_policy.correction_limit]`. A null envelope
 means an initial render; a non-null envelope means a correction render. Mismatch,
 a zero correction limit, or an out-of-range attempt is invalid renderer input,
-not a budget result. The later correction controller owns deciding to request a
-revision and validating failed-response/run lineage; the renderer performs no
-repository lookup.
+not a budget result. The correction controller validates the explicit
+failed-candidate lineage supplied to it and owns deciding whether to return an
+envelope; neither controller nor renderer performs a repository lookup.
 
 The only permitted `instruction` value is:
 
@@ -723,6 +789,31 @@ attempt, or terminalize later correction/model state.
 
 ## Public deterministic seams
 
+The builder receives the validation settings through this immutable closed
+projection of the already startup-validated complete configuration:
+
+```text
+ValidationConfigurationSnapshot {
+  configuration_fingerprint: non-empty string,
+  max_revisions: integer 0..2,
+  rule_set_version: non-empty string,
+  output_shape_rules: [
+    {
+      id: unique non-empty string,
+      output_type: canonical model-eligible OutputType,
+      shape: NON_EMPTY_TEXT | NUMBERED_LIST | FENCED_CODE | COMPARISON_LIST
+    }, ...
+  ],
+  preserve_change_verb_list_id: non-empty string,
+  preserve_change_verbs: [normalized non-empty token, ...],
+  action_markers: [exact non-empty literal, ...]
+}
+```
+
+It contains exactly one shape rule for every model-eligible output type and
+retains configuration order for every array. Its fingerprint is that of the
+complete normalized six-file configuration, not a new validation-only digest.
+
 The provider-independent build request is:
 
 ```text
@@ -732,6 +823,7 @@ ContextPacketBuildRequest {
   message,
   state,
   active_project_id,
+  active_topic,
   interpretation,
   reference_outcomes,
   constraint_decision,
@@ -741,14 +833,21 @@ ContextPacketBuildRequest {
   context_window_tokens,
   maximum_prompt_tokens,
   reserved_response_tokens,
-  correction_limit,
+  validation_configuration,
   created_at
 }
 ```
 
 The request contains immutable domain objects and scalar budget values only. It
 does not contain a provider, model name, base URL, temperature, gateway, UI
-object, or repository. Constants `mvp-context-packet-v1`,
+object, or repository. `active_topic` is the immutable `Topic` domain snapshot
+whose ID equals `state.topic_id`, or null exactly when that state ID is null;
+its conversation ID must match the run. `validation_configuration` is one
+`ValidationConfigurationSnapshot` whose fingerprint equals the run, packet,
+and trace fingerprint. It is the one builder input authority for
+`max_revisions` and the validation snapshot; the builder copies `max_revisions` to
+`response_policy.correction_limit` and selects the output-shape rule matching
+the interpreted output type. Constants `mvp-context-packet-v2`,
 `mvp-prompt-policy-v1`, and `conservative_utf8_v1` are component-owned and are
 not caller choices.
 

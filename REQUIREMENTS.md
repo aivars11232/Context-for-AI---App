@@ -96,17 +96,24 @@ provider wire and failure behavior is normative in
 ### FR-012 Response validation
 
 The system shall deterministically validate a complete candidate response
-against the packet's topic, intent, required constraints, forbidden actions,
-preservation rules, expected output type, completeness, and repetition rules.
+against the immutable packet's snapshotted topic terms, intent-to-output-type
+mapping, required constraints, forbidden actions, preservation rules, selected
+output-shape rule, completeness, and repetition rules. Validation shall use
+only the canonical finite lexical and structural predicates, produce the same
+typed report and exact score for identical inputs, treat documented warnings as
+non-failing, and perform no model call, repository lookup, packet mutation, or
+fact/hallucination judgment.
 
 ### FR-013 Bounded correction
 
 The system shall make at most the configured zero through two automatic revision
 calls after the initial generation. Its run-specific call limit is one plus that
-configuration value, with three as an absolute cap. A timed-out, cancelled, or
-failed transport call is not retried automatically.
-Exhaustion returns a persisted controlled failure and never displays an invalid
-candidate as the final answer.
+configuration value copied into the immutable packet, with three as an absolute
+cap. The packet value is the sole correction-limit authority; a correction
+retains the packet and hard constraints unchanged. A timed-out, cancelled, or
+failed transport call is not retried automatically. Exhaustion persists the
+canonical validation controlled failure, creates no assistant link, and never
+displays an invalid candidate as the final answer.
 
 ### FR-014 Memory provenance and lifecycle
 

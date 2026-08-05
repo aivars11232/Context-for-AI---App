@@ -39,8 +39,9 @@ The public provider-independent seams are exactly:
 `ContextPacketBuildRequest` contains the preallocated context-packet ID, run,
 message, exact versioned state/project snapshot, already-computed decisions,
 one immutable packet-lineage companion per constraint, selected immutable memory
-snapshots, scalar budget inputs, correction limit, and one caller-supplied
-creation time read from the injected clock. It contains no provider, model,
+snapshots, the immutable active-topic snapshot, the normalized validation-
+configuration snapshot, scalar budget inputs, and one caller-supplied creation
+time read from the injected clock. It contains no provider, model,
 gateway, repository, UI object, clock, or caller-selected policy/version value.
 The packet ID is allocated before retrieval and is the same ID already carried
 by TASK-0009 result and exclusion rows. The lineage companions supply only the
@@ -60,7 +61,7 @@ the completed packet.
 
 The component-owned versions are fixed at:
 
-- packet schema `mvp-context-packet-v1`;
+- packet schema `mvp-context-packet-v2`;
 - prompt policy `mvp-prompt-policy-v1`;
 - correction envelope `mvp-correction-envelope-v1`; and
 - estimator `conservative_utf8_v1`.
@@ -116,7 +117,7 @@ are programmer/configuration errors and must not be converted into that result.
 ## Required work
 
 1. Implement the recursively immutable value objects and exact validation for
-   `mvp-context-packet-v1`, the outer packet, `ContextPacketRecord`, correction
+   `mvp-context-packet-v2`, the outer packet, `ContextPacketRecord`, correction
    envelopes, render outcomes, and omission evidence.
 2. Implement `ContextPacketBuilder` as a pure deterministic projection over its
    explicit immutable request, including the fixed TASK-0008 candidate-score

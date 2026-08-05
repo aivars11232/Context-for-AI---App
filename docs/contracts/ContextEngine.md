@@ -152,7 +152,7 @@ UI/presentation, trace events, and provider interaction remain later work.
 
 Input: exact message, interpretation, state, references, constraints, retrieved
 memories, confidence, response policy, and token configuration. Output: one
-immutable `mvp-context-packet-v1` or a context-budget failure before generation.
+immutable `mvp-context-packet-v2` or a context-budget failure before generation.
 
 TASK-0007 does not construct a `ContextPacket`. AT-004 and its component-owned
 part of AT-005 are demonstrated through `InterpretationDecision`,
