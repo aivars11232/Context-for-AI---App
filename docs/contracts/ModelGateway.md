@@ -174,7 +174,9 @@ text, provider metadata, elapsed duration, and token usage as candidate
 persistence inputs, marks the request `SUCCEEDED`, and performs the existing
 atomic candidate/validation contract. The gateway does not mark the processing
 run `SUCCEEDED`. TASK-0011 proves the typed inputs and mapping; it does not
-perform either persistence path.
+perform either persistence path. `Persistence.md` defines the closed durable
+request/response JSON encodings; those encodings neither add to nor alter this
+gateway port.
 
 No raw provider exception text or type name, prompt/response content, partial
 text, headers, endpoint, or provider payload may appear in a failure value,
@@ -211,10 +213,13 @@ The token is ephemeral recovery state. Process restart does not reconstruct or
 infer cancellation from the missing old token. If the existing recovery policy
 permits a not-yet-sent request to enter the gateway, the application component
 initiating that call supplies a fresh initially non-cancelled token. This
-contract does not decide when or how recovered foreground work is scheduled or
-presented. A durably `IN_FLIGHT` request is not called again, and a durably
-terminal cancelled request is terminalized without another provider call, as
-specified by the persistence recovery matrix.
+contract does not schedule or present recovered work. The public foreground
+entry and owner are fixed by `ProcessUserMessage.md`: a recovered `PENDING`
+request is claimed and a pre-cancelled fresh token is observed by the gateway
+on entry before provider work. A durably `IN_FLIGHT` request is not called
+again and is closed as `FAILED/PROCESS_RESTARTED`; a durably terminal cancelled
+request is terminalized without another provider call, as specified by the
+persistence recovery matrix.
 
 ## Complete buffering
 

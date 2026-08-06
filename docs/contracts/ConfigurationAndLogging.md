@@ -297,11 +297,110 @@ Required event names are `run_accepted`, `context_built`, `reference_resolved`,
 `constraints_resolved`, `retrieval_completed`, `packet_built`,
 `model_request_started`, `model_request_finished`, `validation_completed`,
 `correction_started`, `run_succeeded`, `run_clarification`, `run_failed`,
-`memory_created`, `memory_edited`, and `memory_soft_deleted`.
+`recovery_started`, `recovery_resumed`, `recovery_completed`, `memory_created`,
+`memory_edited`, and `memory_soft_deleted`.
 
-`stage` uses `PipelineStage` and `error_type` uses a typed application error or
-canonical failure code. The three memory correlation fields are required for the
-matching memory events and null otherwise.
+The canonical inward port is exactly `TraceLogger.emit(TraceEvent)`. A concrete
+adapter serializes that value; it does not expose a competing `.event(...)`
+application contract or infer correlation from ambient state. `stage` uses
+`PipelineStage`. For TASK-0014 events, `error_type` is a canonical
+`FailureCode` or null, never an exception class/name or provider diagnostic.
+The three memory correlation fields are required for their matching memory
+events and null otherwise.
+
+### TASK-0014 event matrix
+
+In this matrix, `C/U/R/P/Q/S/V/L/A` mean non-null `conversation_id`,
+`user_message_id`, `processing_run_id`, `context_packet_id`,
+`model_request_id`, `model_response_id`, `validation_result_id`,
+`clarification_request_id`, and `correction_attempt_number` respectively. Every
+row also has non-null timestamp, level, stage, event name, and configuration
+fingerprint. Correlation values are the durable IDs owned by that run; all
+unlisted correlation fields are null unless the row explicitly permits an
+already-known later ID.
+
+`configuration_fingerprint` is the immutable current execution snapshot. It
+equals the run/packet fingerprint on ordinary and resumable paths. For the
+`CONFIGURATION_CHANGED` recovery branch it is the current fingerprint; the
+different stored run fingerprint appears only in the redacted failure details.
+
+| Event | Emit condition | Stage | Required correlation | `error_type` |
+|---|---|---|---|---|
+| `run_accepted` | Acceptance transaction committed a new message/run. | `ACCEPTANCE` | `C,U,R` | null |
+| `context_built` | A joined context transaction committed its authoritative interpretation/clarification projection. | `CONTEXT` | `C,U,R`; add `P` on packet success | null |
+| `reference_resolved` | The reference phase ran and its encompassing context/clarification transaction committed, including a zero-mention outcome. | `CONTEXT` | `C,U,R`; add `P` on packet success | null |
+| `constraints_resolved` | The constraint phase ran and its encompassing context/clarification transaction committed. | `CONTEXT` | `C,U,R`; add `P` on packet success | null |
+| `retrieval_completed` | Successful packet context transaction committed retrieval selection/exclusion evidence. | `CONTEXT` | `C,U,R,P` | null |
+| `packet_built` | Successful packet context transaction committed the immutable packet and `CONTEXT_READY`. | `CONTEXT` | `C,U,R,P` | null |
+| `model_request_started` | Claim transaction committed `IN_FLIGHT`, immediately before gateway entry. | `REQUEST` | `C,U,R,P,Q`; add `A` for revision | null |
+| `model_request_finished` | Candidate transaction committed a completed response, or transport transaction committed a terminal gateway failure. | `TRANSPORT` | `C,U,R,P,Q`; add `S` for completed generation; add `A` for revision | null for completed generation; mapped gateway `FailureCode` otherwise |
+| `validation_completed` | Candidate transaction committed the exact report. | `VALIDATION` | `C,U,R,P,Q,S,V`; add `A` for revision | null |
+| `correction_started` | Revision request/correction transaction committed. `Q` is the new request; `S/V` identify the immediately failed candidate/report. | `CORRECTION` | `C,U,R,P,Q,S,V,A` | null |
+| `run_succeeded` | Assistant-link terminal transaction committed. | `TERMINALIZATION` | `C,U,R,P,Q,S,V`; add `A` for a successful revision | null |
+| `run_clarification` | Clarification context transaction committed. | `CONTEXT` | `C,U,R,L` | null |
+| `run_failed` | Any terminal `CONTROLLED_FAILURE`, `FAILED`, or `CANCELLED` transaction committed. | exactly the persisted `SafeFailure.stage` | `C,U,R`; add every durable `P/Q/S/V/A` applicable to the failure | exactly `SafeFailure.error_code` |
+| `recovery_started` | Recovery loaded/classified the one active run and validated enough lineage to identify it. | `RECOVERY` | `C,U,R`; add every durable artifact ID already known | null |
+| `recovery_resumed` | Fingerprint/lineage matched a resumable matrix row, immediately before its first bounded foreground action. | `RECOVERY` | `C,U,R`; add every durable artifact ID already known | null |
+| `recovery_completed` | An active-run recovery invocation is about to return, after any normal terminal event. | `RECOVERY` | `C,U,R`; add every final durable artifact ID | null for success/clarification; terminal outcome code or `PERSISTENCE_ERROR` otherwise |
+
+`context_built`, `reference_resolved`, and `constraints_resolved` are emitted
+only for phases that ran and whose enclosing transaction committed. A generic
+context failure or rolled-back CAS attempt therefore emits none of those phase
+events; its committed terminal transaction emits only `run_failed`. Initial
+budget failure likewise emits `run_failed`; it does not claim a packet or
+retrieval commit. A clarification emits the completed phase events in phase
+order and then `run_clarification`, with no packet/retrieval event.
+
+For every new submission, event order is:
+
+```text
+run_accepted
+-> [context_built -> reference_resolved -> constraints_resolved]
+-> [retrieval_completed -> packet_built]
+-> per attempt [model_request_started -> model_request_finished
+                -> validation_completed -> correction_started?]
+-> run_succeeded | run_clarification | run_failed
+```
+
+Brackets contain only phases that ran and durably committed. Multiple events
+after the same commit are emitted in the displayed order. A gateway failure
+emits `model_request_finished` before `run_failed`; validation exhaustion emits
+`validation_completed` before `run_failed`; a correction-render failure emits
+`validation_completed` before `run_failed` and no `correction_started`.
+
+Active-run recovery order is:
+
+```text
+recovery_started
+-> recovery_resumed?
+-> applicable normal stage/terminal events
+-> recovery_completed
+```
+
+`recovery_resumed` is absent for configuration mismatch, an uncertain
+`IN_FLIGHT` request, or an impossible durable state because those branches are
+terminalized rather than resumed. It is present for every matrix row that
+continues deterministic context, starts a not-yet-sent request, reconstructs a
+correction, or repeats only an idempotent terminal transaction.
+
+The read-only `recovery_started`/`recovery_resumed` observations are the only
+events not caused by a preceding write commit. Every mutation event is emitted
+after its outermost commit. `recovery_completed` describes completion of the
+foreground invocation; if terminalization could not be persisted it carries
+`PERSISTENCE_ERROR` but no `run_failed` event is emitted.
+
+No TASK-0014 event is emitted for `ExistingRunResult`, `BusyResult`,
+pre-acceptance cancellation/configuration/persistence failure, a rolled-back
+admission loser before its read-only reclassification, or
+`NoRecoveryRequiredResult`. These outcomes create no new durable lifecycle
+fact.
+
+Trace emission is best-effort and outside database transactions. Failure of
+`TraceLogger.emit` cannot roll back durable work, change a public use-case
+result, create a retry, or cause content to be logged through a fallback. A
+logger that cannot be configured at startup remains a startup configuration
+failure; an individual post-commit adapter write failure is contained at the
+application trace boundary.
 
 Routine log output must never include original message text, rendered prompts,
 model responses, raw provider bodies or exceptions, endpoint URLs, request or

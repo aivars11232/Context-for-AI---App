@@ -35,10 +35,15 @@ violation per fixture; each run must fail before QML creation with a typed
 
 ### AT-002 Exact user-message persistence
 
-**Fixture:** a conversation and text containing whitespace, Unicode, and a
-newline. **Action:** submit it with an idempotency key, then reload it. **Pass:**
-the stored `messages.original_text` is byte-for-byte equal to the input and the
-`processing_runs` row exists before a mock provider is invoked.
+**TASK-0014 public-use-case fixture:** a conversation, fixed IDs/clock, an
+observing mock gateway, and text containing leading/trailing whitespace,
+Unicode, and a newline. **Action:** invoke `ProcessUserMessage.execute` with one
+idempotency key, allow processing to finish, then reload the durable lineage.
+**Pass:** the stored user `messages.original_text.encode("utf-8")` is
+byte-for-byte equal to the submitted text; acceptance committed the user message
+and `PERSISTED` run before the mock gateway was entered; and the public result's
+run/message IDs are those durable IDs. TASK-0014 owns AT-002 through this public
+seam; repository-only append evidence does not satisfy it.
 
 ### AT-003 State tracking and transition
 
@@ -333,9 +338,14 @@ the complete correction lifecycle.
 **TASK-0014 full pass:** the lifecycle makes exactly one, two, or three model
 requests respectively with consecutive attempts beginning at `0`; creates
 exactly zero, one, or two correction rows; persists every candidate and report;
-and ends exhausted runs as `CONTROLLED_FAILURE`. No assistant message links an
-invalid response, and the UI gets the canonical safe failure rather than
-candidate text. TASK-0014 owns final application acceptance of AT-012.
+and ends exhausted runs as `CONTROLLED_FAILURE` with the exact
+`VALIDATION_EXHAUSTED` projection. A failing candidate below the limit points to
+the one adjacent correction/request and correction rendering overflow creates
+neither while persisting the exact `CORRECTION/CONTEXT_BUDGET_EXCEEDED`
+projection. No assistant message links an invalid response, no public result
+contains invalid candidate text, and the caller gets the canonical safe
+failure. TASK-0014 owns full application acceptance of AT-012; TASK-0013 retains
+the component assertions above.
 
 ### AT-013 Context inspection UI
 
@@ -362,25 +372,122 @@ tombstone that cannot be edited or restored. No automatic lifecycle operation,
 UI, trace event, orchestration, or provider call is exercised by this pass.
 
 **Later integration/presentation pass:** presentation invokes the same use cases
-through explicit user actions, and later pipeline ownership supplies the exact
-redacted `memory_*` trace events with memory/revision IDs and no raw content.
-Exact trace-event names and correlation assertions remain with D-010; UI,
-trace, orchestration, and provider integration are not TASK-0009 work.
+through explicit user actions. After each successful commit it emits exactly
+`memory_created`, `memory_edited`, or `memory_soft_deleted` with stage `MEMORY`,
+the affected non-null `memory_id` and `memory_revision_id`, null processing/model
+correlation and `error_type`, and the validated configuration fingerprint. The
+events occur in operation order and contain no raw memory content. UI, trace,
+orchestration, and provider integration are not TASK-0009 work; these exact
+assertions close the memory-event portion of the trace specification without
+changing later delivery ownership.
 
 ### AT-015 Complete mock-provider pipeline, idempotency, and recovery
 
-**Fixture:** valid configuration, an isolated database, fixed clock, and a
-passing mock response. **Action:** submit once, repeat the same idempotency key,
-attempt a concurrent second key, and simulate restart at each non-terminal run
-state. **Pass:** the first submission persists every required stage and one
-linked assistant message; duplicate submission returns the same run (including
-an in-progress status); a fresh concurrent submission gets a pre-acceptance
-typed busy result; restart recovery exercises every matrix row, including
-pending, in-flight, persisted validated candidate, correction preparation, and
-changed configuration fingerprint, without duplicating an uncertain model call.
-Its applicable trace events carry correlation IDs and contain no raw request,
-packet, response, memory, or secret content; the combined assertions in
-AT-007, AT-012, AT-014, and AT-015 cover every required trace event name.
+**TASK-0014 fixture:** valid fixed configuration, isolated databases, fixed
+UUID/clock sequences, exact mock generation outcomes/metadata/durations/token
+usage, controllable cancellation tokens and held mock checkpoints, a trace
+recorder implementing `TraceLogger.emit`, and repository fault injection at
+each transaction boundary. Recovery fixtures contain exactly one canonical
+durable state at a time; corruption fixtures use each closed
+`recovery_reason`.
+
+**Public action:** invoke `ProcessUserMessage.execute` and
+`RecoverProcessingRun.execute` directly. No QML, live Ollama, queue, poller,
+daemon, or background worker participates.
+
+**Admission and public-result pass:**
+
+- A first key follows `lookup -> global active check -> acceptance`; the same
+  key, even with different text/project, returns `ExistingRunResult` with the
+  same IDs/snapshot and no write/provider call. A different key in the same or a
+  different conversation returns the exact `BusyResult` and creates no
+  message/run. A partial-index race loser captures the conflicting row before
+  rollback and is reclassified as existing or busy without leaking its
+  uncommitted message/run.
+- Success, existing, busy, clarification, cancellation, validation exhaustion,
+  configuration failure, persistence failure, second-CAS conflict, and every
+  controlled-failure family return the exact public variant and field
+  nullability in `ProcessUserMessage.md`; expected conditions do not escape as
+  exceptions and no failure variant contains candidate text.
+- Pre-acceptance cancellation creates nothing. Cancellation after acceptance,
+  between context phases, before request preparation, and at gateway entry uses
+  the exact checkpoint, request/run status, code, message, details, and legal
+  transition. A completed gateway outcome is not replaced by later
+  cancellation.
+
+**Persistence and lineage pass:**
+
+- All five transaction groups commit in canonical order and no database
+  transaction spans the mock call. Joined packet-stage/context writes have one
+  outer commit; a first CAS conflict leaves no partial rows and recomputes once;
+  a second persists the exact conflict failure and no packet/request.
+- `request_json` and completed `metadata_json` are exactly the closed versioned
+  projections, including decimal rendering, integral elapsed microseconds,
+  token nulls, safe provider metadata, and correlation equality. Every revision
+  has same-run adjacent correction lineage and an unchanged packet.
+- A passing response produces one assistant message whose `original_text` UTF-8
+  bytes exactly equal both persisted response text and returned assistant text.
+  Repository linkage rejects a mismatched role, conversation, validation, ID,
+  or byte sequence. Invalid responses remain unlinked and unreturned.
+- An acceptance write failure rolls back message/run and returns an unpersisted
+  persistence result without attempting a failure row. A later mandatory write
+  failure makes exactly one fresh best-effort terminalization; both its committed
+  and failed forms report `failure_persisted` truthfully and never claim
+  unwritten state.
+- Correction render overflow, generic context failure, changed configuration,
+  process restart, impossible recovery state, persistence failure, gateway
+  failures, cancellation, and validation exhaustion match their authoritative
+  closed failure projections, allocated IDs, and single-clock timestamp rules.
+
+**Recovery pass:**
+
+- Startup calls the empty-request recovery use case once after bootstrap and
+  before admission. No active run returns `NoRecoveryRequiredResult` and starts
+  no worker. Each active-run fixture produces one finite foreground result.
+- Every recovery-matrix row is exercised: `PERSISTED`, `CONTEXT_READY`,
+  `PENDING`, uncertain `IN_FLIGHT`, passing validation without final link,
+  failed validation below/at its packet limit, and terminal
+  failed/timed-out/cancelled request. Resumable rows create only the missing
+  artifact; idempotent terminalization duplicates nothing.
+- A changed fingerprint invokes no context/model component. An uncertain
+  request becomes request/run `FAILED/PROCESS_RESTARTED`, creates no response,
+  and records zero repeated mock calls. Each impossible state uses the first
+  canonical `recovery_reason` and leaves existing artifacts unchanged.
+- A fresh recovery cancellation token is used. Recovery never reconstructs the
+  old token, retries an uncertain call, loops after persistence failure, selects
+  a caller-provided run, queues, or polls.
+
+**TASK-0014 trace pass:**
+
+- A normal successful initial attempt records exactly
+  `run_accepted`, `context_built`, `reference_resolved`,
+  `constraints_resolved`, `retrieval_completed`, `packet_built`,
+  `model_request_started`, `model_request_finished`,
+  `validation_completed`, and `run_succeeded` in that order. Revision adds one
+  `correction_started` after the failed attempt's validation and repeats the
+  request/finish/validation sequence.
+- Clarification ends with `run_clarification`; every durably terminal failure or
+  cancellation ends with `run_failed`. AT-014 separately fixes
+  `memory_created`, `memory_edited`, and `memory_soft_deleted`. Across AT-007,
+  full AT-012, AT-014, and AT-015, every required event name is specified and
+  observed by its owning acceptance scope.
+- Active recovery records `recovery_started`, optional `recovery_resumed`, the
+  applicable normal events, then `recovery_completed` exactly as specified. A
+  changed fingerprint, uncertain call, or impossible state omits
+  `recovery_resumed`; no-active recovery and non-mutating existing/busy results
+  emit no new lifecycle event.
+- Every event asserts its exact `PipelineStage`, required non-null correlation,
+  additive IDs, and nulls for unknown fields. Failure events use the canonical
+  `FailureCode`; successful/clarification events use null. Events after a shared
+  commit retain canonical order, and no mutation event precedes its commit.
+- Serialized trace records contain none of: original message, rendered prompt,
+  packet JSON, candidate/assistant text, raw memory, raw provider body or
+  exception, headers, endpoint, credential, cookie, or full configuration. A
+  post-commit trace-adapter failure does not alter the database or public
+  result.
+
+TASK-0014 owns AT-015 idempotency, global concurrency, cancellation, persistence,
+recovery, lineage, and trace integration through these public seams.
 
 ### AT-016 Local Ollama smoke acceptance
 

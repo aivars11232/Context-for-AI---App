@@ -57,16 +57,20 @@ a disabled/duplicate-submit state. This is not a durable background worker,
 queue, or autonomous subsystem.
 
 The Qt GUI thread exclusively owns QML objects, controllers, view models, and
-all UI state. `ForegroundRunController` creates one ephemeral worker thread only
-after an explicit user submission and invokes the application use case there;
-it never keeps a queue or polls for work. The worker owns every SQLite
+all UI state. `ForegroundRunController` creates one ephemeral worker thread for
+an explicit user submission or for the startup coordinator's one already-
+accepted recovery invocation; it never keeps a queue or polls for work. Startup
+recovery is invoked once after validated configuration/database bootstrap and
+before new submissions are enabled. The worker owns every SQLite
 connection it uses, creates/closes it in that thread, and returns immutable
 result DTOs through queued Qt signals. The GUI thread never passes a SQLite
 connection, ORM row, mutable domain object, or provider buffer across the
 thread boundary.
 
-Cancellation sets a thread-safe token observed by the gateway before and while
-it waits; it never force-terminates a Python/Qt thread. On app shutdown the
+Cancellation sets a per-execution thread-safe token observed by the application
+at its defined checkpoints and by the gateway before and while it waits; it
+never force-terminates a Python/Qt thread. A recovery invocation receives a
+fresh token rather than reconstructing pre-restart cancellation. On app shutdown the
 controller disables new submissions, requests cancellation, and delays final
 Qt exit until the worker emits a terminal DTO or the bounded provider timeout
 has produced its typed terminal outcome. A late signal after a controller is
@@ -185,22 +189,32 @@ layer.
 
 ```text
 UI supplies conversation ID, exact text, optional explicit project selection,
-and idempotency key
-→ Short acceptance transaction: persist immutable user message and PERSISTED run
+idempotency key, and an owned cancellation token
+→ Validate/acquire one immutable configuration snapshot
+→ Acceptance transaction: same key returns existing; otherwise a global active
+  run returns BUSY; otherwise persist exact user message and PERSISTED run
 → Load state and build deterministic snapshot
 → Interpret intent/topic/qualifiers/output type and confidence
 → Resolve references and record outcomes
 → Extract, prioritize, and resolve constraints; clarify on hard conflict
 → Retrieve eligible memories deterministically
-→ Persist deterministic state/decision changes, immutable context packet, and CONTEXT_READY run
-→ Short request-start transaction; call local Ollama outside a transaction
+→ One joined context transaction: persist contract-defined decisions, compare-
+  and-swap state, immutable packet/retrieval aggregate, and CONTEXT_READY run
+→ Short PENDING request preparation then IN_FLIGHT claim transactions
+→ Call the configured gateway outside a transaction
 → Buffer complete candidate or persist typed timeout/cancel/failure
 → Deterministically validate the complete candidate and persist report
-→ If valid: persist linked assistant message and mark SUCCEEDED
+→ If valid: persist byte-exact linked assistant message and mark SUCCEEDED
 → If invalid and revisions remain: persist correction envelope and repeat
 → Otherwise: persist CONTROLLED_FAILURE; never display an invalid candidate
-→ Return final text, clarification, or typed controlled failure to the UI
+→ Return one exhaustive typed public result
 ```
+
+After process restart, the startup coordinator invokes the separate
+`RecoverProcessingRun` use case once in the same bounded foreground execution
+model. It classifies the sole possible global non-terminal run, resumes only a
+provably not-yet-sent step, and terminalizes an uncertain `IN_FLIGHT` request
+without another provider call. This is neither a queue nor a background worker.
 
 Memory records are never automatically created, merged, rewritten, expired, or
 deleted by this pipeline.

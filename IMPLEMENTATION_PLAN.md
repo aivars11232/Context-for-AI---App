@@ -44,20 +44,21 @@ Implement the mock gateway, bounded foreground provider port, local Ollama
 adapter, deterministic validation, and correction controller. No streaming,
 routing, fallback, cloud provider, or transport retry is permitted.
 
-**Exit:** AT-010 through AT-012 pass with deterministic providers, and
-TASK-0012's controlled-transport adapter tests pass in the default suite. Live
-adapter transport test definitions are included, but their execution is
+**Exit:** AT-010 and AT-011 plus TASK-0013's bounded component portion of AT-012
+pass, and TASK-0012's controlled-transport adapter tests pass in the default
+suite. Full provider-facing AT-012 orchestration remains Stage 6 ownership.
+Live adapter transport test definitions are included, but their execution is
 separately marked and opt-in; it does not exercise or satisfy AT-016's complete
 local-Ollama pipeline acceptance.
 
 ## Stage 6 — Complete mock-provider pipeline (`TASK-0014`)
 
 Implement `ProcessUserMessage` with the documented persistence ordering,
-transactions, idempotency, recovery, concurrency handling, safe failures, and
-state updates.
+transactions, exhaustive typed results, global single-run admission, one-shot
+foreground recovery, concurrency handling, safe failures, and state updates.
 
-**Exit:** AT-002, AT-015, and applicable AT-003–AT-012 assertions pass through
-the public use case with the mock provider.
+**Exit:** AT-002, full AT-012, AT-015, and applicable AT-003–AT-011 assertions
+pass through the public submission/recovery use cases with the mock provider.
 
 ## Stage 7 — Desktop MVP (`TASK-0015`–`TASK-0017`)
 

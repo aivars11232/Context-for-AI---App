@@ -3,6 +3,11 @@
 Tasks are strictly ordered. A task becomes `Ready` only when all predecessors
 are `Done` and their documented verification is green.
 
+TASK-0014 owns global (not per-conversation) message admission, the separate
+one-shot foreground recovery entry, AT-002 through the public use case, full
+AT-012 orchestration, and AT-015. TASK-0013 retains only its documented
+validator/correction component portion of AT-012.
+
 | Task | Title | Depends on | Status |
 |---|---|---|---|
 | TASK-0001 | Repository foundation | None | Ready |

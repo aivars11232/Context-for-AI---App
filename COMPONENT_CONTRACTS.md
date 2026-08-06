@@ -7,6 +7,7 @@ scope, requirements, architecture, and schema documents.
 | Component | Owns | Must not own |
 |---|---|---|
 | ProcessUserMessage | Idempotent pipeline orchestration and lifecycle transitions | Context rules, SQL, provider-specific calls |
+| RecoverProcessingRun | One-shot foreground startup recovery of the sole global non-terminal run | Polling, queues, daemon work, uncertain-call retry |
 | ConversationStateManager | Deterministic active-state transitions | Model calls, UI rendering |
 | InterpretationEngine | Intent, topic, qualifier, output-type interpretation | Persistence, response generation |
 | ReferenceResolver | Mention-to-entity resolution | Memory mutation, model generation |
@@ -20,6 +21,7 @@ scope, requirements, architecture, and schema documents.
 | MemoryManager | Explicit-user-operation, provenance-preserving memory CRUD | Silent autonomous creation, rewriting, merging, or deletion |
 | ConversationProjectManager | Explicit conversation/project/named-item lifecycle operations | Hidden active-project state or automatic entity extraction |
 | ConfigurationLoader | Validated local YAML configuration and precedence | UI settings overrides, remote configuration, secret logging |
-| TraceLogger | Redacted structured stage trace events | Raw message/prompt/response logging, domain policy decisions |
+| TraceLogger | `emit(TraceEvent)` for redacted structured stage/recovery events | Alternate ambient-correlation APIs, raw message/prompt/response logging, domain policy decisions |
+| TransactionBoundary | One connection-local re-entrant transaction whose nested users join the outer commit/rollback | Cross-thread contexts, independent nested commits, provider calls inside a transaction |
 | Repository implementations | Persistence mechanics | Domain policy decisions |
 | Presentation layer | Display and user actions | Context intelligence rules |

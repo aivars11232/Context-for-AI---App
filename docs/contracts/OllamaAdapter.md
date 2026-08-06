@@ -368,6 +368,11 @@ response content, partial content, thinking, context arrays, logprobs, tool call
 headers, endpoints, remote hosts/models, exceptions, cookies, authorization data,
 and secrets are never retained in metadata or routine logs.
 
+When TASK-0014 persists a completed generation, this exact object is copied
+unchanged under the closed `metadata_json.provider_metadata` key defined in
+`Persistence.md`; elapsed microseconds, token usage, and correlation are sibling
+fields owned by the application projection and are not added by this adapter.
+
 ## Composition and test boundaries
 
 TASK-0012 does not implement the complete production composition root or change

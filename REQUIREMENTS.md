@@ -140,16 +140,22 @@ rewrite, or delete a memory.
 Every accepted submission shall have an idempotent processing run with durable
 request, response, validation, correction, clarification, recovery, and
 terminal-state lineage back to the user message. A successful run shall link the
-displayed assistant message to exactly one accepted model response. Repeating an
+displayed assistant message to exactly one accepted model response with
+byte-exact UTF-8 text equality. Repeating an
 existing idempotency key returns the existing run; a fresh key during an active
-global run is a pre-acceptance busy result.
+global run is a pre-acceptance busy result. Startup shall invoke one bounded
+foreground recovery entry before accepting new submissions; recovery shall
+resume only provably not-yet-sent work and shall terminalize, never retry, an
+uncertain `IN_FLIGHT` model call.
 
 ### FR-018 Configuration and observability
 
 The application shall validate a documented YAML configuration at startup and
 emit structured, redacted trace events that link each processing stage to the
 conversation, message, processing run, and manual-memory lifecycle. Required
-events and redaction fields are acceptance-tested.
+events, recovery order, correlation fields, safe error codes, and redaction
+rules are defined in `docs/contracts/ConfigurationAndLogging.md` and are
+acceptance-tested.
 
 ## Non-functional requirements
 
@@ -207,5 +213,6 @@ inward interfaces without changing domain or context-intelligence rules.
 
 Long-running processing shall not block the QML UI thread. The UI shall expose
 progress, cancellation, duplicate-submit prevention, and typed error states.
-It shall use the canonical ephemeral-worker/queued-signal/SQLite-thread
+It shall enforce one global foreground execution, including a one-shot startup
+recovery when required, and use the canonical ephemeral-worker/queued-signal/SQLite-thread
 ownership contract and never force-terminate a worker thread.

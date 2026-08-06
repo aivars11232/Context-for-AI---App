@@ -924,8 +924,17 @@ ContextPacketBuildResult`. It composes the builder with the existing
 `ContextPacketRepository`, `ProcessingRunRepository`, `ModelCallRepository`,
 `TransactionBoundary`, and `IdGenerator` inward ports. It requires the request
 run to be `PERSISTED`; it has no provider, validator, correction-controller, UI,
-or clock dependency. It returns the builder result after the applicable
-transaction commits.
+or clock dependency.
+
+Its transaction boundary follows the re-entrant join contract in
+`Persistence.md`. When called standalone, the stage opens and owns the physical
+transaction and returns only after its commit. When TASK-0014 calls it inside
+the wider context transaction, the stage joins that transaction, performs no
+independent commit/savepoint, and returns its typed builder result to the outer
+owner. In that joined form the result is not durable until the outer owner has
+completed any required state compare-and-swap and the one outer commit
+succeeds. A later outer failure rolls back the stage's packet/failure and run
+transition with every other context write.
 
 The TASK-0010 application packet stage owns these atomic outcomes:
 
@@ -958,6 +967,10 @@ The failure is exactly:
 
 Initial overflow writes no packet, retrieval result, retrieval exclusion, model
 request, model response, validation, correction, or assistant-message row.
-Failure persistence here is limited to the packet-owned context stage; no other
-pipeline orchestration is implemented. Correction-render overflow remains only
-a renderer result for later orchestration and never changes the packet.
+TASK-0014 also writes no reference, constraint, or derived conversation-state
+projection for this branch and promises no separate full interpretation record.
+Failure persistence here remains limited to the packet-owned context outcome;
+the stage does not persist upstream projections or implement other pipeline
+orchestration.
+Correction-render overflow remains only a renderer result for later
+orchestration and never changes the packet.

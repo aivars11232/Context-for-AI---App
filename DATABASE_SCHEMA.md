@@ -99,7 +99,11 @@ conversation. State updates use compare-and-swap on `version`.
 
 `original_text` is immutable. A final assistant message is linked from
 `model_responses.assistant_message_id`; a candidate response has no assistant
-message until validation passes.
+message until validation passes. For a linked accepted response, the assistant
+message has role `ASSISTANT`, belongs to the run's conversation, and its
+`original_text` UTF-8 bytes equal `model_responses.response_text` UTF-8 bytes
+exactly. The application checks this before the terminal write and the
+repository link operation enforces it again.
 
 ## Entities, references, and constraints
 
@@ -295,6 +299,11 @@ TASK-0009 schema migration.
 - `completed_at` nullable
 - unique `(conversation_id, idempotency_key)`
 
+`state_version_at_start` equals the conversation-state version committed by the
+acceptance transaction after any explicit project selection, or the unchanged
+current version when no selection changes it. It is immutable even when the
+joined context transaction later commits a derived state version.
+
 ### `context_packets`
 
 - `id` primary key
@@ -369,6 +378,12 @@ require no TASK-0009 schema migration.
 - `safe_error_message` nullable text
 - unique `(processing_run_id, attempt_number)`
 
+`request_json` is the closed `mvp-model-request-v1` projection in
+`docs/contracts/Persistence.md`. Its correlation, settings, and rendering
+values must agree with the row, immutable packet, rendered prompt handoff, and
+the adjacent correction row where applicable. It contains neither prompt text
+nor a duplicate correction envelope.
+
 ### `model_responses`
 
 - `id` primary key
@@ -380,6 +395,10 @@ require no TASK-0009 schema migration.
 
 An accepted response has exactly one `assistant_message_id`. Invalid candidates
 have no assistant message and remain available only in trace/validation views.
+`metadata_json` is the closed `mvp-completed-generation-v1` projection in
+`docs/contracts/Persistence.md`, including exact integral elapsed microseconds,
+nullable token usage, normalized allowed provider metadata, and correlation
+that agrees with the request/response lineage.
 
 ### `validation_results`
 
@@ -429,8 +448,13 @@ question.
 
 Terminal failures include context construction, provider transport, validation
 exhaustion, cancellation, recovery, and persistence failures. Clarification is
-not a failure. A controlled failure is never represented as an assistant model
-message.
+not a failure. `CONTEXT_CONSTRUCTION_FAILED` is a canonical `FailureCode` stored
+in this existing text column and requires no table/column migration. A
+controlled failure is never represented as an assistant model message. The
+repository enforces exactly one `is_terminal=true` row for a
+`CONTROLLED_FAILURE`, `FAILED`, or `CANCELLED` run and none for `SUCCEEDED` or
+`NEEDS_CLARIFICATION`; this is a logical invariant over existing columns, not a
+new schema index.
 
 ## Settings and evaluation
 

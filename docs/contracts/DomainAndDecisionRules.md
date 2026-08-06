@@ -55,7 +55,7 @@ routing, or background workers.
 | `EvaluationProviderMode` | `MOCK`, `OLLAMA` | Deterministic test provider or opt-in local smoke provider. |
 | `ClarificationReason` | `AMBIGUOUS_REFERENCE`, `UNRESOLVED_REFERENCE`, `LOW_CONFIDENCE_INTERPRETATION`, `HARD_CONSTRAINT_CONFLICT`, `UNSUPPORTED_INTENT`, `UNSUPPORTED_CONDITION`, `MATERIAL_ASSUMPTION` | Selects one deterministic clarification template. |
 | `RetrievalExclusionReason` | `SCOPE_MISMATCH`, `DELETED`, `EXPIRED`, `SCORE_BELOW_THRESHOLD`, `DUPLICATE_CONTENT`, `LIMIT_EXCEEDED` | Durable reason a considered memory was not selected. |
-| `FailureCode` | `CONTEXT_BUDGET_EXCEEDED`, `PERSISTENCE_ERROR`, `CONCURRENCY_CONFLICT`, `PROCESS_RESTARTED`, `CONFIGURATION_CHANGED`, `PROVIDER_UNAVAILABLE`, `MODEL_NOT_FOUND`, `MODEL_TIMEOUT`, `MODEL_CANCELLED`, `INVALID_PROVIDER_RESPONSE`, `VALIDATION_EXHAUSTED`, `CONFIGURATION_INVALID`, `CANCELLED_BY_USER` | Safe terminal processing-failure code; clarification and `BusyError` are not failures. |
+| `FailureCode` | `CONTEXT_BUDGET_EXCEEDED`, `CONTEXT_CONSTRUCTION_FAILED`, `PERSISTENCE_ERROR`, `CONCURRENCY_CONFLICT`, `PROCESS_RESTARTED`, `CONFIGURATION_CHANGED`, `PROVIDER_UNAVAILABLE`, `MODEL_NOT_FOUND`, `MODEL_TIMEOUT`, `MODEL_CANCELLED`, `INVALID_PROVIDER_RESPONSE`, `VALIDATION_EXHAUSTED`, `CONFIGURATION_INVALID`, `CANCELLED_BY_USER` | Safe terminal processing-failure code; clarification and `BusyError` are not failures. |
 
 ## Interpretation and qualifier rules
 
@@ -384,7 +384,7 @@ The terminal processing statuses are `SUCCEEDED`, `NEEDS_CLARIFICATION`,
 non-terminal. The only legal run transitions are:
 
 ```text
-PERSISTED -> CONTEXT_READY | NEEDS_CLARIFICATION | CONTROLLED_FAILURE | FAILED
+PERSISTED -> CONTEXT_READY | NEEDS_CLARIFICATION | CONTROLLED_FAILURE | FAILED | CANCELLED
 CONTEXT_READY -> GENERATING | FAILED | CANCELLED
 GENERATING -> SUCCEEDED | REVISING | CONTROLLED_FAILURE | FAILED | CANCELLED
 REVISING -> SUCCEEDED | REVISING | CONTROLLED_FAILURE | FAILED | CANCELLED
@@ -393,7 +393,9 @@ REVISING -> SUCCEEDED | REVISING | CONTROLLED_FAILURE | FAILED | CANCELLED
 Recovery may take any non-terminal status to `FAILED` only with a durable
 canonical failure code. A model request transitions
 `PENDING -> IN_FLIGHT -> SUCCEEDED|TIMED_OUT|CANCELLED|FAILED`; no terminal
-request state can change. A successful request creates exactly one response; a
+request state can change. `PERSISTED -> CANCELLED` is reserved for the
+application's accepted pre-gateway cancellation checkpoints; it does not permit
+an unpersisted cancellation to fabricate a run. A successful request creates exactly one response; a
 response creates exactly one validation result; only a passed validation can
 create one linked assistant message. A failed validation either creates the next
 allowed correction request or terminalizes the run. No terminal run can receive

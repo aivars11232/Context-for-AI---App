@@ -19,18 +19,18 @@ also agree.
 | D-001 | Define exhaustive reference-mention phrases, overlap precedence, scan direction, and immutable mention-ordinal extraction. | `TASK-0008` |
 | D-002 | Define qualifier capture templates, normalization, and exact emitted `MUST_*` predicate formats for `only`, `exactly`, modals, prohibition, preservation, substitution, prior-reference, and sequential language. | `TASK-0007` |
 | D-003 | Define same-target normalization, hard-rule opposition, conflict grouping, non-hard current `PREFERRED`/`OPTIONAL` priority, and source sequencing for non-message constraints. | `TASK-0007` |
-| D-004 | Complete processing/model-request/correction integrity rules: legal timestamps, `INITIAL`/attempt-0 and `REVISION`/attempt-1-or-2 pairing, same-run correction links, and repository enforcement. | `TASK-0005`, `TASK-0014` |
-| D-005 | Reconcile restart recovery with the foreground UI controller: specify how an already accepted run resumes without becoming a prohibited background worker. | `TASK-0014`, `TASK-0015` |
+| D-004 | Resolved: repository enforcement remains TASK-0005 ownership; TASK-0014 now fixes application transaction ordering, closed request/response projections, adjacent correction reconstruction, timestamps, and recovery use of those guards. | `TASK-0005`, `TASK-0014` |
+| D-005 | Resolved as a cross-layer contract: startup invokes one finite `RecoverProcessingRun` foreground execution before admission, with a fresh owned token and no queue, polling, daemon, or detached work. Later presentation wiring remains TASK-0015 delivery, not an open TASK-0014 specification decision. | `TASK-0014`, `TASK-0015` |
 | D-006 | Resolved for the provider-independent contract below: `ModelGateway` returns typed values, application/repository code persists lifecycle state, and live/recovery token ownership is explicit. TASK-0012 must preserve this contract at the Ollama transport boundary. | `TASK-0011`, `TASK-0012` |
-| D-007 | Update `docs/diagrams/SEQUENCES.md` for duplicate-key and Busy branches, clarification persistence, `PENDING` claim, context-stage state update, and recovery. | `TASK-0014` |
+| D-007 | Resolved: `docs/diagrams/SEQUENCES.md` now shows duplicate/existing, global Busy, clarification, joined context/state CAS, `PENDING` claim, bounded generation/correction, and one-shot recovery branches. | `TASK-0014` |
 | D-008 | Resolved for TASK-0010 below: the fixed prompt-policy/schema versions, versioning rules, complete packet/aggregate shapes, rendering grammar, evidence, retrieval, budgeting, omission, and typed-overflow contracts are authoritative. | `TASK-0010` |
 | D-009 | Define evaluation-case and evaluation-run JSON shapes, category taxonomy, fixture linkage, expected observables, and repository/use-case boundary; alternatively defer runtime evaluation persistence consistently. | `TASK-0005`, `TASK-0018` |
-| D-010 | Add exact acceptance assertions for required trace-event names, correlation fields, and redaction rather than merely claiming combined coverage. | `TASK-0014` |
+| D-010 | Resolved: `ConfigurationAndLogging.md` fixes event/stage/correlation/error/order semantics and AT-014/AT-015 contain exact owning assertions, including recovery and redaction. | `TASK-0014` |
 | D-011 | Reconcile local-Ollama opt-in semantics in `TASK-0012` and `TASK-0018`: no flag skips; flag present makes invalid daemon/model/configuration a failed opt-in test. | `TASK-0018` |
-| D-012 | Move full AT-012 ownership from `TASK-0013` to `TASK-0014`; keep Task 0013 limited to validator/correction-controller behavior. | `TASK-0013`, `TASK-0014` |
+| D-012 | Resolved: TASK-0013 retains pure validator/correction and bounded preconstructed repository evidence; TASK-0014 owns complete provider-facing AT-012 orchestration. | `TASK-0013`, `TASK-0014` |
 | D-013 | The TASK-0009 portion is resolved below: history is inspectable only and there is no restore operation. Remaining work must keep Task 0015 to responsiveness portions of AT-013 and Task 0017 to UI/presentation portions of manual memory control. | `TASK-0015`, `TASK-0017` |
-| D-014 | Align detailed task scopes with the repaired contracts: Task 0002 enums/types; Task 0003 clarification/retrieval ports; Task 0004 schema additions/indexes; Task 0005 repositories/recovery; Task 0006 lifecycle; Tasks 0007–0010 deterministic contracts; Tasks 0011–0018 provider, pipeline, UI, and smoke criteria. | `TASK-0002` through `TASK-0018` |
-| D-015 | Reconcile roadmap/backlog/implementation-plan wording with the global single-run admission rule, recovery matrix, clarification persistence, and task-stage acceptance ownership. | `TASK-0014` |
+| D-014 | The TASK-0014 portion is resolved by its reconciled delivery contract and authoritative public-result, transaction, recovery, failure, lineage, trace, and acceptance contracts. Portions assigned to other delivery tasks retain their existing status. | `TASK-0002` through `TASK-0018` |
+| D-015 | Resolved for TASK-0014: roadmap, backlog, and implementation-plan wording now agrees on global admission, one-shot recovery, clarification persistence, and AT-002/full-AT-012/AT-015 ownership. | `TASK-0014` |
 
 ### TASK-0002 reconciliation
 
@@ -58,9 +58,8 @@ The `TASK-0005` repository-enforcement portion of D-004 is resolved by the
 canonical lifecycle invariants in `docs/contracts/Persistence.md`. Repositories
 enforce processing-run and model-request timestamp states, `INITIAL`/attempt-0
 and `REVISION`/attempt-1-or-2 pairing, same-run consecutive correction lineage,
-and passed-validation assistant-message links. D-004 remains unresolved for
-`TASK-0014`, which owns application orchestration and recovery use of those
-repository guarantees.
+and passed-validation assistant-message links. The remaining TASK-0014
+application/recovery portion is resolved by the TASK-0014 reconciliation below.
 
 ### TASK-0006 reconciliation
 
@@ -156,7 +155,7 @@ mutation boundary supersedes the obsolete historical correction example.
 AT-008 and AT-014 now separate TASK-0009 component/use-case and persistence
 assertions from later orchestration, packet construction, UI/presentation,
 trace-event, and provider integration assertions. Exact trace-event contracts
-remain assigned to D-010. The bounded delivery contract is
+are now fixed by the resolved D-010 reconciliation below. The bounded delivery contract is
 `tasks/TASK-0009-MANUAL-MEMORY-LIFECYCLE-AND-DETERMINISTIC-RETRIEVAL.md`.
 
 D-013 remains open only for its TASK-0015/TASK-0017 portions. After the
@@ -219,6 +218,50 @@ response validation, broader pipeline orchestration, QML, or UI behavior.
 TASK-0011 is specification-ready but remains implementation-blocked until the
 TASK-0010 implementation and exit criteria pass. This reconciliation does not
 resolve any separate TASK-0012-or-later specification issue.
+
+### TASK-0014 reconciliation
+
+The TASK-0014 portions of D-004, D-005, D-007, D-010, D-012, D-014, and D-015
+are resolved by the bounded specification reconciliation recorded in:
+
+- `docs/contracts/ProcessUserMessage.md` for the exact admission order,
+  exhaustive public result algebra, cancellation entry/checkpoints, and the
+  separate empty-request foreground recovery use case;
+- `docs/contracts/Persistence.md` for re-entrant transaction joining, atomic
+  context ownership, closed durable request/response and interpretation
+  projections, assistant byte lineage, the complete recovery matrix, and exact
+  safe failures;
+- `docs/contracts/DomainAndDecisionRules.md`, `ContextPacket.md`,
+  `ModelGateway.md`, `DATABASE_SCHEMA.md`, and `ARCHITECTURE.md` for the one new
+  context-failure code, legal accepted cancellation, joined packet-stage
+  semantics, gateway/recovery handoff, logical schema guards, and one-shot
+  foreground composition;
+- `docs/contracts/ConfigurationAndLogging.md` and
+  `docs/diagrams/SEQUENCES.md` for the canonical trace port/matrix/order and
+  repaired lifecycle/recovery flows; and
+- `ACCEPTANCE_TESTS.md`, the TASK-0014 delivery contract, and the three planning
+  summaries for AT-002, full AT-012, and AT-015 ownership.
+
+Admission always performs same-key lookup before the global active-run check,
+then persists acceptance only when both branches permit it. An acceptance
+rollback returns an unpersisted persistence result and never recreates foreign-
+key lineage. Context packet persistence joins one outer transaction; a false
+state CAS rolls all context writes back. Recovery is invoked once before new
+submissions, continues only provably not-yet-sent work, and terminalizes an
+uncertain call without retry.
+
+No TASK-0014 specification gate remains. Its implementation is still an ordered
+execution dependency on completed, green TASK-0013 exit criteria; that is not a
+specification ambiguity. This section does not resolve or implement any
+TASK-0015-or-later presentation/smoke work, and it does not change predecessor
+component ownership.
+
+For TASK-0014, the historical “Evaluation and Debugging System” and “Main Use
+Cases” proposals are non-authoritative. Their PostgreSQL/API, automatic
+correction-memory, validate-then-display, prior-conversation fixture, and
+`UpdateProjectState` descriptions do not supplement the canonical SQLite,
+validate-before-display, no-automatic-memory, and conversation-state contracts
+listed above. No historical planning file may add a TASK-0014 behavior or gate.
 
 ## Historical planning reconciliation
 

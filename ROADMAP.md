@@ -21,13 +21,14 @@
 ## Milestone 4 — Controlled mock-provider pipeline works
 
 - Buffered model abstraction, deterministic validation, bounded correction,
-  transaction/recovery/idempotency behavior, and complete pipeline pass with a
-  mock provider.
-- AT-010 through AT-012 and AT-015 pass.
+  global admission, one-shot foreground recovery, transaction/idempotency
+  behavior, and complete pipeline pass with a mock provider.
+- AT-002 through the public seam, AT-010–AT-011, full AT-012, and AT-015 pass.
 
 ## Milestone 5 — Desktop MVP is inspectable and safe
 
-- QML shell remains responsive during one foreground request per conversation.
+- QML shell remains responsive during the sole global foreground execution,
+  including the bounded startup-recovery presentation when one is required.
 - Context, manual memory, project, validation, and settings views work through
   application use cases.
 - AT-013 and AT-014 pass.
