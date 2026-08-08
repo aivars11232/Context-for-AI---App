@@ -9,10 +9,14 @@ from pathlib import Path
 from typing import Protocol, get_type_hints
 
 from context_for_ai.domain.lifecycle import ClarificationRequest
+from context_for_ai.domain.decisions import ReferenceOutcome
+from context_for_ai.domain.entities import Entity, NamedItem
 from context_for_ai.domain.ports import (
     ClarificationRepository,
     ContextPacketRecord,
     ContextPacketRepository,
+    EntityRepository,
+    ReferenceResolutionRepository,
 )
 from context_for_ai.domain.ports import repositories
 from context_for_ai.domain.value_objects import DomainId
@@ -98,4 +102,21 @@ def test_context_packet_repository_uses_complete_retrieval_record() -> None:
     assert get_for_run_hints == {
         "processing_run_id": DomainId,
         "return": ContextPacketRecord | None,
+    }
+
+
+def test_task_0008_repository_methods_use_existing_entity_and_reference_ports() -> None:
+    assert get_type_hints(EntityRepository.update_named_item) == {
+        "named_item": NamedItem,
+        "entity": Entity,
+        "return": type(None),
+    }
+    assert get_type_hints(EntityRepository.list_reference_candidates) == {
+        "conversation_id": DomainId,
+        "project_id": DomainId | None,
+        "return": tuple[Entity, ...],
+    }
+    assert get_type_hints(ReferenceResolutionRepository.list_resolved_for_messages) == {
+        "message_ids": tuple[DomainId, ...],
+        "return": tuple[ReferenceOutcome, ...],
     }

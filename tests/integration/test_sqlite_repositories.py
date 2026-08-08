@@ -20,6 +20,7 @@ from context_for_ai.domain.decisions import (
     Condition,
     Constraint,
     ContextPacket,
+    ReferenceCandidateEvidence,
     ReferenceOutcome,
     RetrievalExclusion,
     RetrievalResult,
@@ -62,6 +63,7 @@ from context_for_ai.domain.enums import (
     ProcessingRunStatus,
     ProjectStatus,
     ProviderKind,
+    ReferenceRankReason,
     ReferenceStatus,
     RetrievalExclusionReason,
     TaskStatus,
@@ -508,14 +510,20 @@ def test_core_entity_state_message_and_archive_repositories(
         stamp(21),
     )
     bundle.entities.add_named_item(named_item, named_entity)
+    renamed_named_item = replace(
+        named_item,
+        display_name="SQLite repository layer",
+        normalized_name="sqlite repository layer",
+        updated_at=stamp(22),
+    )
     renamed_entity = replace(
         named_entity,
         display_name="SQLite repository layer",
         normalized_name="sqlite repository layer",
         updated_at=stamp(22),
     )
-    bundle.entities.update(renamed_entity)
-    assert bundle.entities.get_named_item(named_item.id) == named_item
+    bundle.entities.update_named_item(renamed_named_item, renamed_entity)
+    assert bundle.entities.get_named_item(named_item.id) == renamed_named_item
     assert bundle.entities.get(named_entity.id) == renamed_entity
     assert {entity.id for entity in bundle.entities.list_reference_candidates(
         conversation_id=core.conversation.id, project_id=core.project.id
@@ -561,9 +569,16 @@ def test_core_entity_state_message_and_archive_repositories(
     assert bundle.projects.list_by_status(ProjectStatus.ARCHIVED) == (archived_project,)
     assert bundle.entities.get(project_entity.id).is_active is False
     assert bundle.entities.get(task_entity.id).is_active is False
-    assert bundle.entities.list_reference_candidates(
+    stale_candidates = bundle.entities.list_reference_candidates(
         conversation_id=core.conversation.id, project_id=core.project.id
-    ) == ()
+    )
+    assert {entity.id for entity in stale_candidates} == {
+        project_entity.id,
+        topic_entity.id,
+        task_entity.id,
+        named_entity.id,
+    }
+    assert all(entity.is_active is False for entity in stale_candidates)
 
 
 def test_decision_memory_and_packet_aggregates_round_trip_exactly(
@@ -607,9 +622,24 @@ def test_decision_memory_and_packet_aggregates_round_trip_exactly(
         "it",
         ReferenceStatus.RESOLVED,
         resolved_entity.id,
-        core.user_message.id,
+        None,
         UnitScore("0.90"),
-        (FrozenJsonObject({"candidate": "Repository layer", "rank": 1}),),
+        (
+            ReferenceCandidateEvidence(
+                1,
+                resolved_entity.id,
+                resolved_entity.entity_type,
+                resolved_entity.display_name,
+                resolved_entity.normalized_name,
+                UnitScore("0.90"),
+                ReferenceRankReason.ACTIVE_STATE,
+                None,
+                None,
+                None,
+                None,
+                True,
+            ),
+        ),
         stamp(12),
     )
     unresolved = ReferenceOutcome(
@@ -621,12 +651,30 @@ def test_decision_memory_and_packet_aggregates_round_trip_exactly(
         ReferenceStatus.UNRESOLVED,
         None,
         None,
-        UnitScore("0.20"),
-        (),
+        UnitScore("0.00"),
+        (
+            ReferenceCandidateEvidence(
+                1,
+                None,
+                None,
+                None,
+                None,
+                UnitScore("0.00"),
+                ReferenceRankReason.NO_CANDIDATE,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        ),
         stamp(12),
     )
-    bundle.references.add_all((resolved, unresolved))
+    bundle.references.add_all((unresolved, resolved))
     assert bundle.references.list_for_run(core.run.id) == (unresolved, resolved)
+    assert bundle.references.list_resolved_for_messages(
+        (core.user_message.id,)
+    ) == (resolved,)
 
     condition = Condition(
         CONDITION_GRAMMAR_VERSION,

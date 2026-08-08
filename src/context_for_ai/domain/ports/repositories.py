@@ -130,13 +130,17 @@ class EntityRepository(Protocol):
 
     def add_named_item(self, named_item: NamedItem, entity: Entity) -> None: ...
 
+    def update_named_item(self, named_item: NamedItem, entity: Entity) -> None: ...
+
     def get(self, entity_id: DomainId) -> Entity | None: ...
 
     def get_named_item(self, named_item_id: DomainId) -> NamedItem | None: ...
 
     def list_reference_candidates(
         self, *, conversation_id: DomainId, project_id: DomainId | None
-    ) -> tuple[Entity, ...]: ...
+    ) -> tuple[Entity, ...]:
+        """Return all in-scope active and inactive registry candidates."""
+        ...
 
     def update(self, entity: Entity) -> None: ...
 
@@ -148,6 +152,11 @@ class ReferenceResolutionRepository(Protocol):
 
     def list_for_run(
         self, processing_run_id: DomainId
+    ) -> tuple[ReferenceOutcome, ...]: ...
+
+    def list_resolved_for_messages(
+        self,
+        message_ids: tuple[DomainId, ...],
     ) -> tuple[ReferenceOutcome, ...]: ...
 
 

@@ -15,6 +15,10 @@ from context_for_ai.application import (
     InspectValidation,
     ListMemories,
     ProcessUserMessage,
+    RegisterNamedItem,
+    RegisterProject,
+    RegisterTask,
+    RegisterTopic,
     RunEvaluation,
     SelectProject,
     SoftDeleteMemory,
@@ -42,6 +46,8 @@ from context_for_ai.domain.ports import (
     ModelGateway,
     ProcessingRunRepository,
     ProjectRepository,
+    ReferenceMentionExtractor,
+    ReferenceResolver,
     ReferenceResolutionRepository,
     ResponseValidator,
     SettingsRepository,
@@ -93,6 +99,8 @@ class DeterministicComponents:
     """Context components invoked abstractly by application services."""
 
     interpretation_engine: InterpretationEngine
+    reference_mention_extractor: ReferenceMentionExtractor
+    reference_resolver: ReferenceResolver
     constraint_engine: ConstraintEngine
     clarification_builder: ClarificationBuilder
     context_retriever: ContextRetriever
@@ -119,6 +127,10 @@ class ApplicationUseCases:
     apply_conversation_state_transition: ApplyConversationStateTransition
     transition_task_status: TransitionTaskStatus
     archive_project: ArchiveProject
+    register_project: RegisterProject
+    register_topic: RegisterTopic
+    register_task: RegisterTask
+    register_named_item: RegisterNamedItem
     create_memory: CreateMemory
     get_memory: GetMemory
     list_memories: ListMemories

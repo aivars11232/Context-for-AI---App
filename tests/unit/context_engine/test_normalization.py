@@ -7,6 +7,8 @@ import pytest
 from context_for_ai.context_engine.normalization import (
     find_phrase_matches,
     normalize_capture,
+    normalize_display_label,
+    normalize_phrase,
     normalize_text,
     predicate_atom,
     split_action_object,
@@ -51,3 +53,13 @@ def test_capture_and_predicate_normalization_are_exact() -> None:
     assert split_action_object("Remove the blue line") == ("remove", "blue line")
     with pytest.raises(LifecycleInvariantError, match="action and object"):
         split_action_object("remove")
+
+
+def test_display_label_normalization_preserves_case_and_canonicalizes_unicode() -> None:
+    source = "  CAFE\u0301\t  Architecture\nBoard  "
+
+    assert normalize_display_label(source) == "CAFÉ Architecture Board"
+    assert normalize_phrase(source) == "café architecture board"
+    assert normalize_display_label(" \t\n ") == ""
+    with pytest.raises(LifecycleInvariantError, match="requires text"):
+        normalize_display_label(None)  # type: ignore[arg-type]

@@ -9,10 +9,17 @@ import json
 import sqlite3
 from typing import Callable, TypeVar
 
+from context_for_ai.context_engine.normalization import (
+    find_phrase_matches,
+    normalize_display_label,
+    normalize_phrase,
+    normalize_text,
+)
 from context_for_ai.domain.decisions import (
     Condition,
     Constraint,
     ContextPacket,
+    ReferenceCandidateEvidence,
     ReferenceOutcome,
     RetrievalExclusion,
     RetrievalResult,
@@ -55,6 +62,7 @@ from context_for_ai.domain.enums import (
     ProcessingRunStatus,
     ProjectStatus,
     ProviderKind,
+    ReferenceRankReason,
     ReferenceStatus,
     RetrievalExclusionReason,
     TaskStatus,
@@ -365,7 +373,10 @@ def _reference_outcome(row: sqlite3.Row) -> ReferenceOutcome:
         _optional_id(row["resolved_entity_id"]),
         _optional_id(row["source_message_id"]),
         UnitScore(row["confidence"]),
-        _decode_object_array(row["candidate_evidence_json"]),
+        tuple(
+            ReferenceCandidateEvidence.from_json_object(item)
+            for item in _decode_object_array(row["candidate_evidence_json"])
+        ),
         parse_utc_timestamp(str(row["created_at"])),
     )
 
@@ -735,17 +746,23 @@ class SQLiteProjectRepository(_SQLiteRepository):
             )
             if cursor.rowcount != 1:
                 raise PersistenceError("Project update did not affect exactly one row.")
+            self._connection.execute(
+                """
+                UPDATE entity_registry
+                SET display_name = ?, normalized_name = ?, is_active = ?, updated_at = ?
+                WHERE entity_type = 'PROJECT' AND native_id = ?
+                """,
+                (
+                    project.name,
+                    normalize_phrase(project.name),
+                    int(project.status is ProjectStatus.ACTIVE),
+                    format_utc_timestamp(project.updated_at),
+                    str(project.id),
+                ),
+            )
             if project.status is ProjectStatus.ARCHIVED:
                 self._connection.execute(
                     "UPDATE entity_registry SET is_active = 0, updated_at = ? WHERE project_id = ?",
-                    (format_utc_timestamp(project.updated_at), str(project.id)),
-                )
-                self._connection.execute(
-                    """
-                    UPDATE entity_registry
-                    SET is_active = 0, updated_at = ?
-                    WHERE entity_type = 'PROJECT' AND native_id = ?
-                    """,
                     (format_utc_timestamp(project.updated_at), str(project.id)),
                 )
 
@@ -827,6 +844,47 @@ class SQLiteConversationRepository(_SQLiteRepository):
             )
             if cursor.rowcount != 1:
                 raise PersistenceError("Conversation update did not affect exactly one row.")
+            if conversation.project_id != current.project_id:
+                project_value = (
+                    None
+                    if conversation.project_id is None
+                    else str(conversation.project_id)
+                )
+                updated_at = format_utc_timestamp(conversation.updated_at)
+                self._connection.execute(
+                    """
+                    UPDATE entity_registry
+                    SET project_id = ?, is_active = 1, updated_at = ?
+                    WHERE entity_type = 'TOPIC'
+                      AND native_id IN (
+                          SELECT id FROM topics WHERE conversation_id = ?
+                      )
+                    """,
+                    (project_value, updated_at, str(conversation.id)),
+                )
+                self._connection.execute(
+                    """
+                    UPDATE entity_registry
+                    SET project_id = ?,
+                        is_active = CASE
+                            WHEN native_id IN (
+                                SELECT id FROM tasks
+                                WHERE conversation_id = ?
+                                  AND status IN ('OPEN', 'IN_PROGRESS')
+                            ) THEN 1 ELSE 0 END,
+                        updated_at = ?
+                    WHERE entity_type = 'TASK'
+                      AND native_id IN (
+                          SELECT id FROM tasks WHERE conversation_id = ?
+                      )
+                    """,
+                    (
+                        project_value,
+                        str(conversation.id),
+                        updated_at,
+                        str(conversation.id),
+                    ),
+                )
 
 
 class SQLiteTopicRepository(_SQLiteRepository):
@@ -894,6 +952,19 @@ class SQLiteTopicRepository(_SQLiteRepository):
             )
             if cursor.rowcount != 1:
                 raise PersistenceError("Topic update did not affect exactly one row.")
+            self._connection.execute(
+                """
+                UPDATE entity_registry
+                SET display_name = ?, normalized_name = ?, updated_at = ?
+                WHERE entity_type = 'TOPIC' AND native_id = ?
+                """,
+                (
+                    topic.label,
+                    topic.normalized_label,
+                    format_utc_timestamp(topic.updated_at),
+                    str(topic.id),
+                ),
+            )
 
 
 class SQLiteTaskRepository(_SQLiteRepository):
@@ -1005,10 +1076,12 @@ class SQLiteTaskRepository(_SQLiteRepository):
             self._connection.execute(
                 """
                 UPDATE entity_registry
-                SET is_active = ?, updated_at = ?
+                SET display_name = ?, normalized_name = ?, is_active = ?, updated_at = ?
                 WHERE entity_type = 'TASK' AND native_id = ?
                 """,
                 (
+                    task.title,
+                    normalize_phrase(task.title),
                     int(bool(activity_row["expected_active"])),
                     format_utc_timestamp(task.updated_at),
                     str(task.id),
@@ -1200,27 +1273,85 @@ class SQLiteMessageRepository(_SQLiteRepository):
 
 
 class SQLiteEntityRepository(_SQLiteRepository):
+    def _validate_source_message(
+        self,
+        source_message_id: DomainId | None,
+        *,
+        conversation_id: DomainId | None,
+    ) -> None:
+        if source_message_id is None:
+            return
+        row = _fetch_one(
+            self._connection,
+            "SELECT conversation_id, role FROM messages WHERE id = ?",
+            (str(source_message_id),),
+            "Validate entity source message",
+        )
+        if row is None:
+            raise PersistenceError("Entity source message does not exist.")
+        if row["role"] != MessageRole.USER.value:
+            raise LifecycleInvariantError("Entity source message must have USER role.")
+        if conversation_id is not None and row["conversation_id"] != str(
+            conversation_id
+        ):
+            raise LifecycleInvariantError(
+                "Entity source message must belong to its owning conversation."
+            )
+
+    def _validate_named_item_record(self, named_item: NamedItem) -> None:
+        conversation = _fetch_one(
+            self._connection,
+            "SELECT id FROM conversations WHERE id = ?",
+            (str(named_item.conversation_id),),
+            "Validate named-item conversation",
+        )
+        if conversation is None:
+            raise PersistenceError("Named-item conversation does not exist.")
+        if named_item.project_id is not None:
+            project = _fetch_one(
+                self._connection,
+                "SELECT id FROM projects WHERE id = ?",
+                (str(named_item.project_id),),
+                "Validate named-item project",
+            )
+            if project is None:
+                raise PersistenceError("Named-item project does not exist.")
+        if (
+            normalize_display_label(named_item.display_name) != named_item.display_name
+            or normalize_phrase(named_item.display_name) != named_item.normalized_name
+        ):
+            raise LifecycleInvariantError(
+                "Named-item display and normalized names must be canonical."
+            )
+        self._validate_source_message(
+            named_item.source_message_id,
+            conversation_id=named_item.conversation_id,
+        )
+
     def _validate_owner(self, entity: Entity) -> None:
         if entity.entity_type is EntityType.PROJECT:
             row = _fetch_one(
                 self._connection,
-                "SELECT id, status FROM projects WHERE id = ?",
+                "SELECT name, status FROM projects WHERE id = ?",
                 (str(entity.native_id),),
                 "Validate project entity owner",
             )
             if row is None:
                 raise PersistenceError("Project entity owner does not exist.")
-            if entity.project_id not in (None, entity.native_id):
+            if entity.project_id != entity.native_id:
                 raise LifecycleInvariantError(
-                    "A project entity project_id must be null or its native project ID."
+                    "A project entity project_id must equal its native project ID."
                 )
             expected_active = row["status"] == ProjectStatus.ACTIVE.value
-            expected_source_id = None
+            expected_display = str(row["name"])
+            expected_normalized = normalize_phrase(expected_display)
+            source_conversation_id = None
         elif entity.entity_type is EntityType.TOPIC:
             row = _fetch_one(
                 self._connection,
                 """
-                SELECT conversations.project_id,
+                SELECT topics.label, topics.normalized_label,
+                       topics.conversation_id, conversations.project_id,
                        CASE WHEN conversations.project_id IS NULL
                                   OR projects.status = 'ACTIVE'
                             THEN 1 ELSE 0 END AS expected_active
@@ -1239,12 +1370,15 @@ class SQLiteEntityRepository(_SQLiteRepository):
                     "Topic entity project_id must match its conversation project."
                 )
             expected_active = bool(row["expected_active"])
-            expected_source_id = None
+            expected_display = str(row["label"])
+            expected_normalized = str(row["normalized_label"])
+            source_conversation_id = DomainId(str(row["conversation_id"]))
         elif entity.entity_type is EntityType.TASK:
             row = _fetch_one(
                 self._connection,
                 """
-                SELECT conversations.project_id, tasks.status,
+                SELECT tasks.title, tasks.conversation_id,
+                       conversations.project_id, tasks.status,
                        CASE WHEN (conversations.project_id IS NULL
                                        OR projects.status = 'ACTIVE')
                                       AND tasks.status IN ('OPEN', 'IN_PROGRESS')
@@ -1264,12 +1398,16 @@ class SQLiteEntityRepository(_SQLiteRepository):
                     "Task entity project_id must match its conversation project."
                 )
             expected_active = bool(row["expected_active"])
-            expected_source_id = None
+            expected_display = str(row["title"])
+            expected_normalized = normalize_phrase(expected_display)
+            source_conversation_id = DomainId(str(row["conversation_id"]))
         else:
             row = _fetch_one(
                 self._connection,
                 """
-                SELECT named_items.project_id, named_items.source_message_id,
+                SELECT named_items.conversation_id, named_items.project_id,
+                       named_items.display_name, named_items.normalized_name,
+                       named_items.source_message_id,
                        CASE WHEN named_items.project_id IS NULL
                                   OR projects.status = 'ACTIVE'
                             THEN 1 ELSE 0 END AS expected_active
@@ -1287,17 +1425,34 @@ class SQLiteEntityRepository(_SQLiteRepository):
                     "Named-item entity project_id must match its owner."
                 )
             expected_active = bool(row["expected_active"])
-            expected_source_id = _optional_id(row["source_message_id"])
-        if entity.source_message_id != expected_source_id:
+            expected_display = str(row["display_name"])
+            expected_normalized = str(row["normalized_name"])
+            source_conversation_id = DomainId(str(row["conversation_id"]))
+            if entity.source_message_id != _optional_id(row["source_message_id"]):
+                raise LifecycleInvariantError(
+                    "Named-item entity source must match its owner."
+                )
+        if (
+            entity.display_name != expected_display
+            or entity.normalized_name != expected_normalized
+        ):
             raise LifecycleInvariantError(
-                "Entity source_message_id must match its owning record."
+                "Entity display and normalized names must mirror their owner."
             )
         if entity.is_active is not expected_active:
             raise LifecycleInvariantError(
                 "Entity activity must mirror its owning lifecycle."
             )
+        self._validate_source_message(
+            entity.source_message_id,
+            conversation_id=source_conversation_id,
+        )
 
     def _insert_entity(self, entity: Entity) -> None:
+        if entity.id == entity.native_id:
+            raise LifecycleInvariantError(
+                "Entity registry ID must be distinct from its native owner ID."
+            )
         self._validate_owner(entity)
         self._connection.execute(
             """
@@ -1328,6 +1483,7 @@ class SQLiteEntityRepository(_SQLiteRepository):
                 "A named-item entity must point to the supplied named item."
             )
         with self._write("Add named item and entity"):
+            self._validate_named_item_record(named_item)
             self._connection.execute(
                 """
                 INSERT INTO named_items (
@@ -1348,6 +1504,96 @@ class SQLiteEntityRepository(_SQLiteRepository):
             )
             self._insert_entity(entity)
 
+    def update_named_item(self, named_item: NamedItem, entity: Entity) -> None:
+        if entity.entity_type is not EntityType.NAMED_ITEM or entity.native_id != named_item.id:
+            raise LifecycleInvariantError(
+                "A named-item entity must point to the supplied named item."
+            )
+        with self._write("Update named item and entity"):
+            current_owner = _require_existing(
+                self.get_named_item(named_item.id),
+                "Named item",
+            )
+            current_entity = _require_existing(self.get(entity.id), "Entity")
+            if (
+                named_item.conversation_id != current_owner.conversation_id
+                or named_item.project_id != current_owner.project_id
+                or named_item.source_message_id != current_owner.source_message_id
+            ):
+                raise LifecycleInvariantError(
+                    "Named-item conversation, project, and source are immutable."
+                )
+            if (
+                entity.entity_type is not current_entity.entity_type
+                or entity.native_id != current_entity.native_id
+                or entity.source_message_id != current_entity.source_message_id
+            ):
+                raise LifecycleInvariantError(
+                    "Named-item registry identity and source are immutable."
+                )
+            _require_non_regressing_update(
+                old_created_at=current_owner.created_at,
+                old_updated_at=current_owner.updated_at,
+                new_created_at=named_item.created_at,
+                new_updated_at=named_item.updated_at,
+                record_name="NamedItem",
+            )
+            _require_non_regressing_update(
+                old_created_at=current_entity.created_at,
+                old_updated_at=current_entity.updated_at,
+                new_created_at=entity.created_at,
+                new_updated_at=entity.updated_at,
+                record_name="Entity",
+            )
+            if (
+                entity.display_name != named_item.display_name
+                or entity.normalized_name != named_item.normalized_name
+                or entity.project_id != named_item.project_id
+                or entity.updated_at != named_item.updated_at
+            ):
+                raise LifecycleInvariantError(
+                    "Named-item owner and registry mutable fields must stay synchronized."
+                )
+            self._validate_named_item_record(named_item)
+            cursor = self._connection.execute(
+                """
+                UPDATE named_items
+                SET display_name = ?, normalized_name = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    named_item.display_name,
+                    named_item.normalized_name,
+                    format_utc_timestamp(named_item.updated_at),
+                    str(named_item.id),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceError(
+                    "Named-item update did not affect exactly one owner row."
+                )
+            self._validate_owner(entity)
+            cursor = self._connection.execute(
+                """
+                UPDATE entity_registry
+                SET project_id = ?, display_name = ?, normalized_name = ?,
+                    is_active = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    None if entity.project_id is None else str(entity.project_id),
+                    entity.display_name,
+                    entity.normalized_name,
+                    int(entity.is_active),
+                    format_utc_timestamp(entity.updated_at),
+                    str(entity.id),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceError(
+                    "Named-item update did not affect exactly one registry row."
+                )
+
     def get(self, entity_id: DomainId) -> Entity | None:
         return self._one(
             "SELECT * FROM entity_registry WHERE id = ?",
@@ -1367,7 +1613,7 @@ class SQLiteEntityRepository(_SQLiteRepository):
             """
             SELECT entity_registry.*
             FROM entity_registry
-            WHERE is_active = 1 AND (
+            WHERE (
                 (entity_type = 'PROJECT' AND native_id = ?)
                 OR (entity_type = 'TOPIC' AND EXISTS (
                     SELECT 1 FROM topics
@@ -1383,13 +1629,20 @@ class SQLiteEntityRepository(_SQLiteRepository):
                     SELECT 1 FROM named_items
                     WHERE named_items.id = entity_registry.native_id
                       AND named_items.conversation_id = ?
+                      AND (
+                          named_items.project_id IS NULL
+                          OR named_items.project_id = ?
+                      )
                 ))
             )
-            ORDER BY updated_at DESC, id
+            ORDER BY normalized_name, entity_type, id
             """,
             (
                 None if project_id is None else str(project_id),
-                str(conversation_id), str(conversation_id), str(conversation_id),
+                str(conversation_id),
+                str(conversation_id),
+                str(conversation_id),
+                None if project_id is None else str(project_id),
             ),
             _entity,
             "reference candidate entities",
@@ -1401,8 +1654,11 @@ class SQLiteEntityRepository(_SQLiteRepository):
             if (
                 entity.entity_type is not current.entity_type
                 or entity.native_id != current.native_id
+                or entity.source_message_id != current.source_message_id
             ):
-                raise LifecycleInvariantError("Entity type and native_id are immutable.")
+                raise LifecycleInvariantError(
+                    "Entity type, native_id, and source_message_id are immutable."
+                )
             _require_non_regressing_update(
                 old_created_at=current.created_at,
                 old_updated_at=current.updated_at,
@@ -1415,15 +1671,12 @@ class SQLiteEntityRepository(_SQLiteRepository):
                 """
                 UPDATE entity_registry
                 SET project_id = ?, display_name = ?, normalized_name = ?,
-                    source_message_id = ?, is_active = ?, updated_at = ?
+                    is_active = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     None if entity.project_id is None else str(entity.project_id),
                     entity.display_name, entity.normalized_name,
-                    None
-                    if entity.source_message_id is None
-                    else str(entity.source_message_id),
                     int(entity.is_active), format_utc_timestamp(entity.updated_at),
                     str(entity.id),
                 ),
@@ -1433,20 +1686,223 @@ class SQLiteEntityRepository(_SQLiteRepository):
 
 
 class SQLiteReferenceResolutionRepository(_SQLiteRepository):
+    def _validate_complete_tuple(
+        self,
+        outcomes: tuple[ReferenceOutcome, ...],
+    ) -> None:
+        if any(not isinstance(outcome, ReferenceOutcome) for outcome in outcomes):
+            raise LifecycleInvariantError(
+                "Reference persistence requires typed outcomes."
+            )
+        if [outcome.mention_ordinal for outcome in outcomes] != list(
+            range(len(outcomes))
+        ):
+            raise LifecycleInvariantError(
+                "Reference persistence requires one complete contiguous outcome tuple."
+            )
+        if len({outcome.id for outcome in outcomes}) != len(outcomes):
+            raise LifecycleInvariantError("Reference outcome IDs must be distinct.")
+        if outcomes and (
+            len({outcome.processing_run_id for outcome in outcomes}) != 1
+            or len({outcome.message_id for outcome in outcomes}) != 1
+        ):
+            raise LifecycleInvariantError(
+                "Reference outcomes must share one run and current message."
+            )
+
+    def _current_context(self, outcome: ReferenceOutcome) -> sqlite3.Row:
+        row = _fetch_one(
+            self._connection,
+            """
+            SELECT processing_runs.user_message_id,
+                   processing_runs.conversation_id,
+                   messages.role,
+                   messages.sequence_number,
+                   conversations.project_id
+            FROM processing_runs
+            JOIN messages ON messages.id = processing_runs.user_message_id
+            JOIN conversations ON conversations.id = processing_runs.conversation_id
+            WHERE processing_runs.id = ?
+            """,
+            (str(outcome.processing_run_id),),
+            "Validate reference resolution run",
+        )
+        if row is None or row["user_message_id"] != str(outcome.message_id):
+            raise LifecycleInvariantError(
+                "Reference outcome message must be the run user message."
+            )
+        if row["role"] != MessageRole.USER.value:
+            raise LifecycleInvariantError(
+                "Reference outcome current message must have USER role."
+            )
+        return row
+
+    def _validate_candidate_scope(
+        self,
+        entity: Entity,
+        *,
+        conversation_id: str,
+        project_id: object,
+    ) -> None:
+        if entity.entity_type is EntityType.PROJECT:
+            if project_id is None or str(entity.native_id) != str(project_id):
+                raise LifecycleInvariantError(
+                    "Project reference evidence is outside the current scope."
+                )
+            return
+        if entity.entity_type is EntityType.TOPIC:
+            table = "topics"
+        elif entity.entity_type is EntityType.TASK:
+            table = "tasks"
+        else:
+            row = _fetch_one(
+                self._connection,
+                """
+                SELECT conversation_id, project_id
+                FROM named_items WHERE id = ?
+                """,
+                (str(entity.native_id),),
+                "Validate named-item reference scope",
+            )
+            if row is None or row["conversation_id"] != conversation_id:
+                raise LifecycleInvariantError(
+                    "Named-item reference evidence is outside the conversation."
+                )
+            if row["project_id"] is not None and row["project_id"] != project_id:
+                raise LifecycleInvariantError(
+                    "Named-item reference evidence is outside the current project."
+                )
+            return
+        row = _fetch_one(
+            self._connection,
+            f"SELECT conversation_id FROM {table} WHERE id = ?",
+            (str(entity.native_id),),
+            "Validate owner reference scope",
+        )
+        if row is None or row["conversation_id"] != conversation_id:
+            raise LifecycleInvariantError(
+                "Topic/task reference evidence is outside the conversation."
+            )
+
+    def _validate_evidence(
+        self,
+        outcome: ReferenceOutcome,
+        context: sqlite3.Row,
+    ) -> None:
+        conversation_id = str(context["conversation_id"])
+        current_sequence = int(context["sequence_number"])
+        for evidence in outcome.candidate_evidence:
+            if evidence.entity_id is None:
+                continue
+            row = _fetch_one(
+                self._connection,
+                "SELECT * FROM entity_registry WHERE id = ?",
+                (str(evidence.entity_id),),
+                "Validate reference evidence entity",
+            )
+            if row is None:
+                raise LifecycleInvariantError(
+                    "Reference evidence entity does not exist."
+                )
+            stored = _map_row(row, _entity, "reference evidence entity")
+            if (
+                stored.entity_type is not evidence.entity_type
+                or stored.display_name != evidence.display_name
+                or stored.normalized_name != evidence.normalized_name
+                or stored.source_message_id != evidence.entity_source_message_id
+                or stored.is_active is not evidence.is_active
+            ):
+                raise LifecycleInvariantError(
+                    "Reference evidence must exactly match its stored entity snapshot."
+                )
+            self._validate_candidate_scope(
+                stored,
+                conversation_id=conversation_id,
+                project_id=context["project_id"],
+            )
+
+            if evidence.evidence_message_id is None:
+                continue
+            message = _fetch_one(
+                self._connection,
+                "SELECT conversation_id, original_text, sequence_number FROM messages WHERE id = ?",
+                (str(evidence.evidence_message_id),),
+                "Validate reference evidence message",
+            )
+            if message is None:
+                raise LifecycleInvariantError(
+                    "Reference evidence message does not exist."
+                )
+            if int(message["sequence_number"]) != evidence.evidence_message_sequence:
+                raise LifecycleInvariantError(
+                    "Reference evidence message sequence does not match storage."
+                )
+            if evidence.rank_reason is ReferenceRankReason.EXACT_NAME:
+                if evidence.evidence_message_id != outcome.message_id:
+                    raise LifecycleInvariantError(
+                        "Exact-name evidence must use the current message."
+                    )
+            else:
+                if (
+                    message["conversation_id"] != conversation_id
+                    or int(message["sequence_number"]) >= current_sequence
+                ):
+                    raise LifecycleInvariantError(
+                        "Prior reference evidence must precede the current message in its conversation."
+                    )
+            if evidence.rank_reason in {
+                ReferenceRankReason.EXACT_NAME,
+                ReferenceRankReason.SOURCE_MESSAGE,
+            } and not find_phrase_matches(
+                normalize_text(str(message["original_text"])),
+                stored.normalized_name,
+            ):
+                raise LifecycleInvariantError(
+                    "Reference name evidence must occur word-bounded in its evidence message."
+                )
+            if evidence.rank_reason is ReferenceRankReason.RECENT_TRACKED:
+                tracked = _fetch_one(
+                    self._connection,
+                    """
+                    SELECT id FROM reference_resolutions
+                    WHERE message_id = ? AND mention_ordinal = ?
+                      AND status = 'RESOLVED' AND resolved_entity_id = ?
+                    LIMIT 1
+                    """,
+                    (
+                        str(evidence.evidence_message_id),
+                        evidence.prior_mention_ordinal,
+                        str(stored.id),
+                    ),
+                    "Validate tracked reference evidence",
+                )
+                if tracked is None:
+                    raise LifecycleInvariantError(
+                        "Tracked reference evidence must link a prior RESOLVED outcome."
+                    )
+
+        if outcome.source_message_id is not None:
+            source = _fetch_one(
+                self._connection,
+                "SELECT id FROM messages WHERE id = ?",
+                (str(outcome.source_message_id),),
+                "Validate reference outcome source",
+            )
+            if source is None:
+                raise LifecycleInvariantError(
+                    "Reference outcome source message does not exist."
+                )
+
     def add_all(self, outcomes: tuple[ReferenceOutcome, ...]) -> None:
         frozen = tuple(outcomes)
+        self._validate_complete_tuple(frozen)
+        if not frozen:
+            return
         with self._write("Add reference resolutions"):
+            contexts = tuple(self._current_context(outcome) for outcome in frozen)
+            for outcome, context in zip(frozen, contexts, strict=True):
+                self._validate_evidence(outcome, context)
             for outcome in frozen:
-                run = _fetch_one(
-                    self._connection,
-                    "SELECT user_message_id FROM processing_runs WHERE id = ?",
-                    (str(outcome.processing_run_id),),
-                    "Validate reference resolution run",
-                )
-                if run is None or run["user_message_id"] != str(outcome.message_id):
-                    raise LifecycleInvariantError(
-                        "Reference outcome message must be the run user message."
-                    )
                 self._connection.execute(
                     """
                     INSERT INTO reference_resolutions (
@@ -1466,7 +1922,12 @@ class SQLiteReferenceResolutionRepository(_SQLiteRepository):
                         if outcome.source_message_id is None
                         else str(outcome.source_message_id),
                         float(outcome.confidence.value),
-                        _encode_json(outcome.candidate_evidence),
+                        _encode_json(
+                            tuple(
+                                item.to_json_object()
+                                for item in outcome.candidate_evidence
+                            )
+                        ),
                         format_utc_timestamp(outcome.created_at),
                     ),
                 )
@@ -1481,6 +1942,39 @@ class SQLiteReferenceResolutionRepository(_SQLiteRepository):
             ORDER BY mention_ordinal, id
             """,
             (str(processing_run_id),), _reference_outcome, "reference resolutions",
+        )
+
+    def list_resolved_for_messages(
+        self,
+        message_ids: tuple[DomainId, ...],
+    ) -> tuple[ReferenceOutcome, ...]:
+        frozen = tuple(message_ids)
+        if len(set(frozen)) != len(frozen):
+            raise LifecycleInvariantError(
+                "Resolved-reference message IDs must be distinct."
+            )
+        if not frozen:
+            return ()
+        placeholders = ", ".join("?" for _ in frozen)
+        outcomes = self._all(
+            f"""
+            SELECT * FROM reference_resolutions
+            WHERE status = 'RESOLVED' AND message_id IN ({placeholders})
+            """,
+            tuple(str(message_id) for message_id in frozen),
+            _reference_outcome,
+            "resolved references for messages",
+        )
+        order = {message_id: index for index, message_id in enumerate(frozen)}
+        return tuple(
+            sorted(
+                outcomes,
+                key=lambda outcome: (
+                    order[outcome.message_id],
+                    outcome.mention_ordinal,
+                    str(outcome.id),
+                ),
+            )
         )
 
 

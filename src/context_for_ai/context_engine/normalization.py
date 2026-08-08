@@ -95,6 +95,14 @@ def normalize_phrase(phrase: str) -> str:
     return normalize_text(phrase).text
 
 
+def normalize_display_label(label: str) -> str:
+    """Return a case-preserving NFC label with canonical whitespace."""
+
+    if not isinstance(label, str):
+        raise LifecycleInvariantError("Display-label normalization requires text.")
+    return " ".join(unicodedata.normalize("NFC", label).split())
+
+
 def _is_word_character(character: str) -> bool:
     return character.isalnum()
 
@@ -186,6 +194,7 @@ __all__ = [
     "PhraseMatch",
     "find_phrase_matches",
     "normalize_capture",
+    "normalize_display_label",
     "normalize_phrase",
     "normalize_text",
     "predicate_atom",

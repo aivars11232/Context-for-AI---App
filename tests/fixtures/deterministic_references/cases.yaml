@@ -1,0 +1,65 @@
+fixture_version: task-0008-deterministic-v1
+fixed:
+  conversation_id: 76000000-0000-4000-8000-000000000001
+  message_id: 76000000-0000-4000-8000-000000000002
+  processing_run_id: 76000000-0000-4000-8000-000000000003
+  evaluated_at: '2026-08-04T12:00:00Z'
+cases:
+  - id: exact-name
+    category: exact
+    message: update Architecture
+    entities:
+      - {type: NAMED_ITEM, name: Architecture, active: true}
+    mentions: 1
+    status: RESOLVED
+    confidence: '1.00'
+    reason: EXACT_NAME
+  - id: stale-name
+    category: stale
+    message: update Legacy Architecture
+    entities:
+      - {type: NAMED_ITEM, name: Legacy Architecture, active: false}
+    mentions: 1
+    status: UNRESOLVED
+    confidence: '0.00'
+    reason: STALE_ENTITY
+  - id: tied-app
+    category: tied
+    message: fix the app
+    entities:
+      - {type: PROJECT, name: App, active: true}
+      - {type: NAMED_ITEM, name: App, active: true}
+    mentions: 1
+    status: AMBIGUOUS
+    confidence: '1.00'
+    reason: EXACT_NAME
+  - id: missing-generic
+    category: missing
+    message: fix it
+    entities: []
+    mentions: 1
+    status: UNRESOLVED
+    confidence: '0.00'
+    reason: NO_CANDIDATE
+  - id: declaration-target
+    category: declaration
+    message: 'call this "Architecture"'
+    entities: []
+    mentions: 1
+    status: NOT_APPLICABLE
+    confidence: '1.00'
+    reason: DECLARATION_TARGET
+  - id: unsupported-file
+    category: file
+    message: open the file
+    entities: []
+    mentions: 1
+    status: UNRESOLVED
+    confidence: '0.00'
+    reason: FILE_CONTEXT_UNSUPPORTED
+  - id: unsupported-unlisted
+    category: unsupported
+    message: use those former files
+    entities: []
+    mentions: 0
+    outcomes: 0

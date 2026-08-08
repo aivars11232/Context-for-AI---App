@@ -87,6 +87,8 @@ def test_system_and_deterministic_bundles_cover_required_ports() -> None:
     }
     assert {field.name for field in fields(DeterministicComponents)} == {
         "interpretation_engine",
+        "reference_mention_extractor",
+        "reference_resolver",
         "constraint_engine",
         "clarification_builder",
         "context_retriever",
@@ -103,6 +105,10 @@ def test_composed_application_exposes_only_required_use_cases() -> None:
         "apply_conversation_state_transition",
         "transition_task_status",
         "archive_project",
+        "register_project",
+        "register_topic",
+        "register_task",
+        "register_named_item",
         "create_memory",
         "get_memory",
         "list_memories",

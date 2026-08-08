@@ -14,9 +14,11 @@ from context_for_ai.domain.enums import (
     ConstraintScope,
     ConstraintSourceKind,
     ConstraintType,
+    EntityType,
     IntentType,
     OutputType,
     QualifierKind,
+    ReferenceRankReason,
     ReferenceStatus,
     RetrievalExclusionReason,
 )
@@ -34,6 +36,53 @@ CONTEXT_PACKET_SCHEMA_VERSION = "mvp-context-packet-v1"
 
 _HARD_CONSTRAINT_TYPES = frozenset(
     {ConstraintType.REQUIRED, ConstraintType.FORBIDDEN, ConstraintType.PRESERVE}
+)
+_ENTITY_REFERENCE_REASONS = frozenset(
+    {
+        ReferenceRankReason.EXACT_NAME,
+        ReferenceRankReason.ACTIVE_STATE,
+        ReferenceRankReason.RECENT_TRACKED,
+        ReferenceRankReason.SOURCE_MESSAGE,
+        ReferenceRankReason.STALE_ENTITY,
+    }
+)
+_PLACEHOLDER_REFERENCE_REASONS = frozenset(
+    {
+        ReferenceRankReason.NO_CANDIDATE,
+        ReferenceRankReason.FILE_CONTEXT_UNSUPPORTED,
+        ReferenceRankReason.DECLARATION_TARGET,
+    }
+)
+_REFERENCE_REASON_ORDER = {
+    reason: index
+    for index, reason in enumerate(
+        (
+            ReferenceRankReason.EXACT_NAME,
+            ReferenceRankReason.ACTIVE_STATE,
+            ReferenceRankReason.RECENT_TRACKED,
+            ReferenceRankReason.SOURCE_MESSAGE,
+            ReferenceRankReason.STALE_ENTITY,
+            ReferenceRankReason.NO_CANDIDATE,
+            ReferenceRankReason.FILE_CONTEXT_UNSUPPORTED,
+            ReferenceRankReason.DECLARATION_TARGET,
+        )
+    )
+}
+_REFERENCE_EVIDENCE_KEYS = frozenset(
+    {
+        "rank",
+        "entity_id",
+        "entity_type",
+        "display_name",
+        "normalized_name",
+        "score",
+        "rank_reason",
+        "entity_source_message_id",
+        "evidence_message_id",
+        "evidence_message_sequence",
+        "prior_mention_ordinal",
+        "is_active",
+    }
 )
 
 
@@ -235,6 +284,251 @@ class Condition:
 
 
 @dataclass(frozen=True, slots=True)
+class ReferenceCandidateEvidence:
+    """One canonical ranked entity candidate or explicit placeholder."""
+
+    rank: int
+    entity_id: DomainId | None
+    entity_type: EntityType | None
+    display_name: str | None
+    normalized_name: str | None
+    score: UnitScore
+    rank_reason: ReferenceRankReason
+    entity_source_message_id: DomainId | None
+    evidence_message_id: DomainId | None
+    evidence_message_sequence: int | None
+    prior_mention_ordinal: int | None
+    is_active: bool | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.rank, int) or isinstance(self.rank, bool) or self.rank < 1:
+            raise LifecycleInvariantError(
+                "ReferenceCandidateEvidence.rank must be a one-based integer."
+            )
+        if self.evidence_message_sequence is not None:
+            _non_negative_integer(
+                "ReferenceCandidateEvidence.evidence_message_sequence",
+                self.evidence_message_sequence,
+            )
+        if self.prior_mention_ordinal is not None:
+            _non_negative_integer(
+                "ReferenceCandidateEvidence.prior_mention_ordinal",
+                self.prior_mention_ordinal,
+            )
+
+        if self.rank_reason in _PLACEHOLDER_REFERENCE_REASONS:
+            if any(
+                value is not None
+                for value in (
+                    self.entity_id,
+                    self.entity_type,
+                    self.display_name,
+                    self.normalized_name,
+                    self.entity_source_message_id,
+                    self.evidence_message_id,
+                    self.evidence_message_sequence,
+                    self.prior_mention_ordinal,
+                    self.is_active,
+                )
+            ) or self.score != UnitScore(0):
+                raise LifecycleInvariantError(
+                    "Placeholder reference evidence requires null candidate fields and score 0.00."
+                )
+            return
+
+        if self.rank_reason not in _ENTITY_REFERENCE_REASONS:
+            raise LifecycleInvariantError("Unknown reference evidence rank reason.")
+        if self.entity_id is None or self.entity_type is None:
+            raise LifecycleInvariantError(
+                "Entity reference evidence requires entity identity and type."
+            )
+        if self.display_name is None or self.normalized_name is None:
+            raise LifecycleInvariantError(
+                "Entity reference evidence requires display and normalized names."
+            )
+        _required_text("ReferenceCandidateEvidence.display_name", self.display_name)
+        _required_text("ReferenceCandidateEvidence.normalized_name", self.normalized_name)
+        if not isinstance(self.is_active, bool):
+            raise LifecycleInvariantError(
+                "Entity reference evidence requires a boolean active state."
+            )
+
+        expected_scores: dict[ReferenceRankReason, frozenset[UnitScore]] = {
+            ReferenceRankReason.EXACT_NAME: frozenset({UnitScore("1.00")}),
+            ReferenceRankReason.ACTIVE_STATE: frozenset({UnitScore("0.90")}),
+            ReferenceRankReason.RECENT_TRACKED: frozenset(
+                {UnitScore("0.80"), UnitScore("0.00")}
+            ),
+            ReferenceRankReason.SOURCE_MESSAGE: frozenset(
+                {UnitScore("0.60"), UnitScore("0.00")}
+            ),
+            ReferenceRankReason.STALE_ENTITY: frozenset({UnitScore("0.00")}),
+        }
+        if self.score not in expected_scores[self.rank_reason]:
+            raise LifecycleInvariantError(
+                "Reference evidence score does not match its canonical rank reason."
+            )
+
+        if self.rank_reason is ReferenceRankReason.STALE_ENTITY:
+            if self.is_active:
+                raise LifecycleInvariantError("Stale reference evidence must be inactive.")
+            if any(
+                value is not None
+                for value in (
+                    self.evidence_message_id,
+                    self.evidence_message_sequence,
+                    self.prior_mention_ordinal,
+                )
+            ):
+                raise LifecycleInvariantError(
+                    "Stale reference evidence cannot carry message-recency evidence."
+                )
+            return
+
+        if not self.is_active:
+            raise LifecycleInvariantError(
+                "Non-stale entity reference evidence must be active."
+            )
+        if self.rank_reason is ReferenceRankReason.EXACT_NAME:
+            if (
+                self.evidence_message_id is None
+                or self.evidence_message_sequence is None
+                or self.prior_mention_ordinal is not None
+            ):
+                raise LifecycleInvariantError(
+                    "Exact-name evidence requires the current message and sequence only."
+                )
+        elif self.rank_reason is ReferenceRankReason.ACTIVE_STATE:
+            if any(
+                value is not None
+                for value in (
+                    self.evidence_message_id,
+                    self.evidence_message_sequence,
+                    self.prior_mention_ordinal,
+                )
+            ):
+                raise LifecycleInvariantError(
+                    "Active-state evidence uses entity-source fallback, not message recency."
+                )
+        elif self.rank_reason is ReferenceRankReason.RECENT_TRACKED:
+            if (
+                self.evidence_message_id is None
+                or self.evidence_message_sequence is None
+                or self.prior_mention_ordinal is None
+            ):
+                raise LifecycleInvariantError(
+                    "Tracked evidence requires a prior message sequence and mention ordinal."
+                )
+        elif self.rank_reason is ReferenceRankReason.SOURCE_MESSAGE and (
+            self.evidence_message_id is None
+            or self.evidence_message_sequence is None
+            or self.prior_mention_ordinal is not None
+        ):
+            raise LifecycleInvariantError(
+                "Source-message evidence requires a prior message sequence only."
+            )
+
+    def to_json_object(self) -> FrozenJsonObject:
+        """Return the exact durable candidate-evidence object."""
+
+        return FrozenJsonObject(
+            {
+                "rank": self.rank,
+                "entity_id": None if self.entity_id is None else str(self.entity_id),
+                "entity_type": (
+                    None if self.entity_type is None else self.entity_type.value
+                ),
+                "display_name": self.display_name,
+                "normalized_name": self.normalized_name,
+                "score": float(self.score),
+                "rank_reason": self.rank_reason.value,
+                "entity_source_message_id": (
+                    None
+                    if self.entity_source_message_id is None
+                    else str(self.entity_source_message_id)
+                ),
+                "evidence_message_id": (
+                    None
+                    if self.evidence_message_id is None
+                    else str(self.evidence_message_id)
+                ),
+                "evidence_message_sequence": self.evidence_message_sequence,
+                "prior_mention_ordinal": self.prior_mention_ordinal,
+                "is_active": self.is_active,
+            }
+        )
+
+    @classmethod
+    def from_json_object(
+        cls,
+        value: FrozenJsonObject | Mapping[str, object],
+    ) -> ReferenceCandidateEvidence:
+        """Validate and hydrate the exact durable candidate-evidence object."""
+
+        if set(value) != _REFERENCE_EVIDENCE_KEYS:
+            raise LifecycleInvariantError(
+                "Reference candidate evidence must contain exactly the canonical keys."
+            )
+        return cls(
+            rank=value["rank"],  # type: ignore[arg-type]
+            entity_id=(
+                None
+                if value["entity_id"] is None
+                else DomainId(value["entity_id"])  # type: ignore[arg-type]
+            ),
+            entity_type=(
+                None
+                if value["entity_type"] is None
+                else EntityType(value["entity_type"])  # type: ignore[arg-type]
+            ),
+            display_name=value["display_name"],  # type: ignore[arg-type]
+            normalized_name=value["normalized_name"],  # type: ignore[arg-type]
+            score=UnitScore(value["score"]),  # type: ignore[arg-type]
+            rank_reason=ReferenceRankReason(value["rank_reason"]),  # type: ignore[arg-type]
+            entity_source_message_id=(
+                None
+                if value["entity_source_message_id"] is None
+                else DomainId(value["entity_source_message_id"])  # type: ignore[arg-type]
+            ),
+            evidence_message_id=(
+                None
+                if value["evidence_message_id"] is None
+                else DomainId(value["evidence_message_id"])  # type: ignore[arg-type]
+            ),
+            evidence_message_sequence=value["evidence_message_sequence"],  # type: ignore[arg-type]
+            prior_mention_ordinal=value["prior_mention_ordinal"],  # type: ignore[arg-type]
+            is_active=value["is_active"],  # type: ignore[arg-type]
+        )
+
+
+def reference_evidence_order_key(
+    evidence: ReferenceCandidateEvidence,
+) -> tuple[object, ...]:
+    """Return the canonical presentation key, excluding the stored rank."""
+
+    recency_sequence = (
+        evidence.evidence_message_sequence
+        if evidence.rank_reason
+        in {ReferenceRankReason.RECENT_TRACKED, ReferenceRankReason.SOURCE_MESSAGE}
+        else None
+    )
+    recency_ordinal = (
+        evidence.prior_mention_ordinal
+        if evidence.rank_reason is ReferenceRankReason.RECENT_TRACKED
+        else None
+    )
+    return (
+        -evidence.score.value,
+        _REFERENCE_REASON_ORDER[evidence.rank_reason],
+        -(recency_sequence if recency_sequence is not None else -1),
+        -(recency_ordinal if recency_ordinal is not None else -1),
+        evidence.normalized_name or "",
+        evidence.entity_type.value if evidence.entity_type is not None else "",
+        str(evidence.entity_id) if evidence.entity_id is not None else "",
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ReferenceOutcome:
     id: DomainId
     processing_run_id: DomainId
@@ -245,7 +539,7 @@ class ReferenceOutcome:
     resolved_entity_id: DomainId | None
     source_message_id: DomainId | None
     confidence: UnitScore
-    candidate_evidence: tuple[FrozenJsonObject, ...]
+    candidate_evidence: tuple[ReferenceCandidateEvidence, ...]
     created_at: datetime
 
     def __post_init__(self) -> None:
@@ -257,12 +551,192 @@ class ReferenceOutcome:
             raise LifecycleInvariantError(
                 "Only a resolved reference may have resolved_entity_id."
             )
-        object.__setattr__(
-            self,
-            "candidate_evidence",
-            _freeze_json_objects(self.candidate_evidence),
+
+        evidence = tuple(self.candidate_evidence)
+        if not evidence or any(
+            not isinstance(item, ReferenceCandidateEvidence) for item in evidence
+        ):
+            raise LifecycleInvariantError(
+                "ReferenceOutcome requires non-empty typed candidate evidence."
+            )
+        if [item.rank for item in evidence] != list(range(1, len(evidence) + 1)):
+            raise LifecycleInvariantError(
+                "Reference candidate evidence ranks must be one-based and contiguous."
+            )
+        if tuple(sorted(evidence, key=reference_evidence_order_key)) != evidence:
+            raise LifecycleInvariantError(
+                "Reference candidate evidence must use canonical presentation order."
+            )
+        entity_ids = tuple(
+            item.entity_id for item in evidence if item.entity_id is not None
         )
+        if len(set(entity_ids)) != len(entity_ids):
+            raise LifecycleInvariantError(
+                "Reference candidate evidence may contain each entity only once."
+            )
+        placeholders = tuple(
+            item
+            for item in evidence
+            if item.rank_reason in _PLACEHOLDER_REFERENCE_REASONS
+        )
+        if placeholders and (len(evidence) != 1 or len(placeholders) != 1):
+            raise LifecycleInvariantError(
+                "Placeholder reference evidence must be the sole evidence item."
+            )
+
+        positive = tuple(item for item in evidence if item.score > UnitScore(0))
+        highest_score = positive[0].score if positive else UnitScore(0)
+        top = tuple(item for item in positive if item.score == highest_score)
+
+        if self.status is ReferenceStatus.RESOLVED:
+            if (
+                len(top) != 1
+                or highest_score < UnitScore("0.80")
+                or top[0].entity_id != self.resolved_entity_id
+            ):
+                raise LifecycleInvariantError(
+                    "Resolved reference requires one matching top candidate at or above 0.80."
+                )
+            expected_source = (
+                top[0].evidence_message_id or top[0].entity_source_message_id
+            )
+            if self.confidence != highest_score or self.source_message_id != expected_source:
+                raise LifecycleInvariantError(
+                    "Resolved reference confidence/source must match its winning evidence."
+                )
+        elif self.status is ReferenceStatus.AMBIGUOUS:
+            if len(top) < 2 or highest_score == UnitScore(0):
+                raise LifecycleInvariantError(
+                    "Ambiguous reference requires at least two positive top candidates."
+                )
+            if self.confidence != highest_score or self.source_message_id is not None:
+                raise LifecycleInvariantError(
+                    "Ambiguous reference requires shared top confidence and null source."
+                )
+        elif self.status is ReferenceStatus.UNRESOLVED:
+            if placeholders:
+                if placeholders[0].rank_reason not in {
+                    ReferenceRankReason.NO_CANDIDATE,
+                    ReferenceRankReason.FILE_CONTEXT_UNSUPPORTED,
+                }:
+                    raise LifecycleInvariantError(
+                        "Declaration-target evidence requires NOT_APPLICABLE status."
+                    )
+                expected_confidence = UnitScore(0)
+                expected_source = None
+            elif not positive:
+                expected_confidence = UnitScore(0)
+                expected_source = None
+            else:
+                if len(top) != 1 or highest_score >= UnitScore("0.80"):
+                    raise LifecycleInvariantError(
+                        "Unresolved positive evidence requires one top candidate below 0.80."
+                    )
+                expected_confidence = highest_score
+                expected_source = (
+                    top[0].evidence_message_id or top[0].entity_source_message_id
+                )
+            if (
+                self.confidence != expected_confidence
+                or self.source_message_id != expected_source
+            ):
+                raise LifecycleInvariantError(
+                    "Unresolved reference confidence/source must match its evidence."
+                )
+        else:
+            if (
+                len(placeholders) != 1
+                or placeholders[0].rank_reason
+                is not ReferenceRankReason.DECLARATION_TARGET
+                or self.confidence != UnitScore(1)
+                or self.source_message_id != self.message_id
+            ):
+                raise LifecycleInvariantError(
+                    "NOT_APPLICABLE requires declaration-target evidence and current-message source."
+                )
+
+        object.__setattr__(self, "candidate_evidence", evidence)
         _normalize_time(self, "created_at")
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceDecision:
+    """Complete immutable result of deterministic reference resolution."""
+
+    outcomes: tuple[ReferenceOutcome, ...]
+    clarification_reason: ClarificationReason | None
+    clarification_details: FrozenJsonObject | None
+    blocks_generation: bool
+
+    def __post_init__(self) -> None:
+        outcomes = tuple(self.outcomes)
+        object.__setattr__(self, "outcomes", outcomes)
+        if not isinstance(self.blocks_generation, bool):
+            raise LifecycleInvariantError(
+                "ReferenceDecision.blocks_generation must be boolean."
+            )
+        if [outcome.mention_ordinal for outcome in outcomes] != list(
+            range(len(outcomes))
+        ):
+            raise LifecycleInvariantError(
+                "ReferenceDecision outcomes require contiguous source-order ordinals."
+            )
+        if len({outcome.id for outcome in outcomes}) != len(outcomes):
+            raise LifecycleInvariantError(
+                "ReferenceDecision outcome IDs must be distinct."
+            )
+        if outcomes and (
+            len({outcome.processing_run_id for outcome in outcomes}) != 1
+            or len({outcome.message_id for outcome in outcomes}) != 1
+        ):
+            raise LifecycleInvariantError(
+                "ReferenceDecision outcomes must share one run and current message."
+            )
+
+        blocking = next(
+            (
+                outcome
+                for outcome in outcomes
+                if outcome.status
+                in {ReferenceStatus.AMBIGUOUS, ReferenceStatus.UNRESOLVED}
+            ),
+            None,
+        )
+        expected_reason = (
+            None
+            if blocking is None
+            else (
+                ClarificationReason.AMBIGUOUS_REFERENCE
+                if blocking.status is ReferenceStatus.AMBIGUOUS
+                else ClarificationReason.UNRESOLVED_REFERENCE
+            )
+        )
+        if self.blocks_generation is not (blocking is not None):
+            raise LifecycleInvariantError(
+                "ReferenceDecision blocking flag must match its material outcomes."
+            )
+        if (self.clarification_reason is None) != (
+            self.clarification_details is None
+        ):
+            raise LifecycleInvariantError(
+                "Reference clarification reason and details must be supplied together."
+            )
+        if self.clarification_reason is not expected_reason:
+            raise LifecycleInvariantError(
+                "Reference clarification reason must match the earliest blocking outcome."
+            )
+        if blocking is None:
+            return
+
+        details = _freeze_json_object(self.clarification_details)  # type: ignore[arg-type]
+        if (
+            details.get("mention_ordinal") != blocking.mention_ordinal
+            or details.get("surface_text") != blocking.surface_text
+        ):
+            raise LifecycleInvariantError(
+                "Reference clarification details must identify the earliest blocking mention."
+            )
+        object.__setattr__(self, "clarification_details", details)
 
 
 @dataclass(frozen=True, slots=True)

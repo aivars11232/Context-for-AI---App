@@ -12,9 +12,13 @@ from context_for_ai.domain.entities import (
     Conversation,
     ConversationState,
     ConversationTask,
+    Entity,
+    NamedItem,
     Project,
+    Topic,
 )
 from context_for_ai.domain.enums import (
+    EntityType,
     EvaluationProviderMode,
     IntentType,
     MemoryScope,
@@ -389,6 +393,133 @@ class ArchiveProjectOutput:
 
 
 @dataclass(frozen=True, slots=True)
+class RegisterProjectInput:
+    """Explicit inputs for one project owner/registry creation."""
+
+    name: str
+    description: str | None
+    source_message_id: DomainId | None
+
+    def __post_init__(self) -> None:
+        _required_text("RegisterProjectInput.name", self.name)
+        if self.description is not None and not isinstance(self.description, str):
+            raise LifecycleInvariantError(
+                "RegisterProjectInput.description must be text or null."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class RegisterProjectOutput:
+    project: Project
+    entity: Entity
+
+    def __post_init__(self) -> None:
+        if (
+            self.entity.entity_type is not EntityType.PROJECT
+            or self.entity.native_id != self.project.id
+            or self.entity.project_id != self.project.id
+        ):
+            raise LifecycleInvariantError(
+                "Registered project output requires its canonical registry identity."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class RegisterTopicInput:
+    """Explicit inputs for one conversation topic/registry creation."""
+
+    conversation_id: DomainId
+    label: str
+    source_message_id: DomainId | None
+
+    def __post_init__(self) -> None:
+        _required_text("RegisterTopicInput.label", self.label)
+
+
+@dataclass(frozen=True, slots=True)
+class RegisterTopicOutput:
+    topic: Topic
+    entity: Entity
+
+    def __post_init__(self) -> None:
+        if (
+            self.entity.entity_type is not EntityType.TOPIC
+            or self.entity.native_id != self.topic.id
+        ):
+            raise LifecycleInvariantError(
+                "Registered topic output requires its canonical registry identity."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class RegisterTaskInput:
+    """Explicit inputs for one OPEN conversation task/registry creation."""
+
+    conversation_id: DomainId
+    topic_id: DomainId | None
+    title: str
+    source_message_id: DomainId | None
+
+    def __post_init__(self) -> None:
+        _required_text("RegisterTaskInput.title", self.title)
+
+
+@dataclass(frozen=True, slots=True)
+class RegisterTaskOutput:
+    task: ConversationTask
+    entity: Entity
+
+    def __post_init__(self) -> None:
+        if (
+            self.entity.entity_type is not EntityType.TASK
+            or self.entity.native_id != self.task.id
+        ):
+            raise LifecycleInvariantError(
+                "Registered task output requires its canonical registry identity."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class RegisterNamedItemInput:
+    """Exactly one declaration-message or explicit-UI named-item operation."""
+
+    conversation_id: DomainId
+    declaration_message_id: DomainId | None
+    explicit_ui_label: str | None
+    selected_project_id: DomainId | None
+
+    def __post_init__(self) -> None:
+        if self.declaration_message_id is not None:
+            if self.explicit_ui_label is not None or self.selected_project_id is not None:
+                raise LifecycleInvariantError(
+                    "Declaration named-item mode cannot include UI label/project inputs."
+                )
+            return
+        if self.explicit_ui_label is None:
+            raise LifecycleInvariantError(
+                "UI named-item mode requires an explicit label and project selection."
+            )
+        _required_text("RegisterNamedItemInput.explicit_ui_label", self.explicit_ui_label)
+
+
+@dataclass(frozen=True, slots=True)
+class RegisterNamedItemOutput:
+    named_item: NamedItem
+    entity: Entity
+
+    def __post_init__(self) -> None:
+        if (
+            self.entity.entity_type is not EntityType.NAMED_ITEM
+            or self.entity.native_id != self.named_item.id
+            or self.entity.project_id != self.named_item.project_id
+            or self.entity.source_message_id != self.named_item.source_message_id
+        ):
+            raise LifecycleInvariantError(
+                "Registered named-item output requires matching owner/registry identity."
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class CreateMemoryInput:
     """User-supplied data for one explicit manual memory creation."""
 
@@ -593,6 +724,33 @@ class ArchiveProject(Protocol):
     """Archive one active project under the canonical run guard."""
 
     def execute(self, request: ArchiveProjectInput) -> ArchiveProjectOutput: ...
+
+
+class RegisterProject(Protocol):
+    """Atomically create one project and its canonical registry row."""
+
+    def execute(self, request: RegisterProjectInput) -> RegisterProjectOutput: ...
+
+
+class RegisterTopic(Protocol):
+    """Atomically create one topic and its canonical registry row."""
+
+    def execute(self, request: RegisterTopicInput) -> RegisterTopicOutput: ...
+
+
+class RegisterTask(Protocol):
+    """Atomically create one task and its canonical registry row."""
+
+    def execute(self, request: RegisterTaskInput) -> RegisterTaskOutput: ...
+
+
+class RegisterNamedItem(Protocol):
+    """Atomically create one explicit named item and its registry row."""
+
+    def execute(
+        self,
+        request: RegisterNamedItemInput,
+    ) -> RegisterNamedItemOutput: ...
 
 
 class CreateMemory(Protocol):

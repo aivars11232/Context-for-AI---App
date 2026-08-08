@@ -50,6 +50,20 @@ from context_for_ai.application import (
     TransitionTaskStatusInput,
     TransitionTaskStatusOutput,
 )
+from context_for_ai.application.contracts import (
+    RegisterNamedItem,
+    RegisterNamedItemInput,
+    RegisterNamedItemOutput,
+    RegisterProject,
+    RegisterProjectInput,
+    RegisterProjectOutput,
+    RegisterTask,
+    RegisterTaskInput,
+    RegisterTaskOutput,
+    RegisterTopic,
+    RegisterTopicInput,
+    RegisterTopicOutput,
+)
 from context_for_ai.domain.enums import IntentType, OutputType, ProcessingRunStatus
 from context_for_ai.domain.errors import BusyError, LifecycleInvariantError
 from context_for_ai.domain.value_objects import DomainId, UnitScore
@@ -65,6 +79,10 @@ USE_CASE_SIGNATURES = {
     ),
     TransitionTaskStatus: (TransitionTaskStatusInput, TransitionTaskStatusOutput),
     ArchiveProject: (ArchiveProjectInput, ArchiveProjectOutput),
+    RegisterProject: (RegisterProjectInput, RegisterProjectOutput),
+    RegisterTopic: (RegisterTopicInput, RegisterTopicOutput),
+    RegisterTask: (RegisterTaskInput, RegisterTaskOutput),
+    RegisterNamedItem: (RegisterNamedItemInput, RegisterNamedItemOutput),
     CreateMemory: (CreateMemoryInput, MemoryOutput),
     GetMemory: (GetMemoryInput, MemoryOutput),
     ListMemories: (ListMemoriesInput, MemoryListOutput),
@@ -152,3 +170,19 @@ def test_prepared_control_transition_rejects_topic_or_task_proposals() -> None:
                 UnitScore("0.8"),
             ),
         )
+
+
+def test_named_item_registration_modes_are_exactly_declaration_or_explicit_ui() -> None:
+    declaration = RegisterNamedItemInput(_id(1), _id(2), None, None)
+    unscoped_ui = RegisterNamedItemInput(_id(1), None, " Architecture ", None)
+    project_ui = RegisterNamedItemInput(_id(1), None, "Architecture", _id(3))
+
+    assert declaration.declaration_message_id == _id(2)
+    assert unscoped_ui.selected_project_id is None
+    assert project_ui.selected_project_id == _id(3)
+    with pytest.raises(LifecycleInvariantError, match="requires an explicit label"):
+        RegisterNamedItemInput(_id(1), None, None, None)
+    with pytest.raises(LifecycleInvariantError, match="cannot include UI"):
+        RegisterNamedItemInput(_id(1), _id(2), "Architecture", None)
+    with pytest.raises(LifecycleInvariantError, match="cannot include UI"):
+        RegisterNamedItemInput(_id(1), _id(2), None, _id(3))
