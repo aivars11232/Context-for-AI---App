@@ -79,6 +79,7 @@ from context_for_ai.domain.lifecycle import (
     SafeFailure,
     ValidationResult,
 )
+from context_for_ai.domain.policies import memory_revision_metadata
 from context_for_ai.domain.ports import (
     ClarificationRepository,
     ConstraintRepository,
@@ -266,7 +267,7 @@ def add_memory(
         1,
         MemoryRevisionOperation.CREATE,
         memory.content,
-        FrozenJsonObject({"source": "manual", "nested": {"unicode": "☕"}}),
+        memory_revision_metadata(memory, source.id),
         LocalActor.LOCAL_USER,
         stamp(created_second),
     )
@@ -741,9 +742,17 @@ def test_decision_memory_and_packet_aggregates_round_trip_exactly(
         identifier(131),
         packet.id,
         selected_memory.id,
-        7,
+        0,
         UnitScore("0.75"),
-        ("project_match", "keyword:café"),
+        (
+            "project_match=1",
+            "topic_match=1",
+            "keyword_jaccard=0.2",
+            "recency=1",
+            "importance=0.7",
+            "scope_match=0.8",
+            "correction_match=0",
+        ),
         stamp(14),
     )
     exclusion = RetrievalExclusion(
@@ -779,7 +788,7 @@ def test_decision_memory_and_packet_aggregates_round_trip_exactly(
         2,
         MemoryRevisionOperation.EDIT,
         edited.content,
-        FrozenJsonObject({"reason": "precision"}),
+        memory_revision_metadata(edited, edit_source.id),
         LocalActor.LOCAL_USER,
         stamp(15),
     )
@@ -804,7 +813,7 @@ def test_decision_memory_and_packet_aggregates_round_trip_exactly(
         3,
         MemoryRevisionOperation.SOFT_DELETE,
         deleted.content,
-        FrozenJsonObject({"retained": True}),
+        memory_revision_metadata(deleted, delete_source.id),
         LocalActor.LOCAL_USER,
         stamp(16),
     )
@@ -829,10 +838,7 @@ def test_decision_memory_and_packet_aggregates_round_trip_exactly(
     assert bundle.memories.list_by_status(MemoryStatus.DELETED) == (stored,)
     candidate_ids = {
         record.memory.id
-        for record in bundle.memories.list_retrieval_candidates(
-            conversation_id=core.conversation.id,
-            project_id=core.project.id,
-        )
+        for record in bundle.memories.list_retrieval_candidates()
     }
     assert candidate_ids == {deleted.id, duplicate_memory.id}
 
@@ -1249,27 +1255,38 @@ def test_transactions_idempotency_foreign_keys_and_typed_failures(
         stamp(11),
         None,
     )
-    orphan_source = MemorySource(
+    existing_memory, _, existing_revision = add_memory(
+        bundle,
+        core,
+        number=80,
+        content="Existing aggregate used to force a late revision failure.",
+    )
+    atomic_source = MemorySource(
         identifier(73),
         atomic_memory.id,
-        MemorySourceKind.USER_MESSAGE,
-        identifier(998),
-        "Missing source message",
+        MemorySourceKind.MANUAL_ENTRY,
+        None,
+        "Valid source that must roll back",
         stamp(11),
     )
     atomic_revision = MemoryRevision(
-        identifier(74),
+        existing_revision.id,
         atomic_memory.id,
         1,
         MemoryRevisionOperation.CREATE,
         atomic_memory.content,
-        FrozenJsonObject({}),
+        memory_revision_metadata(atomic_memory, atomic_source.id),
         LocalActor.LOCAL_USER,
         stamp(11),
     )
     with pytest.raises(PersistenceError):
-        bundle.memories.add(atomic_memory, orphan_source, atomic_revision)
+        bundle.memories.add(atomic_memory, atomic_source, atomic_revision)
     assert bundle.memories.get(atomic_memory.id) is None
+    assert bundle.memories.get(existing_memory.id) is not None
+    assert connection.execute(
+        "SELECT count(*) FROM memory_sources WHERE id = ?",
+        (str(atomic_source.id),),
+    ).fetchone()[0] == 0
 
 
 def test_invalid_stored_rows_are_never_exposed_as_sqlite_rows(

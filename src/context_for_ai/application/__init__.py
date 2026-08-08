@@ -74,6 +74,13 @@ from context_for_ai.application.entity_registry import (
     RegisterTaskService,
     RegisterTopicService,
 )
+from context_for_ai.application.memory import (
+    CreateMemoryService,
+    EditMemoryService,
+    GetMemoryService,
+    ListMemoriesService,
+    SoftDeleteMemoryService,
+)
 
 
 __all__ = [
@@ -91,10 +98,13 @@ __all__ = [
     "ContextConstructionError",
     "CreateMemory",
     "CreateMemoryInput",
+    "CreateMemoryService",
     "EditMemory",
     "EditMemoryInput",
+    "EditMemoryService",
     "GetMemory",
     "GetMemoryInput",
+    "GetMemoryService",
     "InspectContext",
     "InspectContextInput",
     "InspectContextOutput",
@@ -103,6 +113,7 @@ __all__ = [
     "InspectValidationOutput",
     "ListMemories",
     "ListMemoriesInput",
+    "ListMemoriesService",
     "MemoryListOutput",
     "MemoryOutput",
     "ProcessResultKind",
@@ -137,6 +148,7 @@ __all__ = [
     "SelectProjectService",
     "SoftDeleteMemory",
     "SoftDeleteMemoryInput",
+    "SoftDeleteMemoryService",
     "TransitionTaskStatus",
     "TransitionTaskStatusInput",
     "TransitionTaskStatusOutput",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -10,10 +11,13 @@ from context_for_ai.domain.entities import (
     ConversationState,
     ConversationTask,
     Memory,
+    MemoryRevision,
     MemorySource,
 )
 from context_for_ai.domain.enums import (
+    LocalActor,
     MemoryEffectiveStatus,
+    MemoryRevisionOperation,
     MemoryScope,
     MemorySourceKind,
     MemoryStatus,
@@ -28,13 +32,16 @@ from context_for_ai.domain.errors import (
     LifecycleInvariantError,
 )
 from context_for_ai.domain.policies import (
+    MEMORY_REVISION_SCHEMA_VERSION,
     ConfidenceBand,
     PriorityBand,
     confidence_band,
+    memory_revision_metadata,
     memory_effective_status,
     overall_confidence,
     require_active_task_consistency,
     require_memory_provenance,
+    require_memory_history,
     require_model_request_transition,
     require_priority_band,
     require_processing_run_transition,
@@ -42,7 +49,7 @@ from context_for_ai.domain.policies import (
     require_task_transition,
     requires_confidence_clarification,
 )
-from context_for_ai.domain.value_objects import DomainId, UnitScore
+from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, UnitScore
 
 
 NOW = datetime(2026, 8, 2, 10, 0, tzinfo=timezone.utc)
@@ -70,6 +77,109 @@ def memory(*, status: MemoryStatus = MemoryStatus.ACTIVE, expires_at: datetime |
         NOW - timedelta(days=1),
         NOW,
         deleted_at,
+    )
+
+
+def manual_history() -> tuple[
+    Memory,
+    tuple[MemorySource, ...],
+    tuple[MemoryRevision, ...],
+]:
+    created = Memory(
+        identifier(50),
+        identifier(1),
+        None,
+        MemoryType.PROJECT_FACT,
+        MemoryScope.CONVERSATION,
+        MemoryStatus.ACTIVE,
+        "First snapshot",
+        ("Fact", ""),
+        ("Topic",),
+        UnitScore("0.5000"),
+        UnitScore("1.0"),
+        None,
+        NOW,
+        NOW,
+        None,
+    )
+    create_source = MemorySource(
+        identifier(51),
+        created.id,
+        MemorySourceKind.MANUAL_ENTRY,
+        None,
+        "Created manually",
+        NOW,
+    )
+    create_revision = MemoryRevision(
+        identifier(61),
+        created.id,
+        1,
+        MemoryRevisionOperation.CREATE,
+        created.content,
+        memory_revision_metadata(created, create_source.id),
+        LocalActor.LOCAL_USER,
+        NOW,
+    )
+
+    edit_time = NOW + timedelta(hours=1)
+    edited = replace(
+        created,
+        content="Edited snapshot",
+        keywords=("Fact", "exact"),
+        topic_terms=("Topic", "SQLite"),
+        importance=UnitScore("0.75"),
+        confidence=UnitScore("0.90"),
+        expires_at=NOW + timedelta(days=30),
+        updated_at=edit_time,
+    )
+    edit_source = MemorySource(
+        identifier(52),
+        edited.id,
+        MemorySourceKind.USER_EDIT,
+        None,
+        "Edited manually",
+        edit_time,
+    )
+    edit_revision = MemoryRevision(
+        identifier(62),
+        edited.id,
+        2,
+        MemoryRevisionOperation.EDIT,
+        edited.content,
+        memory_revision_metadata(edited, edit_source.id),
+        LocalActor.LOCAL_USER,
+        edit_time,
+    )
+
+    delete_time = NOW + timedelta(hours=2)
+    deleted = replace(
+        edited,
+        status=MemoryStatus.DELETED,
+        updated_at=delete_time,
+        deleted_at=delete_time,
+    )
+    delete_source = MemorySource(
+        identifier(53),
+        deleted.id,
+        MemorySourceKind.USER_EDIT,
+        None,
+        "Soft-deleted manually",
+        delete_time,
+    )
+    delete_revision = MemoryRevision(
+        identifier(63),
+        deleted.id,
+        3,
+        MemoryRevisionOperation.SOFT_DELETE,
+        deleted.content,
+        memory_revision_metadata(deleted, delete_source.id),
+        LocalActor.LOCAL_USER,
+        delete_time,
+    )
+    return (
+        deleted,
+        (create_source, edit_source, delete_source),
+        (create_revision, edit_revision, delete_revision),
     )
 
 
@@ -346,4 +456,152 @@ def test_memory_provenance_and_effective_status_do_not_mutate_memory() -> None:
                     NOW,
                 ),
             ),
+        )
+
+
+def test_memory_revision_metadata_and_history_are_complete_and_canonical() -> None:
+    current, sources, revisions = manual_history()
+
+    require_memory_history(current, sources, revisions)
+
+    create_metadata = revisions[0].metadata
+    assert set(create_metadata) == {
+        "schema_version",
+        "source_id",
+        "memory_type",
+        "scope",
+        "conversation_id",
+        "project_id",
+        "status",
+        "keywords",
+        "topic_terms",
+        "importance",
+        "confidence",
+        "expires_at",
+        "memory_created_at",
+        "updated_at",
+        "deleted_at",
+    }
+    assert create_metadata["schema_version"] == MEMORY_REVISION_SCHEMA_VERSION
+    assert create_metadata["importance"] == "0.5"
+    assert create_metadata["confidence"] == "1"
+    assert create_metadata["updated_at"] == "2026-08-02T10:00:00Z"
+    assert revisions[-1].metadata["status"] == MemoryStatus.DELETED.value
+    assert revisions[-1].metadata["deleted_at"] == "2026-08-02T12:00:00Z"
+
+
+def test_memory_history_rejects_noncanonical_metadata_and_revision_gaps() -> None:
+    current, sources, revisions = manual_history()
+    create_metadata = {
+        key: revisions[0].metadata[key]
+        for key in revisions[0].metadata
+    }
+    create_metadata["extra"] = "not allowed"
+
+    with pytest.raises(LifecycleInvariantError, match="exactly"):
+        require_memory_history(
+            current,
+            sources,
+            (replace(revisions[0], metadata=FrozenJsonObject(create_metadata)), *revisions[1:]),
+        )
+    with pytest.raises(LifecycleInvariantError, match="consecutive"):
+        require_memory_history(
+            current,
+            sources,
+            (revisions[0], replace(revisions[1], revision_number=3), revisions[2]),
+        )
+
+
+def test_memory_history_rejects_immutable_changes_and_delete_content_changes() -> None:
+    current, sources, revisions = manual_history()
+    altered_edit = replace(
+        current,
+        memory_type=MemoryType.USER_PREFERENCE,
+        status=MemoryStatus.ACTIVE,
+        updated_at=revisions[1].created_at,
+        deleted_at=None,
+    )
+    immutable_revision = replace(
+        revisions[1],
+        metadata=memory_revision_metadata(altered_edit, sources[1].id),
+    )
+
+    with pytest.raises(LifecycleInvariantError, match="immutable"):
+        require_memory_history(
+            current,
+            sources,
+            (revisions[0], immutable_revision, revisions[2]),
+        )
+
+    changed_delete = replace(current, content="Changed while deleting")
+    changed_delete_revision = replace(
+        revisions[2],
+        content_snapshot=changed_delete.content,
+        metadata=memory_revision_metadata(changed_delete, sources[2].id),
+    )
+    with pytest.raises(LifecycleInvariantError, match="preserve"):
+        require_memory_history(
+            changed_delete,
+            sources,
+            (revisions[0], revisions[1], changed_delete_revision),
+        )
+
+
+def test_memory_history_rejects_reused_sources_final_mismatch_and_post_delete_edit() -> None:
+    current, sources, revisions = manual_history()
+    edited_snapshot = replace(
+        current,
+        status=MemoryStatus.ACTIVE,
+        updated_at=revisions[1].created_at,
+        deleted_at=None,
+    )
+    reused_source_revision = replace(
+        revisions[1],
+        metadata=memory_revision_metadata(edited_snapshot, sources[0].id),
+    )
+    with pytest.raises(LifecycleInvariantError, match="distinct"):
+        require_memory_history(
+            current,
+            sources,
+            (revisions[0], reused_source_revision, revisions[2]),
+        )
+
+    mismatched_current = replace(edited_snapshot, content="Not the final snapshot")
+    with pytest.raises(LifecycleInvariantError, match="final"):
+        require_memory_history(
+            mismatched_current,
+            sources[:2],
+            revisions[:2],
+        )
+
+    restore_time = NOW + timedelta(hours=3)
+    restored = replace(
+        current,
+        status=MemoryStatus.ACTIVE,
+        updated_at=restore_time,
+        deleted_at=None,
+    )
+    restore_source = MemorySource(
+        identifier(54),
+        restored.id,
+        MemorySourceKind.USER_EDIT,
+        None,
+        "Forbidden restore",
+        restore_time,
+    )
+    restore_revision = MemoryRevision(
+        identifier(64),
+        restored.id,
+        4,
+        MemoryRevisionOperation.EDIT,
+        restored.content,
+        memory_revision_metadata(restored, restore_source.id),
+        LocalActor.LOCAL_USER,
+        restore_time,
+    )
+    with pytest.raises(LifecycleInvariantError, match="follow SOFT_DELETE"):
+        require_memory_history(
+            restored,
+            (*sources, restore_source),
+            (*revisions, restore_revision),
         )

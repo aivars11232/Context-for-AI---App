@@ -182,9 +182,9 @@ class MemoryRepository(Protocol):
 
     def list_by_status(self, status: MemoryStatus) -> tuple[MemoryRecord, ...]: ...
 
-    def list_retrieval_candidates(
-        self, *, conversation_id: DomainId, project_id: DomainId | None
-    ) -> tuple[MemoryRecord, ...]: ...
+    def list_retrieval_candidates(self) -> tuple[MemoryRecord, ...]:
+        """Return the complete considered set; the retriever owns eligibility."""
+        ...
 
     def update_with_revision(
         self,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from context_for_ai.domain.enums import (
     ConditionEvaluation,
@@ -16,18 +17,23 @@ from context_for_ai.domain.enums import (
     ConstraintType,
     EntityType,
     IntentType,
+    MemoryScope,
+    MemoryStatus,
     OutputType,
     QualifierKind,
     ReferenceRankReason,
     ReferenceStatus,
     RetrievalExclusionReason,
 )
-from context_for_ai.domain.errors import LifecycleInvariantError
+from context_for_ai.domain.errors import DomainValidationError, LifecycleInvariantError
 from context_for_ai.domain.value_objects import (
     DomainId,
     FrozenJsonObject,
     UnitScore,
+    canonical_decimal_string,
     ensure_utc,
+    format_utc_timestamp,
+    parse_utc_timestamp,
 )
 
 
@@ -84,6 +90,37 @@ _REFERENCE_EVIDENCE_KEYS = frozenset(
         "is_active",
     }
 )
+_RETRIEVAL_REASON_NAMES = (
+    "project_match",
+    "topic_match",
+    "keyword_jaccard",
+    "recency",
+    "importance",
+    "scope_match",
+    "correction_match",
+)
+_RETRIEVAL_EXCLUSION_DETAIL_KEYS = {
+    RetrievalExclusionReason.SCOPE_MISMATCH: frozenset(
+        {
+            "scope",
+            "request_conversation_id",
+            "request_project_id",
+            "memory_conversation_id",
+            "memory_project_id",
+        }
+    ),
+    RetrievalExclusionReason.DELETED: frozenset({"stored_status", "deleted_at"}),
+    RetrievalExclusionReason.EXPIRED: frozenset(
+        {"stored_status", "expires_at", "evaluated_at"}
+    ),
+    RetrievalExclusionReason.SCORE_BELOW_THRESHOLD: frozenset(
+        {"minimum_relevance_score"}
+    ),
+    RetrievalExclusionReason.DUPLICATE_CONTENT: frozenset({"retained_memory_id"}),
+    RetrievalExclusionReason.LIMIT_EXCEEDED: frozenset(
+        {"result_limit", "pre_limit_rank"}
+    ),
+}
 
 
 def _required_text(field_name: str, value: str) -> None:
@@ -98,6 +135,79 @@ def _normalize_time(instance: object, field_name: str) -> None:
 def _non_negative_integer(field_name: str, value: int) -> None:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise LifecycleInvariantError(f"{field_name} must be a non-negative integer.")
+
+
+def _canonical_unit_score_text(field_name: str, value: object) -> UnitScore:
+    if not isinstance(value, str):
+        raise LifecycleInvariantError(f"{field_name} must be a canonical decimal string.")
+    try:
+        parsed = Decimal(value)
+        score = UnitScore(parsed)
+        canonical = canonical_decimal_string(parsed)
+    except (DomainValidationError, InvalidOperation, ValueError) as error:
+        raise LifecycleInvariantError(
+            f"{field_name} must be a canonical unit decimal string."
+        ) from error
+    if canonical != value:
+        raise LifecycleInvariantError(
+            f"{field_name} must use canonical fixed-point decimal notation."
+        )
+    return score
+
+
+def _canonical_detail_id(
+    details: FrozenJsonObject,
+    key: str,
+    *,
+    optional: bool = False,
+) -> DomainId | None:
+    value = details[key]
+    if optional and value is None:
+        return None
+    if not isinstance(value, str):
+        raise LifecycleInvariantError(
+            f"Retrieval exclusion detail {key!r} must be a canonical UUID string"
+            f"{' or null' if optional else ''}."
+        )
+    try:
+        identifier = DomainId(value)
+    except DomainValidationError as error:
+        raise LifecycleInvariantError(
+            f"Retrieval exclusion detail {key!r} must be a canonical UUID string."
+        ) from error
+    if str(identifier) != value:
+        raise LifecycleInvariantError(
+            f"Retrieval exclusion detail {key!r} must use canonical UUID text."
+        )
+    return identifier
+
+
+def _canonical_detail_time(details: FrozenJsonObject, key: str) -> datetime:
+    value = details[key]
+    if not isinstance(value, str):
+        raise LifecycleInvariantError(
+            f"Retrieval exclusion detail {key!r} must be a canonical UTC string."
+        )
+    try:
+        timestamp = parse_utc_timestamp(value)
+    except DomainValidationError as error:
+        raise LifecycleInvariantError(
+            f"Retrieval exclusion detail {key!r} must be a canonical UTC string."
+        ) from error
+    if format_utc_timestamp(timestamp) != value:
+        raise LifecycleInvariantError(
+            f"Retrieval exclusion detail {key!r} must use canonical UTC text."
+        )
+    return timestamp
+
+
+def _detail_non_negative_integer(details: FrozenJsonObject, key: str) -> int:
+    value = details[key]
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise LifecycleInvariantError(
+            f"Retrieval exclusion detail {key!r} must be a non-negative integer."
+        )
+    return value
 
 
 def _freeze_json_object(value: FrozenJsonObject | Mapping[str, object]) -> FrozenJsonObject:
@@ -912,13 +1022,29 @@ class RetrievalResult:
 
     def __post_init__(self) -> None:
         _non_negative_integer("RetrievalResult.rank", self.rank)
+        if not isinstance(self.score, UnitScore):
+            raise LifecycleInvariantError("RetrievalResult.score must be a UnitScore.")
         if isinstance(self.reasons, str):
             raise LifecycleInvariantError("RetrievalResult.reasons must be a collection.")
         reasons = tuple(self.reasons)
-        if not reasons:
-            raise LifecycleInvariantError("RetrievalResult.reasons cannot be empty.")
-        for reason in reasons:
-            _required_text("RetrievalResult.reason", reason)
+        if len(reasons) != len(_RETRIEVAL_REASON_NAMES):
+            raise LifecycleInvariantError(
+                "RetrievalResult.reasons must contain exactly seven factor strings."
+            )
+        for reason, factor_name in zip(
+            reasons,
+            _RETRIEVAL_REASON_NAMES,
+            strict=True,
+        ):
+            prefix = f"{factor_name}="
+            if not isinstance(reason, str) or not reason.startswith(prefix):
+                raise LifecycleInvariantError(
+                    "RetrievalResult.reasons require the canonical factor order."
+                )
+            _canonical_unit_score_text(
+                f"RetrievalResult reason {factor_name}",
+                reason[len(prefix) :],
+            )
         object.__setattr__(self, "reasons", reasons)
         _normalize_time(self, "created_at")
 
@@ -934,8 +1060,210 @@ class RetrievalExclusion:
     created_at: datetime
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "details", _freeze_json_object(self.details))
+        if not isinstance(self.exclusion_reason, RetrievalExclusionReason):
+            raise LifecycleInvariantError(
+                "RetrievalExclusion.exclusion_reason must be canonical."
+            )
+        if self.computed_score is not None and not isinstance(
+            self.computed_score,
+            UnitScore,
+        ):
+            raise LifecycleInvariantError(
+                "RetrievalExclusion.computed_score must be a UnitScore or null."
+            )
+        details = _freeze_json_object(self.details)
+        object.__setattr__(self, "details", details)
+
+        expected_keys = _RETRIEVAL_EXCLUSION_DETAIL_KEYS[self.exclusion_reason]
+        if set(details) != expected_keys:
+            raise LifecycleInvariantError(
+                "RetrievalExclusion.details must contain exactly the canonical keys "
+                f"for {self.exclusion_reason.value}."
+            )
+
+        score_required = self.exclusion_reason in {
+            RetrievalExclusionReason.SCORE_BELOW_THRESHOLD,
+            RetrievalExclusionReason.DUPLICATE_CONTENT,
+            RetrievalExclusionReason.LIMIT_EXCEEDED,
+        }
+        if score_required != (self.computed_score is not None):
+            raise LifecycleInvariantError(
+                "RetrievalExclusion.computed_score nullability must match its reason."
+            )
+
+        if self.exclusion_reason is RetrievalExclusionReason.SCOPE_MISMATCH:
+            self._validate_scope_mismatch_details(details)
+        elif self.exclusion_reason is RetrievalExclusionReason.DELETED:
+            if details["stored_status"] != MemoryStatus.DELETED.value:
+                raise LifecycleInvariantError(
+                    "DELETED exclusion requires stored_status DELETED."
+                )
+            _canonical_detail_time(details, "deleted_at")
+        elif self.exclusion_reason is RetrievalExclusionReason.EXPIRED:
+            if details["stored_status"] != MemoryStatus.ACTIVE.value:
+                raise LifecycleInvariantError(
+                    "EXPIRED exclusion requires stored_status ACTIVE."
+                )
+            expires_at = _canonical_detail_time(details, "expires_at")
+            evaluated_at = _canonical_detail_time(details, "evaluated_at")
+            if expires_at > evaluated_at:
+                raise LifecycleInvariantError(
+                    "EXPIRED exclusion requires expires_at at or before evaluated_at."
+                )
+        elif self.exclusion_reason is RetrievalExclusionReason.SCORE_BELOW_THRESHOLD:
+            _canonical_unit_score_text(
+                "Retrieval exclusion minimum_relevance_score",
+                details["minimum_relevance_score"],
+            )
+        elif self.exclusion_reason is RetrievalExclusionReason.DUPLICATE_CONTENT:
+            retained_memory_id = _canonical_detail_id(details, "retained_memory_id")
+            if retained_memory_id == self.memory_id:
+                raise LifecycleInvariantError(
+                    "DUPLICATE_CONTENT must reference a different retained memory."
+                )
+        else:
+            result_limit = _detail_non_negative_integer(details, "result_limit")
+            pre_limit_rank = _detail_non_negative_integer(details, "pre_limit_rank")
+            if pre_limit_rank < result_limit:
+                raise LifecycleInvariantError(
+                    "LIMIT_EXCEEDED requires pre_limit_rank at or beyond result_limit."
+                )
+
         _normalize_time(self, "created_at")
+
+    @staticmethod
+    def _validate_scope_mismatch_details(details: FrozenJsonObject) -> None:
+        scope_value = details["scope"]
+        if not isinstance(scope_value, str):
+            raise LifecycleInvariantError(
+                "SCOPE_MISMATCH detail 'scope' must be canonical text."
+            )
+        try:
+            scope = MemoryScope(scope_value)
+        except ValueError as error:
+            raise LifecycleInvariantError(
+                "SCOPE_MISMATCH detail 'scope' must be a canonical MemoryScope."
+            ) from error
+
+        request_conversation_id = _canonical_detail_id(
+            details,
+            "request_conversation_id",
+        )
+        request_project_id = _canonical_detail_id(
+            details,
+            "request_project_id",
+            optional=True,
+        )
+        memory_conversation_id = _canonical_detail_id(
+            details,
+            "memory_conversation_id",
+            optional=True,
+        )
+        memory_project_id = _canonical_detail_id(
+            details,
+            "memory_project_id",
+            optional=True,
+        )
+
+        if scope is MemoryScope.CONVERSATION:
+            if (
+                memory_conversation_id is None
+                or memory_conversation_id == request_conversation_id
+            ):
+                raise LifecycleInvariantError(
+                    "SCOPE_MISMATCH conversation details must describe different owners."
+                )
+        elif scope is MemoryScope.PROJECT:
+            if memory_project_id is None or (
+                request_project_id is not None
+                and memory_project_id == request_project_id
+            ):
+                raise LifecycleInvariantError(
+                    "SCOPE_MISMATCH project details must describe different owners."
+                )
+        else:
+            raise LifecycleInvariantError(
+                "GLOBAL memory cannot have a SCOPE_MISMATCH exclusion."
+            )
+
+
+def require_retrieval_evidence(
+    selected: tuple[RetrievalResult, ...],
+    excluded: tuple[RetrievalExclusion, ...],
+    *,
+    context_packet_id: DomainId | None = None,
+) -> tuple[tuple[RetrievalResult, ...], tuple[RetrievalExclusion, ...]]:
+    """Validate canonical retrieval evidence identity, partition, order, and time."""
+
+    frozen_selected = tuple(selected)
+    frozen_excluded = tuple(excluded)
+    evidence = (*frozen_selected, *frozen_excluded)
+
+    packet_ids = {item.context_packet_id for item in evidence}
+    if context_packet_id is not None and any(
+        packet_id != context_packet_id for packet_id in packet_ids
+    ):
+        raise LifecycleInvariantError(
+            "Every retrieval evidence item must belong to the aggregate packet."
+        )
+    if len(packet_ids) > 1:
+        raise LifecycleInvariantError(
+            "Retrieval evidence requires one common context packet identity."
+        )
+
+    if [result.rank for result in frozen_selected] != list(
+        range(len(frozen_selected))
+    ):
+        raise LifecycleInvariantError(
+            "Retrieval results require contiguous zero-based rank order."
+        )
+    if any(
+        earlier.score.value < later.score.value
+        for earlier, later in zip(
+            frozen_selected,
+            frozen_selected[1:],
+            strict=False,
+        )
+    ):
+        raise LifecycleInvariantError(
+            "Retrieval results require descending score order."
+        )
+
+    selected_ids = [result.id for result in frozen_selected]
+    excluded_ids = [exclusion.id for exclusion in frozen_excluded]
+    if len(set(selected_ids)) != len(selected_ids) or len(set(excluded_ids)) != len(
+        excluded_ids
+    ):
+        raise LifecycleInvariantError("Retrieval evidence requires distinct record IDs.")
+    if set(selected_ids) & set(excluded_ids):
+        raise LifecycleInvariantError(
+            "Selected and excluded retrieval record IDs must be disjoint."
+        )
+
+    selected_memory_ids = [result.memory_id for result in frozen_selected]
+    excluded_memory_ids = [exclusion.memory_id for exclusion in frozen_excluded]
+    if len(set(selected_memory_ids)) != len(selected_memory_ids) or len(
+        set(excluded_memory_ids)
+    ) != len(excluded_memory_ids):
+        raise LifecycleInvariantError(
+            "Retrieval evidence requires distinct memory IDs within each partition."
+        )
+    if set(selected_memory_ids) & set(excluded_memory_ids):
+        raise LifecycleInvariantError(
+            "Selected and excluded memory IDs must be disjoint."
+        )
+    if excluded_memory_ids != sorted(excluded_memory_ids, key=str):
+        raise LifecycleInvariantError(
+            "Retrieval exclusions require canonical memory UUID order."
+        )
+
+    retrieval_times = {item.created_at for item in evidence}
+    if len(retrieval_times) > 1:
+        raise LifecycleInvariantError(
+            "Retrieval evidence requires one common retrieval timestamp."
+        )
+
+    return frozen_selected, frozen_excluded
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from dataclasses import fields, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import inspect
 from typing import Protocol, get_type_hints
 
@@ -18,14 +18,20 @@ from context_for_ai.domain.decisions import (
     ReferenceDecision,
     ReferenceMention,
     ReferenceOutcome,
+    RetrievalExclusion,
+    RetrievalResult,
 )
-from context_for_ai.domain.entities import ConversationState, Entity, Message
+from context_for_ai.domain.entities import ConversationState, Entity, Memory, Message
 from context_for_ai.domain.enums import (
     EntityType,
+    MemoryScope,
+    MemoryStatus,
+    MemoryType,
     MessageRole,
     OutputType,
     ReferenceRankReason,
     ReferenceStatus,
+    RetrievalExclusionReason,
 )
 from context_for_ai.domain.errors import LifecycleInvariantError
 from context_for_ai.domain.ports import (
@@ -60,10 +66,19 @@ from context_for_ai.domain.ports.context import (
     ReferenceResolutionRequest,
     ReferenceResolver,
 )
-from context_for_ai.domain.value_objects import DomainId, UnitScore
+from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, UnitScore
 
 
 NOW = datetime(2026, 8, 2, 10, 0, tzinfo=timezone.utc)
+SELECTED_REASONS = (
+    "project_match=0",
+    "topic_match=0",
+    "keyword_jaccard=0.5",
+    "recency=1",
+    "importance=0.5",
+    "scope_match=0.6",
+    "correction_match=0",
+)
 
 
 def identifier(number: int) -> DomainId:
@@ -272,3 +287,133 @@ def test_reference_requests_validate_spans_scope_order_and_prior_linkage() -> No
         )
     with pytest.raises(LifecycleInvariantError, match="distinct IDs"):
         ReferenceMentionExtractionRequest(message, (mention,), (entity, entity))
+
+
+def retrieval_memory(number: int) -> Memory:
+    return Memory(
+        identifier(number),
+        None,
+        None,
+        MemoryType.PROJECT_FACT,
+        MemoryScope.GLOBAL,
+        MemoryStatus.ACTIVE,
+        f"Memory {number}",
+        ("memory",),
+        (),
+        UnitScore("0.5"),
+        UnitScore("1"),
+        None,
+        NOW,
+        NOW,
+        None,
+    )
+
+
+def retrieval_result(
+    *,
+    evidence_id: int = 20,
+    packet_id: int = 10,
+    memory_id: int = 30,
+    rank: int = 0,
+    score: str = "0.8",
+    created_at: datetime = NOW,
+) -> RetrievalResult:
+    return RetrievalResult(
+        identifier(evidence_id),
+        identifier(packet_id),
+        identifier(memory_id),
+        rank,
+        UnitScore(score),
+        SELECTED_REASONS,
+        created_at,
+    )
+
+
+def retrieval_exclusion(
+    *,
+    evidence_id: int = 21,
+    packet_id: int = 10,
+    memory_id: int = 31,
+    created_at: datetime = NOW,
+) -> RetrievalExclusion:
+    return RetrievalExclusion(
+        identifier(evidence_id),
+        identifier(packet_id),
+        identifier(memory_id),
+        RetrievalExclusionReason.SCORE_BELOW_THRESHOLD,
+        UnitScore("0.2"),
+        FrozenJsonObject({"minimum_relevance_score": "0.5"}),
+        created_at,
+    )
+
+
+def test_retrieval_request_freezes_distinct_considered_memories() -> None:
+    candidate = retrieval_memory(40)
+    request = RetrievalRequest(
+        identifier(10),
+        identifier(11),
+        identifier(12),
+        identifier(13),
+        None,
+        None,
+        "find memory",
+        [candidate],  # type: ignore[arg-type]
+        UnitScore("0.5"),
+        5,
+        NOW,
+    )
+
+    assert request.candidate_memories == (candidate,)
+    with pytest.raises(LifecycleInvariantError, match="distinct IDs"):
+        RetrievalRequest(
+            identifier(10),
+            identifier(11),
+            identifier(12),
+            identifier(13),
+            None,
+            None,
+            "find memory",
+            (candidate, candidate),
+            UnitScore("0.5"),
+            5,
+            NOW,
+        )
+
+
+def test_retrieval_decision_requires_canonical_lineage_order_and_confidence() -> None:
+    selected = retrieval_result()
+    excluded = retrieval_exclusion()
+
+    decision = RetrievalDecision((selected,), (excluded,), selected.score)
+
+    assert decision.selected == (selected,)
+    assert decision.excluded == (excluded,)
+    assert decision.confidence == UnitScore("0.8")
+
+    with pytest.raises(LifecycleInvariantError, match="rank order"):
+        RetrievalDecision((retrieval_result(rank=1),), (), UnitScore("0.8"))
+    with pytest.raises(LifecycleInvariantError, match="packet identity"):
+        RetrievalDecision(
+            (selected,),
+            (retrieval_exclusion(packet_id=99),),
+            selected.score,
+        )
+    with pytest.raises(LifecycleInvariantError, match="common retrieval timestamp"):
+        RetrievalDecision(
+            (selected,),
+            (retrieval_exclusion(created_at=NOW + timedelta(microseconds=1)),),
+            selected.score,
+        )
+    with pytest.raises(LifecycleInvariantError, match="memory UUID order"):
+        RetrievalDecision(
+            (),
+            (
+                retrieval_exclusion(evidence_id=22, memory_id=33),
+                retrieval_exclusion(evidence_id=23, memory_id=32),
+            ),
+            None,
+        )
+    with pytest.raises(LifecycleInvariantError, match="highest selected score"):
+        RetrievalDecision((selected,), (excluded,), UnitScore("0.7"))
+    with pytest.raises(LifecycleInvariantError, match="highest selected score"):
+        RetrievalDecision((), (), UnitScore("0"))

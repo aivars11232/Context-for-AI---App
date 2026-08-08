@@ -3,28 +3,42 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import IntEnum, StrEnum, unique
 
 from context_for_ai.domain.entities import (
     ConversationState,
     ConversationTask,
     Memory,
+    MemoryRevision,
     MemorySource,
 )
 from context_for_ai.domain.enums import (
+    MemoryRevisionOperation,
     MemoryEffectiveStatus,
+    MemoryScope,
+    MemorySourceKind,
     MemoryStatus,
+    MemoryType,
     ModelRequestStatus,
     ProcessingRunStatus,
     ProjectStatus,
     TaskStatus,
 )
 from context_for_ai.domain.errors import (
+    DomainError,
     InvalidStateTransitionError,
     LifecycleInvariantError,
 )
-from context_for_ai.domain.value_objects import UnitScore, ensure_utc
+from context_for_ai.domain.value_objects import (
+    DomainId,
+    FrozenJsonObject,
+    UnitScore,
+    canonical_decimal_string,
+    ensure_utc,
+    format_utc_timestamp,
+    parse_utc_timestamp,
+)
 
 
 @unique
@@ -68,6 +82,27 @@ TERMINAL_MODEL_REQUEST_STATUSES = frozenset(
         ModelRequestStatus.TIMED_OUT,
         ModelRequestStatus.CANCELLED,
         ModelRequestStatus.FAILED,
+    }
+)
+MEMORY_REVISION_SCHEMA_VERSION = "memory-revision-v1"
+
+_MEMORY_REVISION_METADATA_KEYS = frozenset(
+    {
+        "schema_version",
+        "source_id",
+        "memory_type",
+        "scope",
+        "conversation_id",
+        "project_id",
+        "status",
+        "keywords",
+        "topic_terms",
+        "importance",
+        "confidence",
+        "expires_at",
+        "memory_created_at",
+        "updated_at",
+        "deleted_at",
     }
 )
 
@@ -296,6 +331,286 @@ def require_memory_provenance(
         raise LifecycleInvariantError("Memory requires at least one provenance source.")
     if any(source.memory_id != memory.id for source in frozen_sources):
         raise LifecycleInvariantError("Every provenance source must belong to the memory.")
+
+
+def memory_revision_metadata(memory: Memory, source_id: DomainId) -> FrozenJsonObject:
+    """Return the exact canonical snapshot metadata for one memory revision."""
+
+    return FrozenJsonObject(
+        {
+            "schema_version": MEMORY_REVISION_SCHEMA_VERSION,
+            "source_id": str(source_id),
+            "memory_type": memory.memory_type.value,
+            "scope": memory.scope.value,
+            "conversation_id": (
+                None if memory.conversation_id is None else str(memory.conversation_id)
+            ),
+            "project_id": None if memory.project_id is None else str(memory.project_id),
+            "status": memory.status.value,
+            "keywords": memory.keywords,
+            "topic_terms": memory.topic_terms,
+            "importance": canonical_decimal_string(memory.importance.value),
+            "confidence": canonical_decimal_string(memory.confidence.value),
+            "expires_at": (
+                None
+                if memory.expires_at is None
+                else format_utc_timestamp(memory.expires_at)
+            ),
+            "memory_created_at": format_utc_timestamp(memory.created_at),
+            "updated_at": format_utc_timestamp(memory.updated_at),
+            "deleted_at": (
+                None
+                if memory.deleted_at is None
+                else format_utc_timestamp(memory.deleted_at)
+            ),
+        }
+    )
+
+
+def _metadata_text(metadata: FrozenJsonObject, key: str) -> str:
+    value = metadata[key]
+    if not isinstance(value, str):
+        raise LifecycleInvariantError(f"Memory revision metadata {key!r} must be text.")
+    return value
+
+
+def _metadata_optional_id(metadata: FrozenJsonObject, key: str) -> DomainId | None:
+    value = metadata[key]
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise LifecycleInvariantError(
+            f"Memory revision metadata {key!r} must be a UUID string or null."
+        )
+    return DomainId(value)
+
+
+def _metadata_optional_time(metadata: FrozenJsonObject, key: str) -> datetime | None:
+    value = metadata[key]
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise LifecycleInvariantError(
+            f"Memory revision metadata {key!r} must be a UTC string or null."
+        )
+    return parse_utc_timestamp(value)
+
+
+def _metadata_text_tuple(metadata: FrozenJsonObject, key: str) -> tuple[str, ...]:
+    value = metadata[key]
+    if not isinstance(value, tuple) or any(not isinstance(item, str) for item in value):
+        raise LifecycleInvariantError(
+            f"Memory revision metadata {key!r} must be an ordered string array."
+        )
+    return value
+
+
+def _memory_revision_snapshot(revision: MemoryRevision) -> Memory:
+    metadata = revision.metadata
+    if set(metadata) != _MEMORY_REVISION_METADATA_KEYS:
+        raise LifecycleInvariantError(
+            "Memory revision metadata must contain exactly the memory-revision-v1 keys."
+        )
+    if metadata["schema_version"] != MEMORY_REVISION_SCHEMA_VERSION:
+        raise LifecycleInvariantError(
+            "Memory revision metadata requires schema_version memory-revision-v1."
+        )
+    try:
+        importance_text = _metadata_text(metadata, "importance")
+        confidence_text = _metadata_text(metadata, "confidence")
+        importance_decimal = Decimal(importance_text)
+        confidence_decimal = Decimal(confidence_text)
+        if canonical_decimal_string(importance_decimal) != importance_text:
+            raise LifecycleInvariantError(
+                "Memory revision importance must be a canonical decimal string."
+            )
+        if canonical_decimal_string(confidence_decimal) != confidence_text:
+            raise LifecycleInvariantError(
+                "Memory revision confidence must be a canonical decimal string."
+            )
+        return Memory(
+            revision.memory_id,
+            _metadata_optional_id(metadata, "conversation_id"),
+            _metadata_optional_id(metadata, "project_id"),
+            MemoryType(_metadata_text(metadata, "memory_type")),
+            MemoryScope(_metadata_text(metadata, "scope")),
+            MemoryStatus(_metadata_text(metadata, "status")),
+            revision.content_snapshot,
+            _metadata_text_tuple(metadata, "keywords"),
+            _metadata_text_tuple(metadata, "topic_terms"),
+            UnitScore(importance_decimal),
+            UnitScore(confidence_decimal),
+            _metadata_optional_time(metadata, "expires_at"),
+            parse_utc_timestamp(_metadata_text(metadata, "memory_created_at")),
+            parse_utc_timestamp(_metadata_text(metadata, "updated_at")),
+            _metadata_optional_time(metadata, "deleted_at"),
+        )
+    except LifecycleInvariantError:
+        raise
+    except (DomainError, InvalidOperation, KeyError, TypeError, ValueError) as error:
+        raise LifecycleInvariantError("Memory revision metadata is invalid.") from error
+
+
+def require_memory_history(
+    memory: Memory,
+    sources: tuple[MemorySource, ...],
+    revisions: tuple[MemoryRevision, ...],
+) -> None:
+    """Require complete ordered manual provenance and immutable revision history."""
+
+    frozen_sources = tuple(sources)
+    frozen_revisions = tuple(revisions)
+    require_memory_provenance(memory, frozen_sources)
+    if not frozen_revisions:
+        raise LifecycleInvariantError("Memory requires at least one immutable revision.")
+    if len(frozen_sources) != len(frozen_revisions):
+        raise LifecycleInvariantError(
+            "Memory requires exactly one provenance source per revision."
+        )
+    if len({source.id for source in frozen_sources}) != len(frozen_sources):
+        raise LifecycleInvariantError("Memory provenance source IDs must be distinct.")
+    if len({revision.id for revision in frozen_revisions}) != len(frozen_revisions):
+        raise LifecycleInvariantError("Memory revision IDs must be distinct.")
+    if frozen_sources != tuple(
+        sorted(frozen_sources, key=lambda source: (source.created_at, str(source.id)))
+    ):
+        raise LifecycleInvariantError(
+            "Memory provenance sources must be ordered by creation time and UUID."
+        )
+    if tuple(revision.revision_number for revision in frozen_revisions) != tuple(
+        range(1, len(frozen_revisions) + 1)
+    ):
+        raise LifecycleInvariantError(
+            "Memory revisions must have consecutive ordered numbers starting at 1."
+        )
+
+    sources_by_id = {str(source.id): source for source in frozen_sources}
+    used_source_ids: set[str] = set()
+    immutable_identity: tuple[object, ...] | None = None
+    final_snapshot: Memory | None = None
+    previous_snapshot: Memory | None = None
+    soft_deleted = False
+
+    for revision in frozen_revisions:
+        if revision.memory_id != memory.id:
+            raise LifecycleInvariantError(
+                "Every memory revision must belong to the aggregate memory."
+            )
+        try:
+            source_id = _metadata_text(revision.metadata, "source_id")
+            source = sources_by_id[source_id]
+        except KeyError as error:
+            raise LifecycleInvariantError(
+                "Every memory revision must reference its matching provenance source."
+            ) from error
+        if source_id in used_source_ids:
+            raise LifecycleInvariantError(
+                "Each memory revision must reference a distinct provenance source."
+            )
+        used_source_ids.add(source_id)
+        if source.memory_id != memory.id:
+            raise LifecycleInvariantError(
+                "Every provenance source must belong to the aggregate memory."
+            )
+        if source.source_message_id is not None:
+            raise LifecycleInvariantError(
+                "Manual memory sources require null source_message_id."
+            )
+
+        snapshot = _memory_revision_snapshot(revision)
+        if revision.metadata != memory_revision_metadata(snapshot, source.id):
+            raise LifecycleInvariantError(
+                "Memory revision metadata is not in canonical memory-revision-v1 form."
+            )
+        if not (
+            source.created_at == revision.created_at == snapshot.updated_at
+        ):
+            raise LifecycleInvariantError(
+                "Memory source, revision, and snapshot must share one operation time."
+            )
+
+        identity = (
+            snapshot.memory_type,
+            snapshot.scope,
+            snapshot.conversation_id,
+            snapshot.project_id,
+            snapshot.created_at,
+        )
+        if immutable_identity is None:
+            immutable_identity = identity
+        elif identity != immutable_identity:
+            raise LifecycleInvariantError(
+                "Memory type, scope, owners, and creation time are immutable."
+            )
+        if (
+            previous_snapshot is not None
+            and snapshot.updated_at < previous_snapshot.updated_at
+        ):
+            raise LifecycleInvariantError(
+                "Memory revision operation times cannot move backward."
+            )
+
+        if soft_deleted:
+            raise LifecycleInvariantError("No memory revision may follow SOFT_DELETE.")
+        if revision.revision_number == 1:
+            if (
+                revision.operation is not MemoryRevisionOperation.CREATE
+                or source.source_kind is not MemorySourceKind.MANUAL_ENTRY
+                or snapshot.status is not MemoryStatus.ACTIVE
+                or snapshot.created_at != snapshot.updated_at
+            ):
+                raise LifecycleInvariantError(
+                    "Revision 1 must be one ACTIVE CREATE with a MANUAL_ENTRY source."
+                )
+        elif revision.operation is MemoryRevisionOperation.EDIT:
+            if (
+                source.source_kind is not MemorySourceKind.USER_EDIT
+                or snapshot.status is not MemoryStatus.ACTIVE
+            ):
+                raise LifecycleInvariantError(
+                    "EDIT requires an ACTIVE snapshot and USER_EDIT source."
+                )
+        elif revision.operation is MemoryRevisionOperation.SOFT_DELETE:
+            if (
+                source.source_kind is not MemorySourceKind.USER_EDIT
+                or snapshot.status is not MemoryStatus.DELETED
+                or snapshot.deleted_at != snapshot.updated_at
+            ):
+                raise LifecycleInvariantError(
+                    "SOFT_DELETE requires a DELETED snapshot and USER_EDIT source."
+                )
+            if previous_snapshot is None or (
+                snapshot.content,
+                snapshot.keywords,
+                snapshot.topic_terms,
+                snapshot.importance,
+                snapshot.confidence,
+                snapshot.expires_at,
+            ) != (
+                previous_snapshot.content,
+                previous_snapshot.keywords,
+                previous_snapshot.topic_terms,
+                previous_snapshot.importance,
+                previous_snapshot.confidence,
+                previous_snapshot.expires_at,
+            ):
+                raise LifecycleInvariantError(
+                    "SOFT_DELETE must preserve the preceding memory content and scores."
+                )
+            soft_deleted = True
+        else:
+            raise LifecycleInvariantError(
+                "Only CREATE may be revision 1; later revisions are EDIT or SOFT_DELETE."
+            )
+        final_snapshot = snapshot
+        previous_snapshot = snapshot
+
+    if len(used_source_ids) != len(frozen_sources):
+        raise LifecycleInvariantError("Every memory source must be linked by one revision.")
+    if final_snapshot != memory:
+        raise LifecycleInvariantError(
+            "The final memory revision must reconstruct the current memory."
+        )
 
 
 def memory_effective_status(memory: Memory, at: datetime) -> MemoryEffectiveStatus:

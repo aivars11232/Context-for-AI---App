@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import replace
 from datetime import datetime
 import json
 import sqlite3
@@ -2111,24 +2112,7 @@ class SQLiteMemoryRepository(_SQLiteRepository):
         source: MemorySource,
         revision: MemoryRevision,
     ) -> None:
-        if memory.status is not MemoryStatus.ACTIVE:
-            raise LifecycleInvariantError("A new memory must start in ACTIVE status.")
-        if source.memory_id != memory.id or revision.memory_id != memory.id:
-            raise LifecycleInvariantError(
-                "Memory source and revision must belong to the supplied memory."
-            )
-        if revision.revision_number != 1 or revision.operation is not MemoryRevisionOperation.CREATE:
-            raise LifecycleInvariantError(
-                "A new memory requires CREATE revision number 1."
-            )
-        if revision.content_snapshot != memory.content:
-            raise LifecycleInvariantError(
-                "Memory revision snapshot must equal the stored memory content."
-            )
-        if source.created_at < memory.created_at or revision.created_at < memory.created_at:
-            raise LifecycleInvariantError(
-                "Memory provenance timestamps cannot precede memory creation."
-            )
+        MemoryRecord(memory, (source,), (revision,))
         with self._write("Add memory aggregate"):
             self._insert_memory(memory)
             self._insert_source(source)
@@ -2150,8 +2134,32 @@ class SQLiteMemoryRepository(_SQLiteRepository):
             (str(memory.id),), _memory_revision, "memory revisions",
         )
         try:
-            return MemoryRecord(memory, sources, revisions)
-        except DomainError as error:
+            if not revisions:
+                raise LifecycleInvariantError(
+                    "Stored memory requires at least one revision."
+                )
+            importance = revisions[-1].metadata["importance"]
+            confidence = revisions[-1].metadata["confidence"]
+            if not isinstance(importance, str) or not isinstance(confidence, str):
+                raise LifecycleInvariantError(
+                    "Stored memory revision scores must be canonical strings."
+                )
+            exact_importance = UnitScore(importance)
+            exact_confidence = UnitScore(confidence)
+            if (
+                UnitScore(float(exact_importance.value)) != memory.importance
+                or UnitScore(float(exact_confidence.value)) != memory.confidence
+            ):
+                raise LifecycleInvariantError(
+                    "Stored memory REAL scores disagree with final revision metadata."
+                )
+            exact_memory = replace(
+                memory,
+                importance=exact_importance,
+                confidence=exact_confidence,
+            )
+            return MemoryRecord(exact_memory, sources, revisions)
+        except (DomainError, KeyError, TypeError, ValueError) as error:
             raise PersistenceError("Stored memory aggregate is invalid.") from error
 
     def get(self, memory_id: DomainId) -> MemoryRecord | None:
@@ -2167,21 +2175,10 @@ class SQLiteMemoryRepository(_SQLiteRepository):
         )
         return tuple(self._record_for_memory(memory) for memory in memories)
 
-    def list_retrieval_candidates(
-        self, *, conversation_id: DomainId, project_id: DomainId | None
-    ) -> tuple[MemoryRecord, ...]:
+    def list_retrieval_candidates(self) -> tuple[MemoryRecord, ...]:
         memories = self._all(
-            """
-            SELECT * FROM memories
-            WHERE (scope = 'CONVERSATION' AND conversation_id = ?)
-               OR (scope = 'PROJECT' AND project_id = ?)
-               OR scope = 'GLOBAL'
-            ORDER BY updated_at DESC, id
-            """,
-            (
-                str(conversation_id),
-                None if project_id is None else str(project_id),
-            ),
+            "SELECT * FROM memories ORDER BY id",
+            (),
             _memory,
             "memory retrieval candidates",
         )
@@ -2193,12 +2190,6 @@ class SQLiteMemoryRepository(_SQLiteRepository):
         source: MemorySource,
         revision: MemoryRevision,
     ) -> None:
-        if source.memory_id != memory.id or revision.memory_id != memory.id:
-            raise LifecycleInvariantError(
-                "Memory source and revision must belong to the supplied memory."
-            )
-        if source.source_kind is not MemorySourceKind.USER_EDIT:
-            raise LifecycleInvariantError("Memory updates require a USER_EDIT source.")
         with self._write("Update memory aggregate"):
             current_record = _require_existing(self.get(memory.id), "Memory")
             current = current_record.memory
@@ -2206,19 +2197,13 @@ class SQLiteMemoryRepository(_SQLiteRepository):
                 raise LifecycleInvariantError("A deleted memory cannot be changed or restored.")
             if (
                 memory.created_at != current.created_at
+                or memory.memory_type is not current.memory_type
                 or memory.conversation_id != current.conversation_id
                 or memory.project_id != current.project_id
                 or memory.scope is not current.scope
             ):
                 raise LifecycleInvariantError(
-                    "Memory creation, ownership, and scope fields are immutable."
-                )
-            if memory.updated_at < current.updated_at:
-                raise LifecycleInvariantError("Memory.updated_at cannot move backward.")
-            expected_number = len(current_record.revisions) + 1
-            if revision.revision_number != expected_number:
-                raise LifecycleInvariantError(
-                    "Memory revision numbers must be consecutive."
+                    "Memory creation, type, ownership, and scope fields are immutable."
                 )
             expected_operation = (
                 MemoryRevisionOperation.SOFT_DELETE
@@ -2229,24 +2214,24 @@ class SQLiteMemoryRepository(_SQLiteRepository):
                 raise LifecycleInvariantError(
                     "Memory revision operation must match the lifecycle update."
                 )
-            if revision.content_snapshot != memory.content:
-                raise LifecycleInvariantError(
-                    "Memory revision snapshot must equal the stored memory content."
+            prospective_sources = tuple(
+                sorted(
+                    (*current_record.sources, source),
+                    key=lambda item: (item.created_at, str(item.id)),
                 )
-            if source.created_at < current.updated_at or revision.created_at < current.updated_at:
-                raise LifecycleInvariantError(
-                    "Memory update provenance cannot precede the prior update."
-                )
+            )
+            prospective_revisions = (*current_record.revisions, revision)
+            MemoryRecord(memory, prospective_sources, prospective_revisions)
             cursor = self._connection.execute(
                 """
                 UPDATE memories
-                SET memory_type = ?, status = ?, content = ?, keywords_json = ?,
+                SET status = ?, content = ?, keywords_json = ?,
                     topic_terms_json = ?, importance = ?, confidence = ?,
                     expires_at = ?, updated_at = ?, deleted_at = ?
                 WHERE id = ?
                 """,
                 (
-                    memory.memory_type.value, memory.status.value, memory.content,
+                    memory.status.value, memory.content,
                     _encode_json(memory.keywords), _encode_json(memory.topic_terms),
                     float(memory.importance.value), float(memory.confidence.value),
                     None
@@ -2493,7 +2478,7 @@ class SQLiteContextPacketRepository(_SQLiteRepository):
         exclusions = self._all(
             """
             SELECT * FROM retrieval_exclusions
-            WHERE context_packet_id = ? ORDER BY created_at, id
+            WHERE context_packet_id = ? ORDER BY memory_id, id
             """,
             (str(packet.id),), _retrieval_exclusion, "retrieval exclusions",
         )

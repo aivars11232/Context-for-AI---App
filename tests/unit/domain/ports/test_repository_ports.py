@@ -16,6 +16,8 @@ from context_for_ai.domain.ports import (
     ContextPacketRecord,
     ContextPacketRepository,
     EntityRepository,
+    MemoryRecord,
+    MemoryRepository,
     ReferenceResolutionRepository,
 )
 from context_for_ai.domain.ports import repositories
@@ -102,6 +104,15 @@ def test_context_packet_repository_uses_complete_retrieval_record() -> None:
     assert get_for_run_hints == {
         "processing_run_id": DomainId,
         "return": ContextPacketRecord | None,
+    }
+
+
+def test_memory_repository_returns_the_complete_unfiltered_candidate_set() -> None:
+    signature = inspect.signature(MemoryRepository.list_retrieval_candidates)
+
+    assert tuple(signature.parameters) == ("self",)
+    assert get_type_hints(MemoryRepository.list_retrieval_candidates) == {
+        "return": tuple[MemoryRecord, ...],
     }
 
 

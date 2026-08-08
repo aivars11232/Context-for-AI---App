@@ -9,11 +9,12 @@ from context_for_ai.domain.decisions import (
     ContextPacket,
     RetrievalExclusion,
     RetrievalResult,
+    require_retrieval_evidence,
 )
 from context_for_ai.domain.entities import Memory, MemoryRevision, MemorySource
 from context_for_ai.domain.enums import EvaluationProviderMode
 from context_for_ai.domain.errors import LifecycleInvariantError
-from context_for_ai.domain.policies import require_memory_provenance
+from context_for_ai.domain.policies import require_memory_history
 from context_for_ai.domain.value_objects import (
     DomainId,
     FrozenJsonObject,
@@ -45,11 +46,7 @@ class MemoryRecord:
     def __post_init__(self) -> None:
         sources = tuple(self.sources)
         revisions = tuple(self.revisions)
-        require_memory_provenance(self.memory, sources)
-        if any(revision.memory_id != self.memory.id for revision in revisions):
-            raise LifecycleInvariantError(
-                "Every memory revision must belong to the aggregate memory."
-            )
+        require_memory_history(self.memory, sources, revisions)
         object.__setattr__(self, "sources", sources)
         object.__setattr__(self, "revisions", revisions)
 
@@ -63,22 +60,12 @@ class ContextPacketRecord:
     retrieval_exclusions: tuple[RetrievalExclusion, ...]
 
     def __post_init__(self) -> None:
-        retrieval_results = tuple(self.retrieval_results)
-        retrieval_exclusions = tuple(self.retrieval_exclusions)
-        if any(
-            result.context_packet_id != self.packet.id
-            for result in retrieval_results
-        ):
-            raise LifecycleInvariantError(
-                "Every retrieval result must belong to the aggregate packet."
-            )
-        if any(
-            exclusion.context_packet_id != self.packet.id
-            for exclusion in retrieval_exclusions
-        ):
-            raise LifecycleInvariantError(
-                "Every retrieval exclusion must belong to the aggregate packet."
-            )
+        retrieval_results, retrieval_exclusions = require_retrieval_evidence(
+            self.retrieval_results,
+            self.retrieval_exclusions,
+            context_packet_id=self.packet.id,
+        )
+
         object.__setattr__(self, "retrieval_results", retrieval_results)
         object.__setattr__(self, "retrieval_exclusions", retrieval_exclusions)
 

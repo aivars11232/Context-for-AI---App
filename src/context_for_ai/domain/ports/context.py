@@ -17,6 +17,7 @@ from context_for_ai.domain.decisions import (
     ReferenceOutcome,
     RetrievalExclusion,
     RetrievalResult,
+    require_retrieval_evidence,
 )
 from context_for_ai.domain.entities import ConversationState, Entity, Memory, Message
 from context_for_ai.domain.enums import ClarificationReason, MessageRole, ReferenceStatus
@@ -279,7 +280,14 @@ class RetrievalRequest:
             )
         if not isinstance(self.request_text, str):
             raise LifecycleInvariantError("RetrievalRequest.request_text must be text.")
-        object.__setattr__(self, "candidate_memories", tuple(self.candidate_memories))
+        candidate_memories = tuple(self.candidate_memories)
+        if len({memory.id for memory in candidate_memories}) != len(
+            candidate_memories
+        ):
+            raise LifecycleInvariantError(
+                "RetrievalRequest candidate memories require distinct IDs."
+            )
+        object.__setattr__(self, "candidate_memories", candidate_memories)
         if (
             not isinstance(self.result_limit, int)
             or isinstance(self.result_limit, bool)
@@ -300,8 +308,17 @@ class RetrievalDecision:
     confidence: UnitScore | None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "selected", tuple(self.selected))
-        object.__setattr__(self, "excluded", tuple(self.excluded))
+        selected, excluded = require_retrieval_evidence(
+            self.selected,
+            self.excluded,
+        )
+        expected_confidence = selected[0].score if selected else None
+        if self.confidence != expected_confidence:
+            raise LifecycleInvariantError(
+                "RetrievalDecision.confidence must equal the highest selected score or null."
+            )
+        object.__setattr__(self, "selected", selected)
+        object.__setattr__(self, "excluded", excluded)
 
 
 @dataclass(frozen=True, slots=True)

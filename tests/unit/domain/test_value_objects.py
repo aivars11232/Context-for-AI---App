@@ -18,6 +18,7 @@ from context_for_ai.domain.value_objects import (
     DomainId,
     FrozenJsonObject,
     UnitScore,
+    canonical_decimal_string,
     ensure_utc,
     format_utc_timestamp,
     freeze_json,
@@ -57,6 +58,31 @@ def test_unit_score_preserves_valid_unrounded_values(value: Decimal | str | int 
 def test_unit_score_rejects_non_finite_and_out_of_range_values(value: object) -> None:
     with pytest.raises(ScoreOutOfRangeError):
         UnitScore(value)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (Decimal("1E+3"), "1000"),
+        (Decimal("0.5000"), "0.5"),
+        (Decimal("0E-28"), "0"),
+        (Decimal("-0.000"), "0"),
+        (Decimal("0.3333333333333333333333333333"), "0.3333333333333333333333333333"),
+    ],
+)
+def test_canonical_decimal_string_uses_trimmed_fixed_point(
+    value: Decimal,
+    expected: str,
+) -> None:
+    assert canonical_decimal_string(value) == expected
+
+
+@pytest.mark.parametrize("value", [Decimal("NaN"), Decimal("Infinity"), "0.5"])
+def test_canonical_decimal_string_rejects_non_finite_or_non_decimal_values(
+    value: object,
+) -> None:
+    with pytest.raises(DomainValidationError):
+        canonical_decimal_string(value)  # type: ignore[arg-type]
 
 
 def test_utc_helpers_normalize_offsets_and_emit_z_suffix() -> None:

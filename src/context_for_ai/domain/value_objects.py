@@ -70,6 +70,19 @@ class UnitScore:
         return str(self.value)
 
 
+def canonical_decimal_string(value: Decimal) -> str:
+    """Serialize one finite decimal in canonical fixed-point notation."""
+
+    if not isinstance(value, Decimal) or not value.is_finite():
+        raise DomainValidationError("Canonical decimal serialization requires a finite Decimal.")
+    if value == 0:
+        return "0"
+    rendered = format(value, "f")
+    if "." in rendered:
+        rendered = rendered.rstrip("0").rstrip(".")
+    return rendered
+
+
 def ensure_utc(value: datetime) -> datetime:
     """Return ``value`` normalized to UTC, rejecting naive timestamps."""
 

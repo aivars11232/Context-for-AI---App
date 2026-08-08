@@ -50,6 +50,15 @@ from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, Unit
 
 
 NOW = datetime(2026, 8, 2, 10, 0, tzinfo=timezone.utc)
+SELECTED_REASONS = (
+    "project_match=0",
+    "topic_match=1",
+    "keyword_jaccard=0.5",
+    "recency=1",
+    "importance=0.5",
+    "scope_match=1",
+    "correction_match=0",
+)
 
 
 def identifier(number: int) -> DomainId:
@@ -599,7 +608,7 @@ def test_packet_and_retrieval_records_freeze_nested_evidence() -> None:
         identifier(9),
         0,
         UnitScore("0.72"),
-        ("project match", "keyword match"),
+        SELECTED_REASONS,
         NOW,
     )
     excluded = RetrievalExclusion(
@@ -608,7 +617,7 @@ def test_packet_and_retrieval_records_freeze_nested_evidence() -> None:
         identifier(11),
         RetrievalExclusionReason.SCORE_BELOW_THRESHOLD,
         UnitScore("0.20"),
-        FrozenJsonObject({"threshold": 0.5}),
+        FrozenJsonObject({"minimum_relevance_score": "0.5"}),
         NOW,
     )
     packet_source["constraints"] = []
@@ -616,8 +625,155 @@ def test_packet_and_retrieval_records_freeze_nested_evidence() -> None:
     assert packet.packet["constraints"] == (
         FrozenJsonObject({"id": str(identifier(5)), "priority": 1000}),
     )
-    assert selected.reasons == ("project match", "keyword match")
-    assert excluded.details["threshold"] == 0.5
+    assert selected.reasons == SELECTED_REASONS
+    assert excluded.details["minimum_relevance_score"] == "0.5"
+
+
+@pytest.mark.parametrize(
+    "reasons",
+    [
+        SELECTED_REASONS[:-1],
+        (SELECTED_REASONS[1], SELECTED_REASONS[0], *SELECTED_REASONS[2:]),
+        ("project_match=1.0", *SELECTED_REASONS[1:]),
+        ("project_match=2", *SELECTED_REASONS[1:]),
+        ("project=1", *SELECTED_REASONS[1:]),
+    ],
+)
+def test_retrieval_result_rejects_noncanonical_factor_reasons(
+    reasons: tuple[str, ...],
+) -> None:
+    with pytest.raises(LifecycleInvariantError, match="seven|factor|canonical"):
+        RetrievalResult(
+            identifier(8),
+            identifier(7),
+            identifier(9),
+            0,
+            UnitScore("0.72"),
+            reasons,
+            NOW,
+        )
+
+
+def test_retrieval_exclusions_accept_all_exact_reason_shapes() -> None:
+    cases = (
+        (
+            RetrievalExclusionReason.SCOPE_MISMATCH,
+            None,
+            {
+                "scope": "CONVERSATION",
+                "request_conversation_id": str(identifier(1)),
+                "request_project_id": None,
+                "memory_conversation_id": str(identifier(2)),
+                "memory_project_id": None,
+            },
+        ),
+        (
+            RetrievalExclusionReason.DELETED,
+            None,
+            {"stored_status": "DELETED", "deleted_at": "2026-08-02T10:00:00Z"},
+        ),
+        (
+            RetrievalExclusionReason.EXPIRED,
+            None,
+            {
+                "stored_status": "ACTIVE",
+                "expires_at": "2026-08-01T10:00:00Z",
+                "evaluated_at": "2026-08-02T10:00:00Z",
+            },
+        ),
+        (
+            RetrievalExclusionReason.SCORE_BELOW_THRESHOLD,
+            UnitScore("0.2"),
+            {"minimum_relevance_score": "0.5"},
+        ),
+        (
+            RetrievalExclusionReason.DUPLICATE_CONTENT,
+            UnitScore("0.7"),
+            {"retained_memory_id": str(identifier(3))},
+        ),
+        (
+            RetrievalExclusionReason.LIMIT_EXCEEDED,
+            UnitScore("0.6"),
+            {"result_limit": 1, "pre_limit_rank": 1},
+        ),
+    )
+
+    exclusions = tuple(
+        RetrievalExclusion(
+            identifier(20 + index),
+            identifier(7),
+            identifier(40 + index),
+            reason,
+            score,
+            FrozenJsonObject(details),
+            NOW,
+        )
+        for index, (reason, score, details) in enumerate(cases)
+    )
+
+    assert tuple(exclusion.exclusion_reason for exclusion in exclusions) == tuple(
+        reason for reason, _, _ in cases
+    )
+
+
+@pytest.mark.parametrize(
+    ("reason", "score", "details", "message"),
+    [
+        (
+            RetrievalExclusionReason.DELETED,
+            UnitScore("0.2"),
+            {"stored_status": "DELETED", "deleted_at": "2026-08-02T10:00:00Z"},
+            "nullability",
+        ),
+        (
+            RetrievalExclusionReason.EXPIRED,
+            None,
+            {
+                "stored_status": "ACTIVE",
+                "expires_at": "2026-08-03T10:00:00Z",
+                "evaluated_at": "2026-08-02T10:00:00Z",
+            },
+            "at or before",
+        ),
+        (
+            RetrievalExclusionReason.SCORE_BELOW_THRESHOLD,
+            UnitScore("0.2"),
+            {"minimum_relevance_score": "0.50"},
+            "canonical",
+        ),
+        (
+            RetrievalExclusionReason.LIMIT_EXCEEDED,
+            UnitScore("0.6"),
+            {"result_limit": 2, "pre_limit_rank": 1},
+            "at or beyond",
+        ),
+        (
+            RetrievalExclusionReason.DUPLICATE_CONTENT,
+            UnitScore("0.6"),
+            {
+                "retained_memory_id": str(identifier(9)),
+                "normalized_content": "forbidden",
+            },
+            "exactly the canonical keys",
+        ),
+    ],
+)
+def test_retrieval_exclusion_rejects_noncanonical_evidence(
+    reason: RetrievalExclusionReason,
+    score: UnitScore | None,
+    details: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(LifecycleInvariantError, match=message):
+        RetrievalExclusion(
+            identifier(10),
+            identifier(7),
+            identifier(9),
+            reason,
+            score,
+            FrozenJsonObject(details),
+            NOW,
+        )
 
 
 def test_packet_rejects_noncanonical_schema_version() -> None:

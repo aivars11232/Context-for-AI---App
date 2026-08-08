@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import is_dataclass
+from datetime import datetime, timedelta, timezone
 import inspect
 from typing import Protocol, get_type_hints
 
@@ -64,8 +65,22 @@ from context_for_ai.application.contracts import (
     RegisterTopicInput,
     RegisterTopicOutput,
 )
-from context_for_ai.domain.enums import IntentType, OutputType, ProcessingRunStatus
+from context_for_ai.domain.entities import Memory, MemoryRevision, MemorySource
+from context_for_ai.domain.enums import (
+    IntentType,
+    LocalActor,
+    MemoryEffectiveStatus,
+    MemoryRevisionOperation,
+    MemoryScope,
+    MemorySourceKind,
+    MemoryStatus,
+    MemoryType,
+    OutputType,
+    ProcessingRunStatus,
+)
 from context_for_ai.domain.errors import BusyError, LifecycleInvariantError
+from context_for_ai.domain.policies import memory_revision_metadata
+from context_for_ai.domain.ports.records import MemoryRecord
 from context_for_ai.domain.value_objects import DomainId, UnitScore
 
 
@@ -95,6 +110,53 @@ USE_CASE_SIGNATURES = {
 
 def _id(value: int) -> DomainId:
     return DomainId(f"00000000-0000-0000-0000-{value:012d}")
+
+
+NOW = datetime(2026, 8, 2, 10, 0, tzinfo=timezone.utc)
+
+
+def _memory_record(
+    number: int,
+    *,
+    expires_at: datetime | None = None,
+) -> MemoryRecord:
+    created_at = NOW - timedelta(days=1)
+    memory = Memory(
+        _id(number),
+        _id(100),
+        None,
+        MemoryType.PROJECT_FACT,
+        MemoryScope.CONVERSATION,
+        MemoryStatus.ACTIVE,
+        f"Memory {number}",
+        ("memory",),
+        (),
+        UnitScore("0.5"),
+        UnitScore("1"),
+        expires_at,
+        created_at,
+        created_at,
+        None,
+    )
+    source = MemorySource(
+        _id(number + 1000),
+        memory.id,
+        MemorySourceKind.MANUAL_ENTRY,
+        None,
+        "Created manually",
+        created_at,
+    )
+    revision = MemoryRevision(
+        _id(number + 2000),
+        memory.id,
+        1,
+        MemoryRevisionOperation.CREATE,
+        memory.content,
+        memory_revision_metadata(memory, source.id),
+        LocalActor.LOCAL_USER,
+        created_at,
+    )
+    return MemoryRecord(memory, (source,), (revision,))
 
 
 def test_every_required_use_case_has_one_typed_execute_contract() -> None:
@@ -186,3 +248,40 @@ def test_named_item_registration_modes_are_exactly_declaration_or_explicit_ui() 
         RegisterNamedItemInput(_id(1), _id(2), "Architecture", None)
     with pytest.raises(LifecycleInvariantError, match="cannot include UI"):
         RegisterNamedItemInput(_id(1), _id(2), None, _id(3))
+
+
+def test_memory_output_carries_one_valid_effective_status_evaluation() -> None:
+    record = _memory_record(10, expires_at=NOW)
+
+    output = MemoryOutput(record, NOW, MemoryEffectiveStatus.EXPIRED)
+
+    assert output.record is record
+    assert output.evaluated_at == NOW
+    assert output.effective_status is MemoryEffectiveStatus.EXPIRED
+    with pytest.raises(LifecycleInvariantError, match="evaluated memory state"):
+        MemoryOutput(record, NOW, MemoryEffectiveStatus.ACTIVE)
+
+
+def test_memory_list_output_freezes_records_with_one_shared_evaluation_time() -> None:
+    active = MemoryOutput(
+        _memory_record(20),
+        NOW,
+        MemoryEffectiveStatus.ACTIVE,
+    )
+    expired = MemoryOutput(
+        _memory_record(21, expires_at=NOW),
+        NOW,
+        MemoryEffectiveStatus.EXPIRED,
+    )
+
+    output = MemoryListOutput([active, expired], NOW)  # type: ignore[arg-type]
+
+    assert output.records == (active, expired)
+    assert output.evaluated_at == NOW
+    later = MemoryOutput(
+        _memory_record(22),
+        NOW + timedelta(seconds=1),
+        MemoryEffectiveStatus.ACTIVE,
+    )
+    with pytest.raises(LifecycleInvariantError, match="share its evaluated_at"):
+        MemoryListOutput((active, later), NOW)

@@ -26,10 +26,15 @@ from context_for_ai.context_engine.reference_extraction import (
 from context_for_ai.context_engine.reference_resolution import (
     DeterministicReferenceResolver,
 )
+from context_for_ai.context_engine.retrieval import (
+    DeterministicContextRetriever,
+    normalize_retrieval_content,
+)
 
 __all__ = [
     "DeterministicClarificationBuilder",
     "DeterministicConstraintEngine",
+    "DeterministicContextRetriever",
     "DeterministicInterpretationEngine",
     "DeterministicReferenceMentionExtractor",
     "DeterministicReferenceResolver",
@@ -40,6 +45,7 @@ __all__ = [
     "normalize_capture",
     "normalize_display_label",
     "normalize_phrase",
+    "normalize_retrieval_content",
     "normalize_text",
     "parse_named_item_declaration",
     "predicate_atom",

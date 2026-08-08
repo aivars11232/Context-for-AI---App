@@ -21,6 +21,7 @@ from context_for_ai.domain.enums import (
     EntityType,
     EvaluationProviderMode,
     IntentType,
+    MemoryEffectiveStatus,
     MemoryScope,
     MemoryStatus,
     MemoryType,
@@ -38,7 +39,10 @@ from context_for_ai.domain.lifecycle import (
     SafeFailure,
     ValidationResult,
 )
-from context_for_ai.domain.policies import is_terminal_processing_run
+from context_for_ai.domain.policies import (
+    is_terminal_processing_run,
+    memory_effective_status,
+)
 from context_for_ai.domain.ports.records import (
     ContextPacketRecord,
     EvaluationCase,
@@ -598,19 +602,40 @@ class SoftDeleteMemoryInput:
 
 @dataclass(frozen=True, slots=True)
 class MemoryOutput:
-    """One memory with complete source and revision history."""
+    """One complete memory record evaluated at one explicit clock value."""
 
     record: MemoryRecord
+    evaluated_at: datetime
+    effective_status: MemoryEffectiveStatus
+
+    def __post_init__(self) -> None:
+        evaluated_at = ensure_utc(self.evaluated_at)
+        if self.effective_status is not memory_effective_status(
+            self.record.memory,
+            evaluated_at,
+        ):
+            raise LifecycleInvariantError(
+                "MemoryOutput.effective_status must match its evaluated memory state."
+            )
+        object.__setattr__(self, "evaluated_at", evaluated_at)
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryListOutput:
-    """An immutable set of memory records for explicit inspection."""
+    """Ordered memory outputs sharing one explicit query clock value."""
 
-    records: tuple[MemoryRecord, ...]
+    records: tuple[MemoryOutput, ...]
+    evaluated_at: datetime
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "records", tuple(self.records))
+        records = tuple(self.records)
+        evaluated_at = ensure_utc(self.evaluated_at)
+        if any(record.evaluated_at != evaluated_at for record in records):
+            raise LifecycleInvariantError(
+                "MemoryListOutput records must share its evaluated_at value."
+            )
+        object.__setattr__(self, "records", records)
+        object.__setattr__(self, "evaluated_at", evaluated_at)
 
 
 @dataclass(frozen=True, slots=True)
