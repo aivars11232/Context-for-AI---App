@@ -421,16 +421,82 @@ independently:
 The test timeout is a harness bound for a failed liveness assertion, not a
 product polling interval or latency promise.
 
-**Later context-page fixture/action/pass:** the later context-inspection owner
-uses one processed mock-provider message containing state, intent, references,
-constraints, retrieval, confidence, and validation data, opens the real
-context-inspection page, and visibly presents every FR-015 field, including
-reference status/evidence, retrieval scores/reasons, confidence, validation
-status, and any controlled failure or clarification.
+**TASK-0016 context-page fixtures:** use isolated databases containing (a) one
+empty conversation; (b) multiple accepted runs whose linked user-message
+sequences make one unambiguous latest target; (c) one rich post-validation run
+with active-state IDs, qualifiers, resolved and not-applicable references with
+evidence, non-conflicting constraints, selected memories, every confidence
+component, multiple validation attempts, and committed corrections; (d) every
+durable checkpoint and clarification-reason availability row in
+`ContextInspection.md`, including ambiguous/unresolved references and a
+persisted hard-conflict group; and (e) cancelled and controlled-failure terminal
+runs.
+Put unique prohibited sentinels in rendered prompts, invalid candidates,
+provider metadata, unsafe failure/clarification details, raw validation fields,
+and exceptions. Use the real facade and packaged QML offscreen, an instrumented
+inspection scope/connection, a held inspection query, fault injection, queued
+out-of-order envelopes, Qt accessibility-interface queries, and an accessibility
+announcement recorder.
 
-TASK-0015 owns only the shell-responsiveness pass and must not register or render
-a context-page placeholder. The later context-inspection task owns the page pass.
-Full AT-013 is satisfied only when both passes are green.
+**TASK-0016 context-page action:** navigate from the initial chat route to the
+real context page; hold the first query in `LOADING`; post GUI sentinels and
+exercise repeated navigation/refresh, conversation/project change, navigation
+away, and a current-conversation processing terminal event. Release held queries
+and deliver matching, duplicate, stale-generation, wrong-conversation, and late
+terminal/finished notifications. Separately load the rich, checkpoint,
+clarification, cancellation, controlled-failure, empty, and injected-load-error
+fixtures, then request shutdown with inspection alone and with foreground work
+also active.
+
+**TASK-0016 context-page pass:** all of these assertions hold independently:
+
+- target selection uses the greatest linked `USER` message sequence in the
+  current conversation; an existing conversation with no run displays exactly
+  `No processed request is available for this conversation.`;
+- the rich view displays active project/topic/task, intent, output type,
+  qualifier rule/source evidence, reference status/safe evidence, constraints,
+  selected-memory content/scores/seven reasons, overall plus component
+  confidence, the latest-attempt safe validation subset, and correction count.
+  The reason/terminal fixtures display persisted conflict membership and the
+  applicable clarification or safe terminal status, with the exact ordering,
+  canonical labels, and score formatting in `ContextInspection.md`;
+- every field at every checkpoint and clarification reason has the contracted
+  `AVAILABLE`, `EMPTY`, `NOT_APPLICABLE`, or `UNAVAILABLE` value and exact
+  placeholder text; current state never fills missing historical evidence;
+- clarification, controlled processing failure, cancellation, empty, loading,
+  ready, and inspection-load error follow their distinct states and safe text;
+  controlled pipeline failure is never presented as a load error, and starting
+  a load clears prior data;
+- first/repeated navigation, explicit refresh, current-conversation terminal
+  processing, and conversation/project changes trigger exactly the contracted
+  start or single coalesced refresh; intermediate commits, traces, busy results,
+  and pre-acceptance cancellation do not; navigation away and shutdown clear and
+  invalidate the view;
+- matching results apply once on the GUI thread, while duplicate, stale,
+  mismatched, late, or post-shutdown envelopes cause no route, page, chat, or
+  enablement mutation;
+- none of the prohibited sentinels, hidden IDs, raw/open DTOs, database objects,
+  prompts, candidates, provider data, or unsafe details occurs in the application
+  result, facade values/models, QML text, accessibility tree, or announcements;
+  QML invokes only facade actions and performs no repository/SQL/context/model
+  access or presentation-side join;
+- while an inspection read is held, GUI sentinels, navigation, foreground
+  cancellation, and close actions remain responsive. Inspection and foreground
+  work coexist only through separate scopes/connections, with at most one finite
+  inspection worker and no queue, poller, timer, run admission, or forced
+  termination;
+- instrumentation proves that the inspection connection is created, every read
+  occurs, and it closes on the same non-GUI inspection thread; terminal and
+  finished delivery are explicitly queued, and final disposal waits
+  asynchronously for every owned worker; and
+- the exact accessible IDs, names, roles, scalar/list item templates, state text,
+  polite announcement text, and monotonically revised announcements in
+  `ContextInspection.md` are observable through Qt's native accessibility
+  interfaces without a live screen reader, KDE service, or window-manager rule.
+
+TASK-0015 owns only the unchanged shell-responsiveness pass and must not register
+or render a context-page placeholder. TASK-0016 owns the context-page pass. Full
+AT-013 is satisfied only when both passes are green.
 
 ### AT-014 Manual memory lifecycle
 

@@ -620,6 +620,38 @@ and visible context/reference/retrieval/confidence/validation evidence. Full
 AT-013 passes only when both ownership portions pass. TASK-0015 must neither
 claim the page portion nor implement a placeholder for it.
 
+## TASK-0016 additive extension
+
+TASK-0016 is that later context-inspection owner. When TASK-0016 is implemented,
+`docs/contracts/ContextInspection.md` extends this contract only as follows:
+
+- the complete route set becomes exactly `{CHAT, CONTEXT_INSPECTION}`, while
+  `CHAT` remains the initial route and every TASK-0015 chat behavior remains
+  unchanged;
+- the existing entry-point-owned `ShellFacade` remains the sole QObject and
+  presentation-state owner exposed to QML, and gains only the inspection route,
+  actions, safe primitive/list-model projection, announcement properties, and
+  orthogonal page state defined there;
+- `ShellApplicationScopeFactory` gains
+  `open_inspection_scope() -> InspectionApplicationScope`, whose sole use case is
+  `inspect_context: InspectContext` and whose separate SQLite connection is
+  created, used, and closed on the inspection worker thread;
+- one finite read-only inspection worker may coexist with the sole foreground
+  worker because neither shares a scope, connection, transaction, repository,
+  worker object, or processing-run admission slot;
+- inspection invalidation may coalesce to one boolean follow-up refresh but may
+  never create a queue, poller, persistent thread, timer, or forced termination;
+  and
+- final Qt disposal waits asynchronously for both owned worker kinds, if
+  present, to deliver their queued cleanup notifications and close their scopes.
+
+The facade interface and scope algebra above remain the exact TASK-0015 slice;
+their complete post-TASK-0016 additive form is normative in
+`docs/contracts/ContextInspection.md`. Its explicitly closed safe-evidence
+allowlist is the only exception to TASK-0015's minimum-shell display restriction.
+It does not permit prompts, candidate responses, unsafe details, open DTOs, or
+presentation-side joins.
+
 ## Prohibited behavior
 
 Direct QML-to-SQL, QML-to-context-engine, QML-to-gateway/Ollama, raw application

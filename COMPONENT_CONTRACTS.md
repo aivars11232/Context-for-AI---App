@@ -9,6 +9,7 @@ scope, requirements, architecture, and schema documents.
 | PrepareApplicationShell | One pre-QML recovery preflight and deterministic initial-conversation selection/first-run creation | Recovery classification/resumption, UI state, worker creation, polling |
 | ProcessUserMessage | Idempotent pipeline orchestration and lifecycle transitions | Context rules, SQL, provider-specific calls |
 | RecoverProcessingRun | One-shot foreground startup recovery of the sole global non-terminal run | Polling, queues, daemon work, uncertain-call retry |
+| InspectContext | One-snapshot selection and safe historical aggregation of the latest accepted run for one conversation | Writes, current-state substitution, decision re-execution, raw/open DTO exposure |
 | ConversationStateManager | Deterministic active-state transitions | Model calls, UI rendering |
 | InterpretationEngine | Intent, topic, qualifier, output-type interpretation | Persistence, response generation |
 | ReferenceResolver | Mention-to-entity resolution | Memory mutation, model generation |
@@ -25,13 +26,18 @@ scope, requirements, architecture, and schema documents.
 | TraceLogger | `emit(TraceEvent)` for redacted structured stage/recovery events | Alternate ambient-correlation APIs, raw message/prompt/response logging, domain policy decisions |
 | TransactionBoundary | One connection-local re-entrant transaction whose nested users join the outer commit/rollback | Cross-thread contexts, independent nested commits, provider calls inside a transaction |
 | Repository implementations | Persistence mechanics | Domain policy decisions |
-| ShellApplicationScopeFactory | Calling-thread construction and same-thread disposal of startup/foreground application scopes and their SQLite graphs | Shared/cross-thread connections, queues, service location from QML |
+| ShellApplicationScopeFactory | Calling-thread construction and same-thread disposal of startup, foreground, and inspection application scopes and their separate SQLite graphs | Shared/cross-thread connections, queues, service location from QML |
 | IdempotencyKeyFactory | One caller-owned UUID for each controller-accepted submission | Run admission, persistence, duplicate classification, recovery IDs |
 | StartupErrorPresenter | One safe stderr presentation and, for interactive desktop mode, one entry-point-owned native non-QML modal | Raw diagnostics, QML fallback, recovery-result presentation |
 | ForegroundRunController | Private execution role of `ShellFacade`: one ephemeral worker/token, duplicate suppression, cancellation/shutdown, queued terminal handoff | A second public controller/state store, application decisions, SQL, provider calls, trace-derived progress, force termination |
-| ShellFacade | The one entry-point-owned GUI QObject, closed GUI state, safe result projection, chat actions, one `CHAT` route | QML-owned lifetime, raw application DTO branching in QML, diagnostics, deferred-page placeholders |
+| InspectionQueryController | Private execution role of `ShellFacade`: one finite read-only worker, generation matching, one coalesced refresh, queued safe-result handoff | A second public controller/state store, a queue/poller/persistent worker, processing-run admission, shared SQLite objects |
+| ShellFacade | The one entry-point-owned GUI QObject, closed GUI state, safe result projection, chat/inspection actions, exact `{CHAT, CONTEXT_INSPECTION}` route set | QML-owned lifetime, raw application DTO branching in QML, diagnostics, deferred-page placeholders |
 | Presentation layer | Display and explicit user actions through application interfaces | Context intelligence rules, SQL, provider/Ollama access |
 
 The exact TASK-0015 interfaces, state machine, startup/error behavior, scope
 lifetime, responsiveness, result projection, route ownership, and QML packaging
 rules are normative in `docs/contracts/PresentationShell.md`.
+
+The TASK-0016 inspection target, safe result algebra, availability, worker and
+refresh semantics, accessibility, and extension to the shell are normative in
+`docs/contracts/ContextInspection.md`.

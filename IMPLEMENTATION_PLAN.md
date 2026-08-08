@@ -72,6 +72,15 @@ packaging, and the shell-responsiveness portion of AT-013 under
 other named views remain with their later owners; TASK-0015 creates no
 placeholder routes for them.
 
+TASK-0016's specification is reconciled and implementation-ready in
+`docs/contracts/ContextInspection.md`, but implementation remains blocked until
+TASK-0015 is implemented and its exit criteria pass. TASK-0016 then owns the
+read-only latest-run `InspectContext` projection, the additive
+`CONTEXT_INSPECTION` route on the same facade, one separate finite inspection
+scope/worker, closed page/refresh/error states, native Qt accessibility, and the
+context-page portion of AT-013. It owns no schema migration, processing write,
+generic worker queue, or placeholder for another page.
+
 **Exit:** AT-013 and AT-014 pass; no UI thread blocking or hidden automatic
 memory mutation remains.
 

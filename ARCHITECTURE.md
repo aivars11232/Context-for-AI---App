@@ -89,6 +89,18 @@ ignored safely. These foreground tasks are user-owned and finite, not background
 workers. The complete states, safe display, worker lifetime, and disposal rules
 are authoritative in `docs/contracts/PresentationShell.md`.
 
+TASK-0016 extends that shell with exactly one `CONTEXT_INSPECTION` route while
+the entry-point-owned `ShellFacade` remains the sole QObject and presentation-
+state owner exposed to QML. One private, finite inspection-query worker may
+coexist with the foreground worker only through a separate read-only application
+scope and SQLite connection. It performs one snapshot inspection, emits one queued
+immutable safe result, and terminates; it has no queue, poller, persistent
+thread, processing-run slot, or cross-thread persistence object. Inspection
+page state is orthogonal to foreground processing state. Target selection,
+redaction, stale-result rejection, refresh coalescing, accessibility, and
+shutdown ownership are authoritative in
+`docs/contracts/ContextInspection.md`.
+
 ### 2. Application
 
 Coordinates `PrepareApplicationShell`, `ProcessUserMessage`,
@@ -99,6 +111,10 @@ execution. Shell preparation owns only the read-only recovery preflight and
 deterministic initial-conversation selection/first-run creation. It does not
 classify or resume recovery. Application owns run lifecycle transitions and
 transaction orchestration, not context rules, UI state, worker creation, or SQL.
+`InspectContext` is a read-only application query: it selects the latest
+accepted run for one conversation and builds the closed historical, safe
+inspection projection inside one repository-backed snapshot. It never re-runs a
+decision or returns raw persistence, model, validation, or domain objects.
 
 ### 3. Domain
 

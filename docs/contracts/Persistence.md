@@ -70,6 +70,33 @@ constructing a connection on the GUI thread for later worker use is prohibited.
 Non-SQLite immutable application result DTOs may cross only through the queued
 terminal handoff defined by `PresentationShell.md`.
 
+## TASK-0016 read-only inspection
+
+`ContextInspection.md` adds one `InspectionApplicationScope`. The inspection
+worker opens that scope and its fresh SQLite connection on the inspection thread,
+performs exactly one read-only snapshot, closes the scope and connection on that
+same thread, and only then queues one immutable safe result. No connection,
+transaction, cursor, row, repository, domain aggregate, or open persistence DTO
+crosses into the GUI thread.
+
+Inside the snapshot, `InspectContext` validates the requested conversation and
+selects its latest accepted run by the greatest sequence number of the linked
+`USER` message. It reads only that run's committed packet and linked normalized
+evidence. It may resolve the current canonical label for an active-state owner ID
+snapshotted in the packet, but it never substitutes current conversation state
+for missing historical evidence. Missing artifacts use the explicit
+`UNAVAILABLE`/`NOT_APPLICABLE` rules or fail the whole load when lineage is
+invalid; they are not reconstructed from traces, prompts, candidates, or current
+state.
+
+This read may coexist with one TASK-0015 foreground scope only through its
+separate connection and snapshot. It consumes no processing-run slot, starts no
+transactional write, emits no trace, and invokes no context, validation,
+correction, model, or memory-mutation component. Repositories may add the minimum
+read query needed for target selection and aggregation, but the existing schema
+already retains the complete authoritative projection. TASK-0016 changes neither
+`DATABASE_SCHEMA.md` nor the migration set.
+
 ## Canonical transaction boundaries
 
 No SQLite transaction is held during a gateway/provider call.

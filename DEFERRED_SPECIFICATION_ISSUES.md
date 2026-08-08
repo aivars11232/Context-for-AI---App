@@ -29,7 +29,7 @@ also agree.
 | D-011 | Reconcile local-Ollama opt-in semantics in `TASK-0012` and `TASK-0018`: no flag skips; flag present makes invalid daemon/model/configuration a failed opt-in test. | `TASK-0018` |
 | D-012 | Resolved: TASK-0013 retains pure validator/correction and bounded preconstructed repository evidence; TASK-0014 owns complete provider-facing AT-012 orchestration. | `TASK-0013`, `TASK-0014` |
 | D-013 | The TASK-0009 portion is resolved below: history is inspectable only and there is no restore operation. Remaining work must keep Task 0015 to responsiveness portions of AT-013 and Task 0017 to UI/presentation portions of manual memory control. | `TASK-0015`, `TASK-0017` |
-| D-014 | The TASK-0014 portion is resolved by its reconciled delivery contract and authoritative public-result, transaction, recovery, failure, lineage, trace, and acceptance contracts. Portions assigned to other delivery tasks retain their existing status. | `TASK-0002` through `TASK-0018` |
+| D-014 | The TASK-0014 portion is resolved by its reconciled delivery contract and authoritative public-result, transaction, recovery, failure, lineage, trace, and acceptance contracts. The TASK-0016 portion is resolved below by its canonical context-inspection and cross-layer contracts. Portions assigned to other delivery tasks retain their existing status. | `TASK-0002` through `TASK-0018` |
 | D-015 | Resolved for TASK-0014: roadmap, backlog, and implementation-plan wording now agrees on global admission, one-shot recovery, clarification persistence, and AT-002/full-AT-012/AT-015 ownership. | `TASK-0014` |
 
 ### TASK-0002 reconciliation
@@ -263,6 +263,35 @@ correction-memory, validate-then-display, prior-conversation fixture, and
 validate-before-display, no-automatic-memory, and conversation-state contracts
 listed above. No historical planning file may add a TASK-0014 behavior or gate.
 
+### TASK-0016 reconciliation
+
+The TASK-0016 portion of D-014 is resolved by
+`docs/contracts/ContextInspection.md`, the additive extension in
+`docs/contracts/PresentationShell.md`, the read-only ownership in
+`docs/contracts/Persistence.md`, the component/architecture boundaries, and the
+deterministic context-page portion of AT-013.
+
+The canonical inspection target is the latest accepted run for the shell's
+current conversation, selected by linked user-message sequence. The page exposes
+only its closed historical safe projection with explicit field availability,
+uses one additive route on the existing facade, and performs one finite
+worker-thread-owned snapshot per load with queued/stale-safe delivery. Its
+complete states, refresh rules, native Qt accessibility oracle, and redaction
+allowlist are fixed by that contract. The existing schema is sufficient and no
+migration is assigned to TASK-0016.
+
+For TASK-0016, the historical “UI Modules,” “User Interface,” and “Presentation
+Layer” proposals are non-authoritative. Their `ProjectStateView`, plural model,
+rule-locking, project-file/project-data, direct backend/API, and generic
+background-work descriptions neither supplement nor override
+`ContextInspection.md`. No historical planning file may add a TASK-0016 field,
+route, state, worker, persistence requirement, or verification gate.
+
+No TASK-0016 specification gate remains. Implementation remains ordered behind
+completed, green TASK-0015 exit criteria; that dependency is not a specification
+ambiguity. D-014 remains open for every other delivery-task portion not already
+resolved elsewhere in this register.
+
 ## Historical planning reconciliation
 
 These supporting documents require a status-note or canonical-pointer repair,
@@ -279,7 +308,7 @@ the related MVP delivery area.
 | Memory System | Obsolete correction example implies image generation may be allowed. | `TASK-0009` |
 | Critical Relationships | Direct project-to-task/project-state model conflicts with conversation-scoped tasks and conversation state. | `TASK-0004` |
 | Main Use Cases | Historical `UpdateProjectState` use case conflicts with the canonical conversation-state model. | `TASK-0014` |
-| UI Modules, User Interface, and Presentation Layer | `ProjectStateView`, plural models, rule locking, project-file, and unsupported project-data promises conflict with MVP scope. | `TASK-0015`, `TASK-0016`, `TASK-0017` |
+| UI Modules, User Interface, and Presentation Layer | Its TASK-0016 context-page proposals are superseded by `ContextInspection.md`; `ProjectStateView`, plural models, rule locking, project-file, and unsupported project-data promises remain non-authoritative and deferred to their owning task portions. | `TASK-0015`, `TASK-0016`, `TASK-0017` |
 | Response Validator | Historical hallucination/subjective checks are presented as MVP behavior. | `TASK-0013` |
 | MVP Engineering Boundary | “Unrestricted background agents” is weaker than the MVP exclusion of all background workers. | `TASK-0015` |
 

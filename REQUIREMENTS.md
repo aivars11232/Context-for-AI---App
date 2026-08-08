@@ -5,7 +5,8 @@ The detailed deterministic behavior for these requirements is normative in
 `docs/contracts/ProcessUserMessage.md`, `docs/contracts/ModelGateway.md`,
 `docs/contracts/OllamaAdapter.md`, `docs/contracts/Persistence.md`,
 `docs/contracts/ResponseValidation.md`, and
-`docs/contracts/PresentationShell.md`.
+`docs/contracts/PresentationShell.md`, with context-inspection behavior in
+`docs/contracts/ContextInspection.md`.
 
 ## Functional requirements
 
@@ -130,10 +131,21 @@ does not delete it.
 
 ### FR-015 Context inspection
 
-The UI shall show the active state, interpreted intent, expected output type,
-references and their outcomes, constraints and conflicts, retrieved memories
-with scores/reasons, confidence, validation result, and controlled-failure
-status or deterministic clarification question when applicable.
+For the latest accepted processing run in the shell's current conversation, the
+UI shall show the historical active project/topic/task decision, interpreted
+intent, expected output type, qualifier evidence, references and safe source
+evidence, constraints and persisted conflict groups, selected memories with
+scores/reasons, overall and component confidence, latest safe validation
+evidence, and committed correction count. A clarification run shall show its
+deterministic reason/question; a controlled-failure or cancellation run shall
+show its safe terminal status.
+
+Every field shall distinguish available, empty, not-applicable, and unavailable
+durable evidence as defined in `docs/contracts/ContextInspection.md`; current
+conversation state shall not fill a historical gap. Inspection is a read-only
+application use case exposed through the existing shell facade. No prompt,
+candidate response, provider metadata, raw exception, unsafe detail, or open
+persistence/domain DTO shall reach QML or accessibility output.
 
 ### FR-016 Manual memory control
 
