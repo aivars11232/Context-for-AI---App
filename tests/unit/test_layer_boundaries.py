@@ -29,7 +29,7 @@ MODEL_GATEWAY_SYMBOLS = frozenset(
         "ModelNotFoundFailure",
         "ProviderUnavailableFailure",
         "TokenUsage",
-        "UpstreamTimeoutFailure",
+        "ModelTimeoutFailure",
     }
 )
 FORBIDDEN_OUTWARD_ROOTS = frozenset(
@@ -198,6 +198,26 @@ def test_import_reference_parser_resolves_absolute_and_relative_imports() -> Non
         "context_for_ai.domain.ports.ModelGateway",
         "context_for_ai.application.local_module",
     )
+
+
+def test_model_timeout_failure_direct_imports_are_gateway_references() -> None:
+    absolute_reference = import_references_from_source(
+        "from context_for_ai.domain.ports import ModelTimeoutFailure",
+        package_name="context_for_ai.context_engine",
+    )[0]
+    relative_reference = import_references_from_source(
+        "from ..domain.ports import ModelTimeoutFailure",
+        package_name="context_for_ai.context_engine",
+    )[0]
+
+    assert absolute_reference.qualified_name == (
+        "context_for_ai.domain.ports.ModelTimeoutFailure"
+    )
+    assert relative_reference.qualified_name == (
+        "context_for_ai.domain.ports.ModelTimeoutFailure"
+    )
+    assert _is_model_gateway_reference(absolute_reference)
+    assert _is_model_gateway_reference(relative_reference)
 
 
 def test_inward_layers_import_only_approved_project_layers_and_standard_library() -> None:
