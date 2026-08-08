@@ -1,0 +1,40 @@
+schema_version: mock-model-provider-v1
+request:
+  model_name: fixture-model
+  rendered_prompt: " \n@@CFA/PREAMBLE@@\nExact Unicode: café 😀\r\n@@CFA/END@@\n "
+  settings:
+    context_window_tokens: 4096
+    request_timeout_seconds: 60
+    temperature_decimal: "0"
+  correlation:
+    processing_run_id: 30000000-0000-4000-8000-000000000001
+    context_packet_id: 30000000-0000-4000-8000-000000000002
+    model_request_id: 30000000-0000-4000-8000-000000000003
+    attempt_number: 0
+success:
+  response_text: "Complete synthetic response.\nSecond line: café 😀"
+  provider_metadata:
+    finish_reason: stop
+    fixture:
+      labels:
+        - complete
+        - synthetic
+      schema_version: mock-model-provider-v1
+  elapsed_microseconds: 123456
+  token_usage:
+    prompt_tokens: 23
+    generated_tokens: 9
+    total_tokens: 32
+steps:
+  - checkpoint: IMMEDIATE
+    terminal_outcome: COMPLETED
+  - checkpoint: IMMEDIATE
+    terminal_outcome: PROVIDER_UNAVAILABLE
+  - checkpoint: IMMEDIATE
+    terminal_outcome: MODEL_NOT_FOUND
+  - checkpoint: IMMEDIATE
+    terminal_outcome: MODEL_TIMEOUT
+  - checkpoint: IMMEDIATE
+    terminal_outcome: INVALID_PROVIDER_RESPONSE
+  - checkpoint: HELD
+    terminal_outcome: COMPLETED

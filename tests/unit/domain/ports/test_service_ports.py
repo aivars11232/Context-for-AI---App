@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
-from dataclasses import fields, is_dataclass
+from dataclasses import FrozenInstanceError, fields, is_dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import inspect
-from typing import Protocol, get_type_hints
+from typing import Protocol, get_args, get_type_hints
 
 import pytest
 
+import context_for_ai.domain.ports as public_ports
 from context_for_ai.domain.lifecycle import ClarificationRequest, ValidationResult
 from context_for_ai.domain.decisions import (
     ConstraintDecision,
@@ -24,11 +26,14 @@ from context_for_ai.domain.decisions import (
 from context_for_ai.domain.entities import ConversationState, Entity, Memory, Message
 from context_for_ai.domain.enums import (
     EntityType,
+    FailureCode,
     MemoryScope,
     MemoryStatus,
     MemoryType,
     MessageRole,
+    ModelRequestStatus,
     OutputType,
+    ProcessingRunStatus,
     ReferenceRankReason,
     ReferenceStatus,
     RetrievalExclusionReason,
@@ -50,18 +55,27 @@ from context_for_ai.domain.ports import (
     ContextRetriever,
     CorrectionController,
     CorrectionDecision,
+    GenerationFailure,
+    GenerationOutcome,
     GenerationRequest,
+    GenerationSettings,
     IdGenerator,
     InterpretationEngine,
     InterpretationRequest,
+    InvalidProviderResponseFailure,
+    ModelCancelledFailure,
     ModelGateway,
+    ModelNotFoundFailure,
+    ModelTimeoutFailure,
     OutputShapeRule,
     PromptRenderer,
     PromptRenderOutcome,
     PromptRenderRequest,
+    ProviderUnavailableFailure,
     ResponseValidator,
     RetrievalDecision,
     RetrievalRequest,
+    TokenUsage,
     TraceEvent,
     TraceLogger,
     TransactionBoundary,
@@ -120,16 +134,279 @@ def test_all_service_contracts_are_structural_protocols() -> None:
         assert service._is_protocol is True
 
 
-def test_model_gateway_accepts_cancellation_and_returns_only_buffered_text() -> None:
+def test_model_gateway_accepts_cancellation_and_returns_exhaustive_outcome() -> None:
     hints = get_type_hints(ModelGateway.generate)
 
     assert hints == {
         "request": GenerationRequest,
         "cancellation_token": CancellationToken,
-        "return": CompletedGeneration,
+        "return": GenerationOutcome,
     }
+    assert get_args(GenerationFailure.__value__) == (
+        ProviderUnavailableFailure,
+        ModelNotFoundFailure,
+        ModelTimeoutFailure,
+        ModelCancelledFailure,
+        InvalidProviderResponseFailure,
+    )
+    assert get_args(GenerationOutcome.__value__) == (
+        CompletedGeneration,
+        GenerationFailure,
+    )
     assert not hasattr(ModelGateway, "stream")
     assert not hasattr(ModelGateway, "retry")
+    assert not hasattr(ModelGateway, "partial")
+
+
+@pytest.mark.parametrize(
+    ("context_window_tokens", "request_timeout_seconds", "temperature"),
+    (
+        (1024, 1, Decimal("0")),
+        (4096, 60, Decimal("0.125")),
+        (32768, 300, Decimal("2")),
+    ),
+)
+def test_generation_settings_accept_exact_authoritative_boundaries(
+    context_window_tokens: int,
+    request_timeout_seconds: int,
+    temperature: Decimal,
+) -> None:
+    settings = GenerationSettings(
+        context_window_tokens,
+        request_timeout_seconds,
+        temperature,
+    )
+
+    assert settings.context_window_tokens == context_window_tokens
+    assert settings.request_timeout_seconds == request_timeout_seconds
+    assert settings.temperature == temperature
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    (
+        ("context_window_tokens", 1023),
+        ("context_window_tokens", True),
+        ("context_window_tokens", 1024.0),
+        ("request_timeout_seconds", 0),
+        ("request_timeout_seconds", 301),
+        ("request_timeout_seconds", False),
+        ("request_timeout_seconds", 1.0),
+        ("temperature", 0),
+        ("temperature", 0.0),
+        ("temperature", Decimal("NaN")),
+        ("temperature", Decimal("Infinity")),
+        ("temperature", Decimal("-0.001")),
+        ("temperature", Decimal("2.001")),
+    ),
+)
+def test_generation_settings_reject_invalid_types_and_ranges(
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    values: dict[str, object] = {
+        "context_window_tokens": 4096,
+        "request_timeout_seconds": 60,
+        "temperature": Decimal("0"),
+    }
+    values[field_name] = invalid_value
+
+    with pytest.raises(LifecycleInvariantError):
+        GenerationSettings(**values)  # type: ignore[arg-type]
+
+
+def generation_request(*, attempt_number: int = 0) -> GenerationRequest:
+    return GenerationRequest(
+        model_name="fixture-model",
+        rendered_prompt=" \nExact Unicode: café 😀\r\n ",
+        settings=GenerationSettings(4096, 60, Decimal("0")),
+        processing_run_id=identifier(801),
+        context_packet_id=identifier(802),
+        model_request_id=identifier(803),
+        attempt_number=attempt_number,
+    )
+
+
+def test_generation_request_preserves_exact_prompt_and_correlation_values() -> None:
+    request = generation_request(attempt_number=2)
+
+    assert request.rendered_prompt.encode("utf-8") == (
+        " \nExact Unicode: café 😀\r\n ".encode("utf-8")
+    )
+    assert request.processing_run_id == identifier(801)
+    assert request.context_packet_id == identifier(802)
+    assert request.model_request_id == identifier(803)
+    assert request.attempt_number == 2
+
+
+@pytest.mark.parametrize("attempt_number", (False, True, -1, 3, 1.0, "1"))
+def test_generation_request_rejects_noncanonical_attempts(
+    attempt_number: object,
+) -> None:
+    with pytest.raises(LifecycleInvariantError, match="attempt_number"):
+        generation_request(attempt_number=attempt_number)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    (
+        ("model_name", " "),
+        ("rendered_prompt", ""),
+        ("settings", object()),
+        ("processing_run_id", "not-a-domain-id"),
+        ("context_packet_id", "not-a-domain-id"),
+        ("model_request_id", "not-a-domain-id"),
+    ),
+)
+def test_generation_request_rejects_invalid_public_fields(
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    request = generation_request()
+    values = {field.name: getattr(request, field.name) for field in fields(request)}
+    values[field_name] = invalid_value
+
+    with pytest.raises(LifecycleInvariantError):
+        GenerationRequest(**values)  # type: ignore[arg-type]
+
+
+def test_completed_generation_freezes_exact_metadata_duration_and_token_usage() -> None:
+    token_usage = TokenUsage(11, 7, 18)
+    completed = CompletedGeneration(
+        response_text=" complete response \n",
+        provider_metadata={"nested": {"safe": ["value", 1]}},
+        elapsed=timedelta(microseconds=123456),
+        token_usage=token_usage,
+    )
+
+    assert completed.response_text == " complete response \n"
+    assert completed.provider_metadata == FrozenJsonObject(
+        {"nested": {"safe": ["value", 1]}}
+    )
+    assert completed.elapsed == timedelta(microseconds=123456)
+    assert completed.token_usage is token_usage
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    (
+        ("response_text", ""),
+        ("response_text", " \n\t"),
+        ("provider_metadata", None),
+        ("provider_metadata", []),
+        ("elapsed", timedelta(microseconds=-1)),
+        ("elapsed", 0),
+        ("token_usage", object()),
+    ),
+)
+def test_completed_generation_rejects_incomplete_or_invalid_values(
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    values: dict[str, object] = {
+        "response_text": "complete",
+        "provider_metadata": FrozenJsonObject({}),
+        "elapsed": timedelta(0),
+        "token_usage": None,
+    }
+    values[field_name] = invalid_value
+
+    with pytest.raises(LifecycleInvariantError):
+        CompletedGeneration(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "values",
+    (
+        (-1, None, None),
+        (True, None, None),
+        (None, -1, None),
+        (None, None, False),
+        (None, None, 1.0),
+    ),
+)
+def test_token_usage_rejects_noncanonical_counts(
+    values: tuple[object, object, object],
+) -> None:
+    with pytest.raises(LifecycleInvariantError):
+        TokenUsage(*values)  # type: ignore[arg-type]
+
+
+def test_gateway_failure_values_own_exact_immutable_safe_mappings() -> None:
+    expected = (
+        (
+            ProviderUnavailableFailure,
+            "PROVIDER_UNAVAILABLE",
+            "The local model provider is unavailable.",
+            ModelRequestStatus.FAILED,
+            ProcessingRunStatus.FAILED,
+            FailureCode.PROVIDER_UNAVAILABLE,
+        ),
+        (
+            ModelNotFoundFailure,
+            "MODEL_NOT_FOUND",
+            "The configured local model is unavailable.",
+            ModelRequestStatus.FAILED,
+            ProcessingRunStatus.FAILED,
+            FailureCode.MODEL_NOT_FOUND,
+        ),
+        (
+            ModelTimeoutFailure,
+            "MODEL_TIMEOUT",
+            "The local model request timed out.",
+            ModelRequestStatus.TIMED_OUT,
+            ProcessingRunStatus.FAILED,
+            FailureCode.MODEL_TIMEOUT,
+        ),
+        (
+            ModelCancelledFailure,
+            "MODEL_CANCELLED",
+            "The local model request was cancelled.",
+            ModelRequestStatus.CANCELLED,
+            ProcessingRunStatus.CANCELLED,
+            FailureCode.MODEL_CANCELLED,
+        ),
+        (
+            InvalidProviderResponseFailure,
+            "INVALID_PROVIDER_RESPONSE",
+            "The local model provider returned an invalid response.",
+            ModelRequestStatus.FAILED,
+            ProcessingRunStatus.FAILED,
+            FailureCode.INVALID_PROVIDER_RESPONSE,
+        ),
+    )
+
+    for (
+        failure_type,
+        diagnostic_code,
+        safe_message,
+        request_status,
+        run_status,
+        failure_code,
+    ) in expected:
+        failure = failure_type()
+        assert failure.diagnostic_code == diagnostic_code
+        assert failure.safe_message == safe_message
+        assert failure.model_request_status is request_status
+        assert failure.processing_run_status is run_status
+        assert failure.failure_code is failure_code
+        assert all(not item.init for item in fields(failure))
+        with pytest.raises(FrozenInstanceError):
+            failure.safe_message = "provider-controlled"  # type: ignore[misc]
+        with pytest.raises(TypeError):
+            failure_type("provider-controlled")  # type: ignore[call-arg]
+
+
+def test_superseded_gateway_exceptions_are_not_public() -> None:
+    for name in (
+        "ModelGatewayError",
+        "ProviderUnavailableError",
+        "ModelNotFoundError",
+        "ModelTimeoutError",
+        "ModelCancelledError",
+        "InvalidProviderResponseError",
+    ):
+        assert not hasattr(public_ports, name)
 
 
 def test_system_port_signatures_are_provider_independent() -> None:

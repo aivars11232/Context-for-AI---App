@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from decimal import Decimal
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import timedelta
+from decimal import Decimal
 from typing import Protocol
 
+from context_for_ai.domain.enums import (
+    FailureCode,
+    ModelRequestStatus,
+    ProcessingRunStatus,
+)
 from context_for_ai.domain.errors import LifecycleInvariantError
 from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject
 
@@ -21,6 +27,11 @@ def _non_negative_integer(field_name: str, value: int) -> None:
         raise LifecycleInvariantError(f"{field_name} must be non-negative.")
 
 
+def _required_domain_id(field_name: str, value: DomainId) -> None:
+    if not isinstance(value, DomainId):
+        raise LifecycleInvariantError(f"{field_name} must be a domain ID.")
+
+
 @dataclass(frozen=True, slots=True)
 class GenerationSettings:
     """Validated deterministic settings for one buffered provider call."""
@@ -30,17 +41,31 @@ class GenerationSettings:
     temperature: Decimal
 
     def __post_init__(self) -> None:
-        if self.context_window_tokens < 1:
+        if (
+            not isinstance(self.context_window_tokens, int)
+            or isinstance(self.context_window_tokens, bool)
+            or self.context_window_tokens < 1024
+        ):
             raise LifecycleInvariantError(
-                "GenerationSettings.context_window_tokens must be positive."
+                "GenerationSettings.context_window_tokens must be an integer "
+                "greater than or equal to 1024."
             )
-        if self.request_timeout_seconds < 1:
+        if (
+            not isinstance(self.request_timeout_seconds, int)
+            or isinstance(self.request_timeout_seconds, bool)
+            or not 1 <= self.request_timeout_seconds <= 300
+        ):
             raise LifecycleInvariantError(
-                "GenerationSettings.request_timeout_seconds must be positive."
+                "GenerationSettings.request_timeout_seconds must be an integer "
+                "between 1 and 300."
             )
-        if not Decimal(0) <= self.temperature <= Decimal(2):
+        if (
+            not isinstance(self.temperature, Decimal)
+            or not self.temperature.is_finite()
+            or not Decimal(0) <= self.temperature <= Decimal(2)
+        ):
             raise LifecycleInvariantError(
-                "GenerationSettings.temperature must be between 0 and 2."
+                "GenerationSettings.temperature must be a finite Decimal between 0 and 2."
             )
 
 
@@ -58,11 +83,28 @@ class GenerationRequest:
 
     def __post_init__(self) -> None:
         _required_text("GenerationRequest.model_name", self.model_name)
-        if not isinstance(self.rendered_prompt, str):
+        if not isinstance(self.rendered_prompt, str) or not self.rendered_prompt:
             raise LifecycleInvariantError(
-                "GenerationRequest.rendered_prompt must be text."
+                "GenerationRequest.rendered_prompt must be non-empty text."
             )
-        if self.attempt_number not in (0, 1, 2):
+        if not isinstance(self.settings, GenerationSettings):
+            raise LifecycleInvariantError(
+                "GenerationRequest.settings must be validated generation settings."
+            )
+        for field_name in (
+            "processing_run_id",
+            "context_packet_id",
+            "model_request_id",
+        ):
+            _required_domain_id(
+                f"GenerationRequest.{field_name}",
+                getattr(self, field_name),
+            )
+        if (
+            not isinstance(self.attempt_number, int)
+            or isinstance(self.attempt_number, bool)
+            or self.attempt_number not in (0, 1, 2)
+        ):
             raise LifecycleInvariantError(
                 "GenerationRequest.attempt_number must be 0, 1, or 2."
             )
@@ -93,9 +135,10 @@ class CompletedGeneration:
     token_usage: TokenUsage | None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.response_text, str):
+        _required_text("CompletedGeneration.response_text", self.response_text)
+        if not isinstance(self.provider_metadata, (FrozenJsonObject, Mapping)):
             raise LifecycleInvariantError(
-                "CompletedGeneration.response_text must be text."
+                "CompletedGeneration.provider_metadata must be a JSON object."
             )
         if not isinstance(self.provider_metadata, FrozenJsonObject):
             object.__setattr__(
@@ -107,37 +150,138 @@ class CompletedGeneration:
             raise LifecycleInvariantError(
                 "CompletedGeneration.elapsed must be a non-negative duration."
             )
+        if self.token_usage is not None and not isinstance(
+            self.token_usage, TokenUsage
+        ):
+            raise LifecycleInvariantError(
+                "CompletedGeneration.token_usage must be typed token usage or null."
+            )
 
 
-class ModelGatewayError(Exception):
-    """Base class for safe, provider-independent transport failures."""
+@dataclass(frozen=True, slots=True)
+class ProviderUnavailableFailure:
+    """Canonical result when the configured local provider is unavailable."""
 
-    def __init__(self, safe_message: str, diagnostic_code: str) -> None:
-        _required_text("ModelGatewayError.safe_message", safe_message)
-        _required_text("ModelGatewayError.diagnostic_code", diagnostic_code)
-        self.safe_message = safe_message
-        self.diagnostic_code = diagnostic_code
-        super().__init__(safe_message)
-
-
-class ProviderUnavailableError(ModelGatewayError):
-    """The configured local provider cannot be reached."""
-
-
-class ModelNotFoundError(ModelGatewayError):
-    """The configured local model is unavailable at the provider."""
-
-
-class ModelTimeoutError(ModelGatewayError):
-    """The bounded provider request exceeded its configured timeout."""
-
-
-class ModelCancelledError(ModelGatewayError):
-    """The foreground user request cancelled provider waiting."""
+    diagnostic_code: str = field(init=False, default="PROVIDER_UNAVAILABLE")
+    safe_message: str = field(
+        init=False,
+        default="The local model provider is unavailable.",
+    )
+    model_request_status: ModelRequestStatus = field(
+        init=False,
+        default=ModelRequestStatus.FAILED,
+    )
+    processing_run_status: ProcessingRunStatus = field(
+        init=False,
+        default=ProcessingRunStatus.FAILED,
+    )
+    failure_code: FailureCode = field(
+        init=False,
+        default=FailureCode.PROVIDER_UNAVAILABLE,
+    )
 
 
-class InvalidProviderResponseError(ModelGatewayError):
-    """The provider returned no valid complete text response."""
+@dataclass(frozen=True, slots=True)
+class ModelNotFoundFailure:
+    """Canonical result when the configured local model is unavailable."""
+
+    diagnostic_code: str = field(init=False, default="MODEL_NOT_FOUND")
+    safe_message: str = field(
+        init=False,
+        default="The configured local model is unavailable.",
+    )
+    model_request_status: ModelRequestStatus = field(
+        init=False,
+        default=ModelRequestStatus.FAILED,
+    )
+    processing_run_status: ProcessingRunStatus = field(
+        init=False,
+        default=ProcessingRunStatus.FAILED,
+    )
+    failure_code: FailureCode = field(
+        init=False,
+        default=FailureCode.MODEL_NOT_FOUND,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTimeoutFailure:
+    """Canonical result when the bounded provider request times out."""
+
+    diagnostic_code: str = field(init=False, default="MODEL_TIMEOUT")
+    safe_message: str = field(
+        init=False,
+        default="The local model request timed out.",
+    )
+    model_request_status: ModelRequestStatus = field(
+        init=False,
+        default=ModelRequestStatus.TIMED_OUT,
+    )
+    processing_run_status: ProcessingRunStatus = field(
+        init=False,
+        default=ProcessingRunStatus.FAILED,
+    )
+    failure_code: FailureCode = field(
+        init=False,
+        default=FailureCode.MODEL_TIMEOUT,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCancelledFailure:
+    """Canonical result when cancellation is observed inside the gateway."""
+
+    diagnostic_code: str = field(init=False, default="MODEL_CANCELLED")
+    safe_message: str = field(
+        init=False,
+        default="The local model request was cancelled.",
+    )
+    model_request_status: ModelRequestStatus = field(
+        init=False,
+        default=ModelRequestStatus.CANCELLED,
+    )
+    processing_run_status: ProcessingRunStatus = field(
+        init=False,
+        default=ProcessingRunStatus.CANCELLED,
+    )
+    failure_code: FailureCode = field(
+        init=False,
+        default=FailureCode.MODEL_CANCELLED,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class InvalidProviderResponseFailure:
+    """Canonical result when no valid complete provider envelope is available."""
+
+    diagnostic_code: str = field(init=False, default="INVALID_PROVIDER_RESPONSE")
+    safe_message: str = field(
+        init=False,
+        default="The local model provider returned an invalid response.",
+    )
+    model_request_status: ModelRequestStatus = field(
+        init=False,
+        default=ModelRequestStatus.FAILED,
+    )
+    processing_run_status: ProcessingRunStatus = field(
+        init=False,
+        default=ProcessingRunStatus.FAILED,
+    )
+    failure_code: FailureCode = field(
+        init=False,
+        default=FailureCode.INVALID_PROVIDER_RESPONSE,
+    )
+
+
+type GenerationFailure = (
+    ProviderUnavailableFailure
+    | ModelNotFoundFailure
+    | ModelTimeoutFailure
+    | ModelCancelledFailure
+    | InvalidProviderResponseFailure
+)
+
+type GenerationOutcome = CompletedGeneration | GenerationFailure
 
 
 class CancellationToken(Protocol):
@@ -147,10 +291,10 @@ class CancellationToken(Protocol):
 
 
 class ModelGateway(Protocol):
-    """Generate exactly one complete response or raise one typed transport error."""
+    """Return one complete generation or provider-independent failure value."""
 
     def generate(
         self,
         request: GenerationRequest,
         cancellation_token: CancellationToken,
-    ) -> CompletedGeneration: ...
+    ) -> GenerationOutcome: ...
