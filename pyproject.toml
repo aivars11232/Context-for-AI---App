@@ -23,7 +23,7 @@ context-for-ai = "context_for_ai.main:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-ra"
+addopts = "-ra -m 'not ollama'"
 markers = [
     "ollama: opt-in local Ollama acceptance test",
 ]

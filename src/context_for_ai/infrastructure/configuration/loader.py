@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, fields, is_dataclass
 from decimal import Decimal, InvalidOperation
 import hashlib
-import ipaddress
 import json
 import math
 import os
@@ -15,11 +14,19 @@ import re
 import sys
 from typing import Any
 import unicodedata
-from urllib.parse import urlparse
 
 import yaml
 
+from context_for_ai.domain.enums import ProviderKind
+from context_for_ai.domain.ports.configuration import ModelSettings
+
 from .errors import ConfigurationError
+from .ollama_model import (
+    InvalidOllamaEndpoint,
+    InvalidOllamaModelIdentity,
+    normalize_ollama_endpoint,
+    normalize_ollama_model_identity,
+)
 
 
 _CONFIG_FILES: tuple[tuple[str, str], ...] = (
@@ -114,16 +121,6 @@ class AppSettings:
     environment: str
     data_directory: Path
     foreground_run_limit: int
-
-
-@dataclass(frozen=True, slots=True)
-class ModelSettings:
-    provider: str
-    base_url: str
-    name: str
-    context_window_tokens: int
-    request_timeout_seconds: int
-    temperature: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,8 +284,21 @@ def _construct_unique_mapping(
     return mapping
 
 
+def _construct_exact_decimal(
+    loader: _UniqueKeyLoader, node: yaml.ScalarNode
+) -> Decimal | str:
+    raw = loader.construct_scalar(node)
+    try:
+        return Decimal(raw.replace("_", ""))
+    except InvalidOperation:
+        return raw
+
+
 _UniqueKeyLoader.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping
+)
+_UniqueKeyLoader.add_constructor(
+    "tag:yaml.org,2002:float", _construct_exact_decimal
 )
 
 
@@ -508,7 +518,7 @@ def _coerce_override(value: Any, scalar_type: str, env_key: str) -> Any:
             raise ConfigurationError("environment", env_key, "a finite base-10 decimal") from error
         if not decimal.is_finite():
             raise ConfigurationError("environment", env_key, "a finite base-10 decimal")
-        return float(decimal)
+        return decimal
     if raw in {"true", "false", "True", "False", "TRUE", "FALSE"}:
         raise ConfigurationError("environment", env_key, "the target scalar type")
     return raw
@@ -553,13 +563,25 @@ def _validate_configuration(
             "temperature",
         ),
         required=("provider", "base_url", "name", "context_window_tokens"),
-        defaults={"request_timeout_seconds": 60, "temperature": 0.0},
+        defaults={"request_timeout_seconds": 60, "temperature": Decimal("0")},
     )
-    provider = _enum(model_values["provider"], "models.yaml", "model.provider", {"ollama"})
-    base_url = _loopback_http_url(
-        model_values["base_url"], "models.yaml", "model.base_url"
-    )
-    name = _non_empty_string(model_values["name"], "models.yaml", "model.name")
+    _enum(model_values["provider"], "models.yaml", "model.provider", {"ollama"})
+    try:
+        endpoint = normalize_ollama_endpoint(model_values["base_url"])
+    except InvalidOllamaEndpoint as error:
+        raise ConfigurationError(
+            "models.yaml",
+            "model.base_url",
+            "a direct numeric-loopback HTTP URL with an explicit port",
+        ) from error
+    try:
+        model_identity = normalize_ollama_model_identity(model_values["name"])
+    except InvalidOllamaModelIdentity as error:
+        raise ConfigurationError(
+            "models.yaml",
+            "model.name",
+            "a local Ollama model reference with a non-cloud tag",
+        ) from error
     context_window_tokens = _integer(
         model_values["context_window_tokens"],
         "models.yaml",
@@ -573,13 +595,17 @@ def _validate_configuration(
         minimum=1,
         maximum=300,
     )
-    temperature = _number(
-        model_values["temperature"], "models.yaml", "model.temperature", minimum=0.0, maximum=2.0
+    temperature = _decimal_number(
+        model_values["temperature"],
+        "models.yaml",
+        "model.temperature",
+        minimum=Decimal("0"),
+        maximum=Decimal("2"),
     )
     model = ModelSettings(
-        provider,
-        base_url,
-        name,
+        ProviderKind.OLLAMA,
+        endpoint.base_url,
+        model_identity.value,
         context_window_tokens,
         request_timeout_seconds,
         temperature,
@@ -940,7 +966,7 @@ def _number(
     minimum: float,
     maximum: float,
 ) -> float:
-    if type(value) not in {int, float} or not math.isfinite(float(value)):
+    if type(value) not in {int, float, Decimal} or not math.isfinite(float(value)):
         raise ConfigurationError(file_name, key, f"a finite number {minimum}..{maximum}")
     number = float(value)
     if number < minimum or number > maximum:
@@ -948,35 +974,33 @@ def _number(
     return number
 
 
-def _loopback_http_url(value: Any, file_name: str, key: str) -> str:
-    raw = _non_empty_string(value, file_name, key)
-    try:
-        parsed = urlparse(raw)
-        port = parsed.port
-    except ValueError as error:
-        raise ConfigurationError(file_name, key, "an HTTP loopback URL with a port") from error
-    if (
-        parsed.scheme != "http"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in {"", "/"}
-        or parsed.params
-        or parsed.query
-        or parsed.fragment
-        or port is None
-        or not 1 <= port <= 65535
-    ):
-        raise ConfigurationError(file_name, key, "an HTTP loopback URL with a port")
-    hostname = parsed.hostname.lower()
-    if hostname != "localhost":
-        try:
-            is_loopback = ipaddress.ip_address(hostname).is_loopback
-        except ValueError:
-            is_loopback = False
-        if not is_loopback:
-            raise ConfigurationError(file_name, key, "an HTTP loopback URL with a port")
-    return raw.rstrip("/")
+def _decimal_number(
+    value: Any,
+    file_name: str,
+    key: str,
+    *,
+    minimum: Decimal,
+    maximum: Decimal,
+) -> Decimal:
+    if isinstance(value, bool):
+        raise ConfigurationError(
+            file_name, key, f"a finite decimal {minimum}..{maximum}"
+        )
+    if isinstance(value, Decimal):
+        number = value
+    elif isinstance(value, int):
+        number = Decimal(value)
+    elif isinstance(value, float) and math.isfinite(value):
+        number = Decimal(str(value))
+    else:
+        raise ConfigurationError(
+            file_name, key, f"a finite decimal {minimum}..{maximum}"
+        )
+    if not number.is_finite() or not minimum <= number <= maximum:
+        raise ConfigurationError(
+            file_name, key, f"a decimal {minimum}..{maximum}"
+        )
+    return number
 
 
 def _normalised_phrase(value: Any, file_name: str, key: str) -> str:
@@ -1276,6 +1300,8 @@ def _fingerprint_value(value: Any) -> Any:
         return [_fingerprint_value(item) for item in value]
     if isinstance(value, Mapping):
         return {str(key): _fingerprint_value(item) for key, item in value.items()}
+    if isinstance(value, Decimal):
+        return format(value, "f")
     if isinstance(value, float):
         return format(value, ".17g")
     return value

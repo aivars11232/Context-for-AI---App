@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 import shutil
+import socket
 
 import pytest
 
 from conftest import read_yaml, write_yaml
+from context_for_ai.domain.enums import ProviderKind
+from context_for_ai.domain.ports.configuration import ModelSettings
 from context_for_ai.infrastructure.configuration import (
     ConfigurationError,
     load_configuration,
@@ -19,7 +23,11 @@ def test_complete_valid_configuration_loads(fixture_application_root: Path) -> N
     configuration = load_configuration(application_root=fixture_application_root, environ={})
 
     assert configuration.app.environment == "development"
-    assert configuration.model.name == "fixture-model"
+    assert isinstance(configuration.model, ModelSettings)
+    assert configuration.model.provider is ProviderKind.OLLAMA
+    assert configuration.model.base_url == "http://127.0.0.1:11434"
+    assert configuration.model.name == "fixture-model:latest"
+    assert configuration.model.temperature == Decimal("0.0")
     assert configuration.context.maximum_prompt_tokens == 2048
     assert configuration.context.rule_set_version == "mvp-context-rules-v2"
     assert {
@@ -102,7 +110,7 @@ def test_scalar_process_overrides_are_coerced_and_path_resolved(
             "CONTEXT_FOR_AI__APP__ENVIRONMENT": "test",
             "CONTEXT_FOR_AI__APP__DATA_DIRECTORY": "override-data",
             "CONTEXT_FOR_AI__MODEL__CONTEXT_WINDOW_TOKENS": "8192",
-            "CONTEXT_FOR_AI__MODEL__TEMPERATURE": "0.25",
+            "CONTEXT_FOR_AI__MODEL__TEMPERATURE": "0.1234567890123456789",
             "CONTEXT_FOR_AI__CONTEXT__MAXIMUM_PROMPT_TOKENS": "3000",
             "CONTEXT_FOR_AI__CONTEXT__MINIMUM_RELEVANCE_SCORE": "0.40",
             "CONTEXT_FOR_AI__VALIDATION__MAX_REVISIONS": "1",
@@ -114,12 +122,177 @@ def test_scalar_process_overrides_are_coerced_and_path_resolved(
     assert configuration.app.environment == "test"
     assert configuration.app.data_directory == fixture_application_root / "config" / "override-data"
     assert configuration.model.context_window_tokens == 8192
-    assert configuration.model.temperature == 0.25
+    assert configuration.model.temperature == Decimal("0.1234567890123456789")
     assert configuration.context.maximum_prompt_tokens == 3000
     assert configuration.context.minimum_relevance_score == 0.4
     assert configuration.validation.max_revisions == 1
     assert configuration.logging.directory == fixture_application_root / "config" / "override-logs"
     assert configuration.logging.retention_days == 14
+
+
+@pytest.mark.parametrize(
+    ("configured", "normalized"),
+    (
+        ("http://127.0.0.1:11434", "http://127.0.0.1:11434"),
+        ("http://127.255.0.1:080/", "http://127.255.0.1:80"),
+        ("http://[::1]:11434/", "http://[::1]:11434"),
+    ),
+)
+def test_model_endpoint_accepts_only_direct_numeric_loopback_and_normalizes_root(
+    fixture_application_root: Path,
+    configured: str,
+    normalized: str,
+) -> None:
+    model_path = fixture_application_root / "config" / "models.yaml"
+    document = read_yaml(model_path)
+    document["model"]["base_url"] = configured
+    write_yaml(model_path, document)
+
+    configuration = load_configuration(
+        application_root=fixture_application_root,
+        environ={},
+    )
+
+    assert configuration.model.base_url == normalized
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    (
+        "HTTP://127.0.0.1:11434",
+        "https://127.0.0.1:11434",
+        "http://localhost:11434",
+        "http://example.test:11434",
+        "http://192.168.1.10:11434",
+        "http://0.0.0.0:11434",
+        "http://2130706433:11434",
+        "http://%31%32%37.0.0.1:11434",
+        "http://[::1%25lo]:11434",
+        "http://user@127.0.0.1:11434",
+        "http://127.0.0.1:11434/api",
+        "http://127.0.0.1:11434?",
+        "http://127.0.0.1:11434?query=1",
+        "http://127.0.0.1:11434#",
+        "http://127.0.0.1:11434#fragment",
+        "http://127.0.0.1",
+    ),
+)
+def test_model_endpoint_rejects_non_direct_or_obfuscated_values(
+    fixture_application_root: Path,
+    base_url: str,
+) -> None:
+    model_path = fixture_application_root / "config" / "models.yaml"
+    document = read_yaml(model_path)
+    document["model"]["base_url"] = base_url
+    write_yaml(model_path, document)
+
+    with pytest.raises(ConfigurationError) as error:
+        load_configuration(application_root=fixture_application_root, environ={})
+
+    assert "models.yaml:model.base_url" in str(error.value)
+    assert base_url not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("configured", "normalized"),
+    (
+        ("model", "model:latest"),
+        ("namespace/model:Q4_K_M", "namespace/model:Q4_K_M"),
+        ("Namespace/Model:Latest", "Namespace/Model:Latest"),
+    ),
+)
+def test_model_identity_uses_only_the_narrow_case_sensitive_normalization(
+    fixture_application_root: Path,
+    configured: str,
+    normalized: str,
+) -> None:
+    model_path = fixture_application_root / "config" / "models.yaml"
+    document = read_yaml(model_path)
+    document["model"]["name"] = configured
+    write_yaml(model_path, document)
+
+    configuration = load_configuration(
+        application_root=fixture_application_root,
+        environ={},
+    )
+
+    assert configuration.model.name == normalized
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    (
+        "",
+        " model",
+        "model ",
+        "model\tname",
+        "model\x00name",
+        "/model",
+        "model/",
+        "namespace//model",
+        "namespace:tag/model",
+        "model:",
+        ":tag",
+        "model:one:two",
+        "model:cloud",
+        "model:CLOUD",
+        "model:q4-cloud",
+        "model:Q4-CLOUD",
+    ),
+)
+def test_model_identity_rejects_malformed_and_cloud_tags(
+    fixture_application_root: Path,
+    model_name: str,
+) -> None:
+    model_path = fixture_application_root / "config" / "models.yaml"
+    document = read_yaml(model_path)
+    document["model"]["name"] = model_name
+    write_yaml(model_path, document)
+
+    with pytest.raises(ConfigurationError) as error:
+        load_configuration(application_root=fixture_application_root, environ={})
+
+    assert "models.yaml:model.name" in str(error.value)
+
+
+def test_invalid_model_identity_diagnostic_does_not_expose_the_rejected_value(
+    fixture_application_root: Path,
+) -> None:
+    model_path = fixture_application_root / "config" / "models.yaml"
+    document = read_yaml(model_path)
+    rejected_value = "SensitiveNamespace/SensitiveModel:private-cloud"
+    document["model"]["name"] = rejected_value
+    write_yaml(model_path, document)
+
+    with pytest.raises(ConfigurationError) as error:
+        load_configuration(application_root=fixture_application_root, environ={})
+
+    assert "models.yaml:model.name" in str(error.value)
+    assert rejected_value not in str(error.value)
+
+
+def test_model_configuration_ignores_ambient_provider_inputs_and_performs_no_network(
+    fixture_application_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_network(*args: object, **kwargs: object) -> object:
+        raise AssertionError("configuration loading attempted network I/O")
+
+    monkeypatch.setattr(socket, "create_connection", unexpected_network)
+
+    configuration = load_configuration(
+        application_root=fixture_application_root,
+        environ={
+            "OLLAMA_HOST": "http://remote.example:443",
+            "HTTP_PROXY": "http://proxy.example:8080",
+            "HTTPS_PROXY": "http://proxy.example:8080",
+            "NO_PROXY": "*",
+            "OLLAMA_API_KEY": "must-be-ignored",
+        },
+    )
+
+    assert configuration.model.base_url == "http://127.0.0.1:11434"
+    assert configuration.model.name == "fixture-model:latest"
 
 
 def test_same_intent_duplicate_phrase_at_one_priority_is_valid(

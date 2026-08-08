@@ -1,0 +1,61 @@
+schema_version: ollama-adapter-v1
+endpoint: http://127.0.0.1:11434
+model: fixture-model:latest
+request:
+  model_name: fixture-model
+  rendered_prompt: "  Exact prompt: café 😀\nKeep leading and trailing space.  "
+  settings:
+    context_window_tokens: 8192
+    request_timeout_seconds: 30
+    temperature_decimal: "0.1250000000000000000000000001"
+  correlation:
+    processing_run_id: 32000000-0000-4000-8000-000000000001
+    context_packet_id: 32000000-0000-4000-8000-000000000002
+    model_request_id: 32000000-0000-4000-8000-000000000003
+    attempt_number: 0
+responses:
+  version:
+    status: 200
+    media_type: application/json; charset=utf-8
+    body:
+      version: 0.16.2
+      ignored: health-detail
+  status:
+    status: 200
+    media_type: application/json
+    body:
+      cloud:
+        disabled: true
+        source: both
+        ignored: status-detail
+  show:
+    status: 200
+    media_type: application/json
+    body:
+      remote_model: null
+      remote_host: ""
+      ignored: model-detail
+  generate:
+    status: 200
+    media_type: application/json
+    body:
+      model: fixture-model
+      response: "  Complete local answer.\nSecond line: café 😀  "
+      done: true
+      done_reason: stop
+      remote_model: null
+      remote_host: ""
+      thinking: ""
+      tool_calls: []
+      logprobs: null
+      context: []
+      error: null
+      image: null
+      _debug_info: null
+      total_duration: 1000000000
+      load_duration: 100000000
+      prompt_eval_duration: 300000000
+      eval_duration: 600000000
+      prompt_eval_count: 23
+      eval_count: 9
+      ignored: generation-detail

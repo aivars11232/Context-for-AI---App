@@ -14,6 +14,9 @@ TESTS_ROOT = REPOSITORY_ROOT / "tests"
 MOCK_PROVIDER_MODULE = "tests.fixtures.model_gateway"
 MOCK_PROVIDER_PATH = TESTS_ROOT / "fixtures" / "model_gateway.py"
 MOCK_COMPOSITION_PATH = TESTS_ROOT / "conftest.py"
+OLLAMA_PROVIDER_MODULE = "context_for_ai.infrastructure.ollama.provider"
+OLLAMA_PROVIDER_SYMBOL = "OllamaModelProvider"
+OLLAMA_COMPOSITION_PATH = TESTS_ROOT / "conftest.py"
 MODEL_GATEWAY_MODULE = "context_for_ai.domain.ports.model_gateway"
 MODEL_GATEWAY_SYMBOLS = frozenset(
     {
@@ -179,6 +182,34 @@ def _mock_provider_calls(path: Path) -> tuple[int, ...]:
         ):
             lines.append(node.lineno)
     return tuple(lines)
+
+
+def _ollama_provider_calls(path: Path) -> tuple[int, ...]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name) and node.func.id == OLLAMA_PROVIDER_SYMBOL:
+            lines.append(node.lineno)
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == OLLAMA_PROVIDER_SYMBOL
+        ):
+            lines.append(node.lineno)
+    return tuple(lines)
+
+
+def _imports_ollama_provider(reference: ImportReference) -> bool:
+    if _matches_prefix(reference.module, OLLAMA_PROVIDER_MODULE):
+        return True
+    return (
+        reference.symbol == OLLAMA_PROVIDER_SYMBOL
+        and _matches_prefix(
+            reference.module,
+            "context_for_ai.infrastructure.ollama",
+        )
+    )
 
 
 def test_import_reference_parser_resolves_absolute_and_relative_imports() -> None:
@@ -360,6 +391,52 @@ def test_mock_provider_fixture_imports_only_standard_library_and_domain_ports() 
         elif root != "context_for_ai" and root not in standard_library:
             violations.append(f"mock provider imports third-party code {imported_name}")
 
+    assert violations == []
+
+
+def test_ollama_provider_is_constructed_only_at_designated_composition_boundaries() -> None:
+    violations: list[str] = []
+    test_composition_imports_provider = False
+    test_composition_constructs_provider = False
+    python_paths = tuple(sorted(SOURCE_ROOT.rglob("*.py"))) + tuple(
+        sorted(TESTS_ROOT.rglob("*.py"))
+    )
+
+    for path in python_paths:
+        if path.is_relative_to(SOURCE_ROOT):
+            references = imported_references(path)
+            relative_source_path = path.relative_to(SOURCE_ROOT)
+            is_allowed_production_location = (
+                relative_source_path == Path("main.py")
+                or relative_source_path.parts[0] in {"bootstrap", "infrastructure"}
+            )
+        else:
+            references = imported_references(
+                path,
+                root=TESTS_ROOT,
+                root_package="tests",
+            )
+            is_allowed_production_location = False
+
+        imports_provider = any(_imports_ollama_provider(ref) for ref in references)
+        provider_calls = _ollama_provider_calls(path)
+        if path == OLLAMA_COMPOSITION_PATH:
+            test_composition_imports_provider = imports_provider
+            test_composition_constructs_provider = bool(provider_calls)
+            continue
+        if is_allowed_production_location:
+            continue
+        if imports_provider:
+            violations.append(
+                f"{path.relative_to(REPOSITORY_ROOT)} imports concrete Ollama provider"
+            )
+        violations.extend(
+            f"{path.relative_to(REPOSITORY_ROOT)}:{line} constructs OllamaModelProvider"
+            for line in provider_calls
+        )
+
+    assert test_composition_imports_provider
+    assert test_composition_constructs_provider
     assert violations == []
 
 
