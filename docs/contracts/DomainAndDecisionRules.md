@@ -630,6 +630,12 @@ scanning, ingestion, indexing, and resolution remain excluded.
   and `updated_at` from one injected-clock reading, and appends the next
   consecutive `SOFT_DELETE` revision. A deleted memory remains inspectable but
   cannot be edited, deleted again, or restored.
+- The TASK-0017 presentation adapter supplies the selected aggregate's greatest
+  revision number for edit and soft delete. The application reloads and compares
+  that number inside the mutation transaction before invoking the canonical
+  lifecycle operation. A mismatch is a stale presentation result: it writes no
+  memory/source/revision and emits no memory trace. This uses existing immutable
+  revisions and adds no stored version field or automatic retry.
 - `content_snapshot` is the exact content at that revision. Every revision's
   `metadata_json` is exactly a `memory-revision-v1` object with these keys:
 
@@ -742,3 +748,28 @@ scanning, ingestion, indexing, and resolution remain excluded.
   confidence is the highest selected score, or null when no record is selected.
   The decision has no side effects; existing context-packet persistence stores
   its selected and excluded evidence later without changing the decision.
+
+### TASK-0017 creation-time duplicate guidance
+
+Creation-time duplicate guidance reuses only the normalized-content function
+defined above. After create-form validation and before a create write, compare
+the proposal against stored-`ACTIVE` records with the exact same `MemoryScope`
+and canonical owner identity. Conversation scope compares only the non-null
+`conversation_id`, project scope compares only the non-null `project_id`, and
+global scope uses the singleton null-owner identity; an irrelevant non-owner ID
+is ignored exactly as it is for scope eligibility. Effectively `ACTIVE` and
+`EXPIRED` records participate; stored `DELETED` and different-owner/scope
+records do not. Equal normalized content is a possible duplicate. Candidate
+order is `updated_at` descending and canonical UUID text ascending.
+
+The result is advisory. With no explicit proceed decision, one or more
+candidates causes no write; the user may return to editing or explicitly create
+a separate memory. Proceeding recomputes the comparison in the create
+transaction and creates the independent record without changing any candidate.
+There is no merge, replace, rewrite, link, delete, cleanup, or automatic choice.
+
+This rule is not retrieval duplicate collapse. Retrieval considers its own
+eligible/scored/thresholded sequence, retains only its first normalized-content
+record for that one decision, and never changes storage. TASK-0017 guidance is
+same-owner/scope creation advice before persistence and never alters later
+retrieval ordering or evidence.

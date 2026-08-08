@@ -123,6 +123,32 @@ expiry mutation, or background operation. Presentation invokes these use cases
 later; UI rendering, pipeline orchestration, and trace-event emission are not
 TASK-0009 `MemoryManager` behavior.
 
+TASK-0017 consumes that complete application output only through the closed
+projection in `ManualOperationsUI.md`. Its adapter reads one `evaluated_at` for
+the entire stored-status query, preserves the repository's memory/source/
+revision ordering, computes `MemoryEffectiveStatus`, resolves safe owner/source
+labels, and strips internal IDs before QML. Edit/soft-delete adapters compare the
+selected greatest revision inside their outer transaction, then invoke the same
+canonical manager operation; they do not add a restore path or a second memory
+lifecycle implementation.
+
+`CreateMemoryWithGuidance` uses the canonical normalized-content function only
+for the creation-time same-scope/owner advisory rule in
+`DomainAndDecisionRules.md`. It is not part of `ContextRetriever`, does not
+score/collapse retrieval candidates, and never merges or changes an existing
+memory. TASK-0017 application integration, not `MemoryManager` or QML, emits the
+one canonical redacted memory trace event after a successful commit.
+
+## TASK-0017 validation-history projection
+
+`InspectValidationHistory` is a read-only application projector, not a new
+validator. It targets the same latest accepted run selected by
+`ContextInspection.md`, validates ordered request/response/validation/correction
+lineage from repository ports, and returns only the closed safe history in
+`ManualOperationsUI.md`. It does not invoke `ResponseValidator` or
+`CorrectionController`, reconstruct a prompt, expose any candidate/provider/raw
+validation value, or write/trace a decision.
+
 ## ContextRetriever
 
 `RetrievalRequest` contains processing-run, source-message, conversation,

@@ -6,7 +6,8 @@ The detailed deterministic behavior for these requirements is normative in
 `docs/contracts/OllamaAdapter.md`, `docs/contracts/Persistence.md`,
 `docs/contracts/ResponseValidation.md`, and
 `docs/contracts/PresentationShell.md`, with context-inspection behavior in
-`docs/contracts/ContextInspection.md`.
+`docs/contracts/ContextInspection.md` and the remaining bounded manual-operation
+presentation behavior in `docs/contracts/ManualOperationsUI.md`.
 
 ## Functional requirements
 
@@ -37,6 +38,12 @@ conversation, otherwise the most recently updated conversation, or atomically
 create exactly one unscoped null-title conversation with a version-`0` state on
 an empty first-run database. This startup default does not replace the explicit
 conversation-management operations owned by later UI work.
+
+The TASK-0017 project presentation slice shall list active and archived
+projects, select or clear only the current conversation's association using its
+versioned state, and archive only an eligible active project. Archiving shall
+preserve existing associations and every conversation, message, and memory as
+defined by `docs/contracts/ManualOperationsUI.md`.
 
 ### FR-004 Intent interpretation
 
@@ -127,7 +134,11 @@ displays an invalid candidate as the final answer.
 Every memory shall retain one or more non-null provenance records, scope,
 confidence, creation and update times, immutable revision history, and a
 retrieval-visible lifecycle state. Expiry excludes a memory from retrieval; it
-does not delete it.
+does not delete it. Manual inspection shall expose the stored and effective
+status at one query `evaluated_at`, complete ordered provenance/revisions, and
+retained deleted tombstones through the safe projection in
+`docs/contracts/ManualOperationsUI.md`; inspection and expiry shall write
+nothing.
 
 ### FR-015 Context inspection
 
@@ -147,11 +158,22 @@ application use case exposed through the existing shell facade. No prompt,
 candidate response, provider metadata, raw exception, unsafe detail, or open
 persistence/domain DTO shall reach QML or accessibility output.
 
+The separate TASK-0017 validation-history page shall target that same latest
+accepted run deterministically and expose every ordered safe validation attempt,
+correction relationship/count, and controlled failure. It shall not expose any
+prompt, candidate/response text, provider metadata, raw validation internals,
+unsafe failure detail, or internal ID through its application result, facade,
+QML, accessibility tree, or announcements.
+
 ### FR-016 Manual memory control
 
 The user shall be able to inspect, create, edit, and soft-delete memories
 through explicit UI operations. The MVP shall not automatically create, merge,
-rewrite, or delete a memory.
+rewrite, or delete a memory. Soft deletion shall require the exact explicit
+confirmation in `docs/contracts/ManualOperationsUI.md`, retain content and full
+history, and provide no restore or repeated-delete action. Creation-time
+same-scope/owner normalized duplicate guidance shall be advisory: proceeding
+creates a separate record and no merge button or automatic mutation exists.
 
 ### FR-017 Processing lifecycle
 
@@ -169,6 +191,13 @@ before accepting new submissions. Recovery shall resume only provably
 not-yet-sent work and shall terminalize, never retry, an uncertain `IN_FLIGHT`
 model call.
 
+TASK-0017 reads and mutations shall execute through at most one finite manual-
+operations worker at a time, separately from the foreground and context-
+inspection workers, with one same-thread-owned SQLite scope/connection per
+operation, queued immutable safe delivery, stale-result rejection, no mutation
+queue or presentation-side retry, and asynchronous disposal as defined by
+`docs/contracts/ManualOperationsUI.md`.
+
 ### FR-018 Configuration and observability
 
 The application shall validate a documented YAML configuration at startup and
@@ -183,6 +212,16 @@ failures shall use the closed safe presentation in
 `docs/contracts/PresentationShell.md`. Failures before QML loading shall create
 no QML engine or root; a QML-load failure shall leave no usable root. None shall
 start a foreground worker or reveal a raw diagnostic or configured value.
+
+TASK-0017 shall expose only `ui.theme` and `ui.context_panel_visible` as direct
+settings controls, preserve later conversation-selection ownership of
+`ui.last_selected_conversation_id`, and keep every YAML/process configuration
+value read-only. Its configuration view shall contain only the closed safe
+field allowlist, per-field origin, and full normalized non-secret fingerprint in
+`docs/contracts/ManualOperationsUI.md`. Theme is an immediately applied Qt
+color-scheme preference, not a Qt Quick Controls/KDE/KWin style change. Each
+successful manual-memory trace event remains application-owned, post-commit,
+fingerprinted, correlated, and content-redacted.
 
 ## Non-functional requirements
 
@@ -249,3 +288,10 @@ local actions, handling queued immutable terminal values, or handling the queued
 worker-finished ownership notification; that notification cannot select a
 result state. Progress shall not be derived from infrastructure traces, and no
 worker thread may be force-terminated.
+
+The same GUI-thread-only mutation, queued immutable handoff, connection/thread
+ownership, stale-result, responsiveness, and non-blocking shutdown requirements
+apply to the finite TASK-0017 execution role in
+`docs/contracts/ManualOperationsUI.md`. It may coalesce only one latest pending
+read route; it never queues a mutation or creates a persistent/background
+worker.

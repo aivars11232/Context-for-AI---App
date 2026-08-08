@@ -932,6 +932,34 @@ TASK-0016 verification must demonstrate independently that:
     responsiveness, startup validation, and the complete then-current non-live
     suite remain green.
 
+## TASK-0017 additive interaction
+
+When TASK-0017 is implemented, `ManualOperationsUI.md` expands the total route
+set and adds a separate finite manual-operations scope/worker without changing
+this page's target, safe result, page states, refresh coalescing, accessibility,
+or inspection-worker ownership.
+
+`ui.context_panel_visible=false` hides the real Context inspection navigation
+action, makes direct context navigation return `false`, and sends an already-
+active context route to `CHAT` through this document's navigation-away
+invalidation. Restoring `true` shows the action without navigating. An actual
+TASK-0017 current-project select/clear continues to trigger this document's
+project-change refresh; re-selection does nothing. Archiving the project that
+remains the current association also invalidates this page, but does not retarget
+or reinterpret its historical packet.
+
+The TASK-0017 validation-history query independently selects the same latest
+accepted run by linked user-message sequence. It exposes all ordered safe
+attempt/correction evidence while this page continues to expose only the latest
+safe validation summary. Neither presentation result joins the other, and both
+prohibit every prompt, candidate/response text, provider datum, raw validation
+internal, unsafe failure detail, and hidden ID.
+
+At most one inspection worker and one TASK-0017 manual-operations worker may
+coexist with the foreground worker, each with its own scope/connection and queued
+immutable envelope. Shutdown waits asynchronously for all owned worker kinds;
+none may be force-terminated or share persistence objects.
+
 ## Prohibited behavior
 
 Direct QML-to-SQL, QML-to-repository, QML-to-context-engine,

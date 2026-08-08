@@ -498,7 +498,7 @@ TASK-0015 owns only the unchanged shell-responsiveness pass and must not registe
 or render a context-page placeholder. TASK-0016 owns the context-page pass. Full
 AT-013 is satisfied only when both passes are green.
 
-### AT-014 Manual memory lifecycle
+### AT-014 Manual memory lifecycle and manual-operation UI
 
 **Fixture:** a manual memory create, edit, duplicate candidate, expiry timestamp,
 and delete request. **Action:** perform the explicit TASK-0009 use-case
@@ -511,15 +511,117 @@ automatically merged; expiry computes `EXPIRED` while stored status remains
 tombstone that cannot be edited or restored. No automatic lifecycle operation,
 UI, trace event, orchestration, or provider call is exercised by this pass.
 
-**Later integration/presentation pass:** presentation invokes the same use cases
-through explicit user actions. After each successful commit it emits exactly
-`memory_created`, `memory_edited`, or `memory_soft_deleted` with stage `MEMORY`,
-the affected non-null `memory_id` and `memory_revision_id`, null processing/model
-correlation and `error_type`, and the validated configuration fingerprint. The
-events occur in operation order and contain no raw memory content. UI, trace,
-orchestration, and provider integration are not TASK-0009 work; these exact
-assertions close the memory-event portion of the trace specification without
-changing later delivery ownership.
+**TASK-0017 fixtures:** use fixed clocks/UUIDs, validated configuration with
+every visible origin kind, isolated SQLite, the real facade and packaged QML on
+the offscreen platform, instrumented startup/manual scope and connection/
+transaction/trace factories, held workers, queued out-of-order envelopes, a Qt
+color-scheme recording seam, Qt accessibility queries, and a polite-announcement
+recorder. Fixtures contain:
+
+- active, effectively expired, and deleted memories with complete multi-source/
+  revision history; equal-normalized same-owner duplicates plus different-
+  owner/status controls; editable and stale revision snapshots;
+- active/archived projects, null/active/archived current associations, equal-
+  timestamp ordering controls, one prohibited associated non-terminal run, a
+  state conflict that succeeds on the existing one bounded retry, and a second
+  conflict that fails; preservation sentinels cover conversations/messages/
+  memories/entities;
+- several accepted runs whose user-message sequence selects one latest target,
+  plus initial/revision requests, passed/failed validation, both corrections,
+  pending/in-flight/transport-failed attempts, clarification, controlled
+  failure, and a no-run conversation; and
+- absent/default, valid, invalid, and unknown SQLite settings rows plus the safe
+  configuration allowlist/fingerprint. Unique prohibited sentinels occur in
+  prompts, every candidate/response, provider metadata, correction envelopes,
+  raw validation fields, unsafe failures/exceptions, endpoints/model identity,
+  paths, environment/`.env` content, secrets, and rejected values.
+
+**TASK-0017 action:** start through the additive pre-QML preference read, then
+navigate from Chat through Memory, Projects, Validation history, and Settings.
+Exercise initial/repeated loads, filters, selection, refresh, navigation away,
+conversation/project/terminal-run invalidation, one held query while other
+worker kinds run, stale/mismatched/duplicate/late envelopes, and shutdown with
+each worker combination. Perform memory create, duplicate return, duplicate
+proceed, edit, stale edit, delete cancel, and delete confirm. Perform project
+select/re-select/clear, archived-selection rejection, archive cancel, blocked
+archive, and successful current-project archive. Load every validation fixture.
+Load settings defaults, reject invalid/unknown/non-owned updates, atomically save
+theme/context values, and observe startup/immediate application.
+
+**TASK-0017 pass:** all of these assertions hold independently:
+
+- the route set/order, one-facade ownership, exact page-state algebras, safe
+  state text, confirmation/editor behavior, invalidation matrix, and navigation-
+  away clearing match `ManualOperationsUI.md`; no placeholder route exists;
+- memory Active/Deleted filtering, one evaluated-at value, effective Expired,
+  ordering, explicit selection, safe owner/type/scope/content/keyword/topic/
+  score/time/status fields, and complete ordered provenance/revisions match the
+  contract; expiry writes nothing and deleted tombstones remain inspectable;
+- create/edit/delete validation and immutable fields are exact; a stale revision
+  writes/emits nothing; cancel delete invokes nothing; confirmed success writes
+  one canonical source/revision, produces the contracted selection/filter, and
+  deleted records cannot edit/delete/restore;
+- creation duplicate guidance uses canonical normalization, same scope/owner,
+  stored Active including Expired, deterministic order and safe fields. Return
+  changes nothing; Proceed creates a separate record; no candidate is merged,
+  rewritten, replaced, linked, or deleted and no merge control exists;
+- after each successful memory commit, application integration emits exactly
+  `memory_created`, `memory_edited`, or `memory_soft_deleted` in operation order
+  with stage `MEMORY`, affected non-null memory/revision IDs, null processing/
+  model correlation and `error_type`, and the validated fingerprint. No failed,
+  stale, cancelled, guidance-only, or suppressed action emits an event, and no
+  event/log contains memory content or form/provenance text;
+- project lists/order/current association and state version are exact; actual
+  select/clear changes state once, facade re-selection and a raced unchanged
+  result write nothing, the existing one bounded CAS retry is preserved, a
+  second conflict and archived selection reject safely, and actual change causes
+  the contracted TASK-0016/Memory/Projects invalidations;
+- archive cancel writes nothing, the non-terminal-run guard rejects, and success
+  changes only project status/update time. Every preservation sentinel and
+  association remains; a current archived project is labeled as such and is not
+  eligible for new selection;
+- Validation history and Context inspection select the same latest run by
+  linked user-message sequence. Attempt/outcome/report/violation/evidence and
+  correction rows/count/order/adjacency are exact for terminal and non-terminal
+  fixtures; empty, clarification, transport, controlled-failure, and load-error
+  behavior remains distinct;
+- none of the prohibited sentinels or any raw/open DTO, internal ID, prompt,
+  candidate/response, provider value, correction prompt, raw validation detail,
+  unsafe failure, exception, path, endpoint/model identity, environment value,
+  secret, or rejected configuration value occurs in a safe application result,
+  envelope, facade/list model, QML text, accessibility tree, announcement,
+  trace, or log;
+- absent preferences produce `SYSTEM`, `true`, and null without a write. Only
+  theme/context are direct settings controls and save changed rows atomically;
+  invalid/unknown/last-conversation writes reject, YAML/configuration never
+  changes, and TASK-0015 still owns later last-conversation selection behavior;
+- the exact safe configuration category/field/order/value/origin labels and full
+  64-character lowercase fingerprint appear, while every prohibited source
+  value is absent. The loader's immutable origin metadata is not fingerprinted
+  or persisted;
+- startup and successful saves map `SYSTEM`/`LIGHT`/`DARK` only to the exact Qt
+  color-scheme calls; changes apply immediately with no normal restart or
+  `QQuickStyle`/KDE/KWin dependency. Context visibility applies immediately and
+  hiding an active Context page moves safely to Chat;
+- at most one finite TASK-0017 worker exists. Repeated reads retain one latest
+  coalesced route; mutation repeats are suppressed, never queued. Manual,
+  foreground, and inspection work coexist only through separate scopes/
+  connections, and connection create/read-or-write/close thread identities are
+  equal and non-GUI;
+- terminal delivery is immutable/queued and GUI mutation GUI-thread-only;
+  stale/mismatched/late results change nothing; held work leaves GUI sentinels,
+  navigation, cancellation, and close responsive; shutdown performs no blocking
+  join/force termination and disposes only after all owned scopes close;
+- every exact accessible ID/name/role/value/action/focus/description and polite
+  announcement/revision is observable through native Qt interfaces without a
+  screen reader, KDE service, or window-manager rule; and
+- source-checkout and installed-package nested QML loading, valid application
+  startup, both existing AT-013 ownership passes, the unchanged TASK-0009
+  component pass above, and the complete then-current non-live suite remain
+  green.
+
+UI, trace, orchestration, and provider integration remain outside TASK-0009;
+the TASK-0017 pass owns them without changing the component pass.
 
 ### AT-015 Complete mock-provider pipeline, idempotency, and recovery
 
@@ -673,5 +775,5 @@ mismatch is a failed opt-in acceptance result—not a silently skipped pass.
 | Exact persistence, state, entity/reference | AT-002–AT-007, AT-015 |
 | Constraints, retrieval, packet | AT-004–AT-009 |
 | Gateway, validation, correction | AT-010–AT-012, AT-016 |
-| UI and manual memory safety | AT-013–AT-014 |
+| UI and manual-operation safety | AT-013–AT-014 |
 | Transaction, idempotency, recovery, traceability | AT-002, AT-012, AT-015–AT-016 |

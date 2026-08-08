@@ -652,6 +652,45 @@ allowlist is the only exception to TASK-0015's minimum-shell display restriction
 It does not permit prompts, candidate responses, unsafe details, open DTOs, or
 presentation-side joins.
 
+## TASK-0017 additive extension
+
+When TASK-0017 is implemented, `docs/contracts/ManualOperationsUI.md` extends
+the post-TASK-0016 shell only as follows:
+
+- the complete route set becomes exactly `{CHAT, CONTEXT_INSPECTION, MEMORY,
+  PROJECTS, VALIDATION_HISTORY, SETTINGS}` with `CHAT` still initial and no
+  future placeholder;
+- the same entry-point-owned `ShellFacade` remains the sole QObject/state owner
+  exposed to QML and gains only the four closed page algebras, actions, safe
+  models, confirmations, and accessibility properties defined there;
+- `StartupApplicationScope` gains the one bounded pre-QML
+  `LoadInitialUiPreferences` read after successful shell preparation, while
+  preserving the existing preparation/recovery result algebra and using the
+  existing `COMPOSITION` startup-failure projection on failure;
+- `ShellApplicationScopeFactory` gains
+  `open_manual_operations_scope() -> ManualOperationsApplicationScope`, whose
+  fresh SQLite connection is created, used, and closed on its one finite
+  operation worker thread;
+- at most one TASK-0017 operation exists at a time across its pages; one latest
+  read route may coalesce, mutations are suppressed rather than queued, and the
+  role may coexist with foreground/inspection work only through separate
+  scopes, connections, transactions, and envelopes;
+- the entry point applies the validated `SYSTEM`/`LIGHT`/`DARK` Qt color-scheme
+  preference before QML loading, and later saves apply immediately on the GUI
+  thread without selecting/changing a Qt Quick Controls or KDE style;
+- `ui.context_panel_visible` changes only visibility/eligibility of the real
+  TASK-0016 navigation action and sends an active hidden context route to Chat;
+  and
+- final Qt disposal waits asynchronously for all owned foreground, inspection,
+  and manual-operation workers to close their same-thread scopes and deliver
+  cleanup notifications.
+
+The exact TASK-0015 and TASK-0016 state/result/worker contracts remain their
+unchanged slices. Only the safe field allowlists in `ContextInspection.md` and
+`ManualOperationsUI.md` extend the minimum-shell display restriction. Neither
+allows QML to receive raw application DTOs, prompts/candidates, provider data,
+unsafe diagnostics, internal IDs, SQLite objects, or configuration dumps.
+
 ## Prohibited behavior
 
 Direct QML-to-SQL, QML-to-context-engine, QML-to-gateway/Ollama, raw application

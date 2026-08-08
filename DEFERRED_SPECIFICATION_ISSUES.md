@@ -28,8 +28,8 @@ also agree.
 | D-010 | Resolved: `ConfigurationAndLogging.md` fixes event/stage/correlation/error/order semantics and AT-014/AT-015 contain exact owning assertions, including recovery and redaction. | `TASK-0014` |
 | D-011 | Reconcile local-Ollama opt-in semantics in `TASK-0012` and `TASK-0018`: no flag skips; flag present makes invalid daemon/model/configuration a failed opt-in test. | `TASK-0018` |
 | D-012 | Resolved: TASK-0013 retains pure validator/correction and bounded preconstructed repository evidence; TASK-0014 owns complete provider-facing AT-012 orchestration. | `TASK-0013`, `TASK-0014` |
-| D-013 | The TASK-0009 portion is resolved below: history is inspectable only and there is no restore operation. Remaining work must keep Task 0015 to responsiveness portions of AT-013 and Task 0017 to UI/presentation portions of manual memory control. | `TASK-0015`, `TASK-0017` |
-| D-014 | The TASK-0014 portion is resolved by its reconciled delivery contract and authoritative public-result, transaction, recovery, failure, lineage, trace, and acceptance contracts. The TASK-0016 portion is resolved below by its canonical context-inspection and cross-layer contracts. Portions assigned to other delivery tasks retain their existing status. | `TASK-0002` through `TASK-0018` |
+| D-013 | The TASK-0009 and TASK-0017 portions are resolved below: history is inspectable only, no restore exists, and `ManualOperationsUI.md` fixes the complete manual-memory presentation/trace/acceptance contract. Any separate TASK-0015 portion retains its existing status. | `TASK-0015`, `TASK-0017` |
+| D-014 | The TASK-0014, TASK-0016, and TASK-0017 portions are resolved below by their canonical public-result, transaction, inspection/manual-operation, safety, trace, and acceptance contracts. Portions assigned to other delivery tasks retain their existing status. | `TASK-0002` through `TASK-0018` |
 | D-015 | Resolved for TASK-0014: roadmap, backlog, and implementation-plan wording now agrees on global admission, one-shot recovery, clarification persistence, and AT-002/full-AT-012/AT-015 ownership. | `TASK-0014` |
 
 ### TASK-0002 reconciliation
@@ -158,9 +158,10 @@ trace-event, and provider integration assertions. Exact trace-event contracts
 are now fixed by the resolved D-010 reconciliation below. The bounded delivery contract is
 `tasks/TASK-0009-MANUAL-MEMORY-LIFECYCLE-AND-DETERMINISTIC-RETRIEVAL.md`.
 
-D-013 remains open only for its TASK-0015/TASK-0017 portions. After the
-TASK-0010 reconciliation below, D-014 remains unresolved for `TASK-0011`
-through `TASK-0018`. No later-task issue is resolved by this section.
+D-013 remains open here only for its later TASK-0015/TASK-0017 portions; the
+TASK-0017 portion is resolved solely by the dedicated reconciliation below.
+After the TASK-0010 reconciliation below, D-014 remains unresolved here for its
+later delivery portions. No later-task issue is resolved by this section.
 
 ### TASK-0010 reconciliation
 
@@ -292,6 +293,35 @@ completed, green TASK-0015 exit criteria; that dependency is not a specification
 ambiguity. D-014 remains open for every other delivery-task portion not already
 resolved elsewhere in this register.
 
+### TASK-0017 reconciliation
+
+The TASK-0017 portions of D-013 and D-014 are resolved by
+`docs/contracts/ManualOperationsUI.md`, its additive shell/context integration,
+the aligned domain/context/configuration/persistence boundaries, and the
+complete TASK-0017 portion of AT-014.
+
+The canonical contract fixes exactly four additive routes on the existing
+facade, one finite shared manual-operation scope/worker, complete safe memory/
+project/full-validation/settings projections, explicit confirmations and stale
+guards, advisory creation-time duplicate guidance, archive preservation,
+candidate/configuration redaction, permitted preference defaults/ownership,
+per-field configuration origin/full fingerprint, Qt-native theme application,
+post-commit memory trace ownership, accessibility, and deterministic
+verification. The existing schema is sufficient and no migration is assigned.
+
+For TASK-0017, the historical “UI Modules,” “User Interface,” and “Presentation
+Layer” proposals are non-authoritative. Their `ProjectStateView`, plural-model,
+rule-locking, project-file/project-data, generic background-work, raw backend/API,
+theme/KDE, memory automation, or unrestricted validation/configuration ideas
+neither supplement nor override `ManualOperationsUI.md`. No historical planning
+file may add a TASK-0017 field, route, state, worker, mutation, persistence
+requirement, or verification gate.
+
+No TASK-0017 specification gate remains. Implementation is still ordered behind
+completed, green TASK-0016 exit criteria and its prerequisite chain; that block
+is not a specification ambiguity. D-013/D-014 retain every unrelated delivery-
+task portion not already resolved elsewhere in this register.
+
 ## Historical planning reconciliation
 
 These supporting documents require a status-note or canonical-pointer repair,
@@ -308,7 +338,7 @@ the related MVP delivery area.
 | Memory System | Obsolete correction example implies image generation may be allowed. | `TASK-0009` |
 | Critical Relationships | Direct project-to-task/project-state model conflicts with conversation-scoped tasks and conversation state. | `TASK-0004` |
 | Main Use Cases | Historical `UpdateProjectState` use case conflicts with the canonical conversation-state model. | `TASK-0014` |
-| UI Modules, User Interface, and Presentation Layer | Its TASK-0016 context-page proposals are superseded by `ContextInspection.md`; `ProjectStateView`, plural models, rule locking, project-file, and unsupported project-data promises remain non-authoritative and deferred to their owning task portions. | `TASK-0015`, `TASK-0016`, `TASK-0017` |
+| UI Modules, User Interface, and Presentation Layer | Its TASK-0016 context-page proposals are superseded by `ContextInspection.md`; its TASK-0017 memory/project/validation/settings proposals are superseded by `ManualOperationsUI.md`. `ProjectStateView`, plural models, rule locking, project-file, unsupported project-data, raw backend/API, and generic background-work promises remain non-authoritative. | `TASK-0015`, `TASK-0016`, `TASK-0017` |
 | Response Validator | Historical hallucination/subjective checks are presented as MVP behavior. | `TASK-0013` |
 | MVP Engineering Boundary | “Unrestricted background agents” is weaker than the MVP exclusion of all background workers. | `TASK-0015` |
 

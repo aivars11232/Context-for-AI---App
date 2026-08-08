@@ -97,6 +97,48 @@ read query needed for target selection and aggregation, but the existing schema
 already retains the complete authoritative projection. TASK-0016 changes neither
 `DATABASE_SCHEMA.md` nor the migration set.
 
+## TASK-0017 manual-operation persistence
+
+`ManualOperationsUI.md` adds one `ManualOperationsApplicationScope` per
+accepted TASK-0017 operation. Its finite worker creates the scope, repositories,
+connection-local `TransactionBoundary`, and fresh SQLite connection on that
+worker thread; it closes all of them on the same thread before queuing an
+immutable safe envelope. At most one such scope exists at a time. It may coexist
+with foreground and inspection scopes only through separate connections and
+never shares a transaction/repository/row/cursor.
+
+Memory, project, validation-history, and settings loads each use one read-only
+snapshot. Validation history may join requests, responses, validation,
+corrections, and safe failures internally, but discards prompts, candidates,
+provider metadata, unsafe validation fields, and IDs before return. Memory uses
+one injected `evaluated_at` for the complete result. Configuration origin/
+fingerprint comes from the immutable validated bootstrap snapshot, not a new
+SQLite table or a YAML reload.
+
+Each accepted TASK-0017 write has one application-owned outer transaction:
+
+- create/edit/soft-delete validates/rechecks duplicate or expected revision as
+  applicable, then the existing `MemoryManager` transaction joins and writes
+  exactly one canonical source/revision with the memory change;
+- project selection uses the existing expected state version, one bounded
+  deterministic CAS reload/retry, and at most one state/association update;
+- archive rechecks active status and the associated global non-terminal-run
+  prohibition before changing only project status/update time; and
+- settings validates the complete changed-key request and upserts only changed
+  permitted preference rows with one clock value.
+
+Rollback removes every joined write. Trace/theme/navigation application occurs
+only after commit and never participates in the SQLite transaction. A stale,
+rejected, duplicate-guidance, cancelled-confirmation, validation, or suppressed
+operation writes nothing. Navigation away does not roll back an already accepted
+operation; its safe result is route/generation-gated in presentation.
+
+The existing schema contains all required project/state, memory/source/revision,
+model/validation/correction/failure, and setting evidence. Revision-number stale
+checks use current revision rows; configuration origins and presentation
+ordinals/generations remain in memory. TASK-0017 changes neither
+`DATABASE_SCHEMA.md` nor the numbered migration set.
+
 ## Canonical transaction boundaries
 
 No SQLite transaction is held during a gateway/provider call.

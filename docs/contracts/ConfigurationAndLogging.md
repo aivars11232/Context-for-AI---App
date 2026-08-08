@@ -99,6 +99,20 @@ the first preference in the deterministic conversation-selection order in
 does not authorize project selection or creation of any object other than the
 one contracted first-run conversation.
 
+TASK-0017 fixes the missing-row defaults and owners as follows:
+
+| Key | Missing-row default | Direct TASK-0017 control | Write owner |
+|---|---|---|---|
+| `ui.theme` | `SYSTEM` | yes | Settings theme control |
+| `ui.context_panel_visible` | `true` | yes | Settings context-panel toggle |
+| `ui.last_selected_conversation_id` | null | no | Later explicit conversation-selection action |
+
+Reading a default creates no row. TASK-0017 never presents a UUID editor or
+writes the last-conversation preference. Unknown/invalid stored rows fail the
+closed settings or pre-QML preference load rather than silently defaulting.
+`ManualOperationsUI.md` is authoritative for atomic save, startup application,
+context-route visibility, and safe result behavior.
+
 ## Required YAML schema
 
 ### `app.yaml`
@@ -286,6 +300,39 @@ logging:
 The configuration loader produces a configuration fingerprint from normalized
 non-secret settings. Packets, processing runs, and trace events record it.
 
+## TASK-0017 configuration inspection and theme
+
+Configuration inspection uses the already-loaded immutable snapshot; it never
+re-reads YAML, `.env`, or process environment. The loader additionally retains
+one immutable origin enum for each normalized scalar after source selection:
+`PROCESS_OVERRIDE`, `LOCAL_YAML`, `DOCUMENTED_DEFAULT`, or `FIXED_MVP`.
+Origin metadata is not included in the existing fingerprint, written to SQLite,
+or exposed as a general field-path map. The TASK-0017 application projector
+uses it only for the closed visible fields in `ManualOperationsUI.md`.
+
+That projector exposes exactly the ordered Application, Model, Storage, Memory,
+Validation, Logging, and Security safe summaries, each field's safe origin
+label, and the existing complete 64-character lowercase SHA-256 configuration
+fingerprint. It exposes no model identity, endpoint/port, environment, actual
+path, YAML filename/path, rule content, generation setting, secret, credential,
+API key, proxy/cloud/provider-routing field, raw environment/`.env` content,
+rejected value, expected-shape diagnostic, or unrestricted configuration dump.
+A missing/malformed required origin or fingerprint fails the whole projection;
+QML never receives the full snapshot and hides fields selectively.
+
+`ui.theme` is only a Qt color-scheme preference. `SYSTEM` calls
+`QGuiApplication.styleHints().unsetColorScheme()`; `LIGHT` and `DARK` call
+`setColorScheme()` with the corresponding `Qt.ColorScheme`. The startup value
+is applied after Qt application creation but before QML loading; a saved value
+applies immediately on the GUI thread and normally requires no restart. The
+application does not change `QQuickStyle`, select KDE/Breeze integration, or
+depend on KWin. A platform may ignore the hint without changing the persisted
+preference.
+
+SQLite preference writes never edit source YAML or alter this precedence,
+snapshot, fingerprint, model/storage/validation/security/logging behavior, or a
+processing run's copied configuration.
+
 ## Structured trace events
 
 Every event has:
@@ -313,6 +360,27 @@ application contract or infer correlation from ambient state. `stage` uses
 `FailureCode` or null, never an exception class/name or provider diagnostic.
 The three memory correlation fields are required for their matching memory
 events and null otherwise.
+
+### TASK-0017 manual-memory event matrix
+
+The TASK-0017 application mutation adapter, not QML, the facade, a repository,
+or TASK-0009 `MemoryManager`, owns these events:
+
+| Event | Emit condition | Stage | Required correlation | `error_type` |
+|---|---|---|---|---|
+| `memory_created` | The outer create/source/revision transaction committed. | `MEMORY` | non-null `memory_id`, `memory_revision_id`; all conversation/message/run/packet/model/validation/clarification/correction IDs null | null |
+| `memory_edited` | The outer edit/source/revision transaction committed. | `MEMORY` | same memory correlation only | null |
+| `memory_soft_deleted` | The outer soft-delete/source/revision transaction committed. | `MEMORY` | same memory correlation only | null |
+
+Each event uses the mutation's injected UTC timestamp and the immutable
+validated bootstrap configuration fingerprint. It is emitted after the
+outermost commit and before the safe use case returns. Failed validation,
+duplicate guidance, cancelled confirmation, stale/rejected mutation, rollback,
+and repeated/suppressed action emit no memory event. Event order equals
+successful operation order. Routine event/log output contains no memory content,
+keywords, topic terms, source description, owner label, revision snapshot, or
+configuration value. The existing best-effort post-commit trace failure rule
+applies unchanged.
 
 ### TASK-0014 event matrix
 

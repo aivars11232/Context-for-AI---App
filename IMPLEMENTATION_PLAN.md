@@ -81,8 +81,23 @@ scope/worker, closed page/refresh/error states, native Qt accessibility, and the
 context-page portion of AT-013. It owns no schema migration, processing write,
 generic worker queue, or placeholder for another page.
 
-**Exit:** AT-013 and AT-014 pass; no UI thread blocking or hidden automatic
-memory mutation remains.
+TASK-0017's specification is reconciled and implementation-ready in specification
+terms in `docs/contracts/ManualOperationsUI.md`, but implementation remains
+blocked until TASK-0016 is implemented and its exit criteria pass. TASK-0017
+then owns exactly the additive `MEMORY`, `PROJECTS`, `VALIDATION_HISTORY`, and
+`SETTINGS` routes on the same facade; one finite shared manual-operation scope/
+worker; safe memory/project/full-validation/settings projections; explicit
+confirmed mutations and post-commit memory trace integration; advisory duplicate
+guidance; permitted preference defaults/updates; immutable configuration origin/
+fingerprint inspection; Qt-native immediate color-scheme application; and the
+TASK-0017 portion of AT-014. It adds no schema migration, YAML editor, KDE/KWin
+dependency, worker queue, or automatic memory behavior.
+
+**Exit:** both ownership portions of AT-013 and the complete TASK-0009 plus
+TASK-0017 ownership portions of AT-014 pass; packaged startup/accessibility and
+the current non-live suite remain green; no UI thread blocking, hidden automatic
+memory mutation, unsafe candidate/configuration exposure, or archive data loss
+remains.
 
 ## Stage 8 — Local Ollama acceptance (`TASK-0018`)
 

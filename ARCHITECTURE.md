@@ -101,6 +101,26 @@ redaction, stale-result rejection, refresh coalescing, accessibility, and
 shutdown ownership are authoritative in
 `docs/contracts/ContextInspection.md`.
 
+TASK-0017 additively extends the same facade with exactly `MEMORY`, `PROJECTS`,
+`VALIDATION_HISTORY`, and `SETTINGS`; the total route set and four page-state
+algebras are closed in `docs/contracts/ManualOperationsUI.md`. One private
+manual-operations execution role owns at most one finite user/navigation-owned
+worker at a time across those pages. It may coexist with the foreground and
+inspection workers only through a fresh third scope/connection; it has one
+replaceable coalesced read target and no mutation queue, poller, persistent
+thread, daemon, or forced termination. The worker closes its same-thread SQLite
+scope before queued immutable safe delivery. Navigation/generation matching,
+confirmation, stale-result rejection, accessibility, and asynchronous disposal
+remain GUI-thread facade responsibilities under that contract.
+
+After TASK-0017, the existing pre-QML startup scope also performs one bounded
+read of the three permitted UI preferences after successful shell preparation.
+Missing rows yield documented defaults without writes. The scope closes before
+Qt creation; then the entry point applies the Qt color-scheme preference before
+QML loading and initializes context-navigation visibility. This does not change
+conversation selection, recovery classification, foreground admission, or the
+TASK-0015 result algebra.
+
 ### 2. Application
 
 Coordinates `PrepareApplicationShell`, `ProcessUserMessage`,
@@ -115,6 +135,18 @@ transaction orchestration, not context rules, UI state, worker creation, or SQL.
 accepted run for one conversation and builds the closed historical, safe
 inspection projection inside one repository-backed snapshot. It never re-runs a
 decision or returns raw persistence, model, validation, or domain objects.
+
+TASK-0017 application adapters build closed memory/project/validation/settings
+views and coordinate only explicit mutations. They compose the existing
+`MemoryManager`, project/state, validation, settings, transaction, clock,
+configuration-snapshot, and trace ports rather than duplicating domain rules.
+Memory mutation adapters recheck the selected revision, commit the canonical
+source/revision change atomically, and emit one redacted trace event only after
+commit. Project selection preserves its existing one bounded deterministic CAS
+retry; archive rechecks its non-terminal-run guard. Settings update only the two
+directly editable UI keys atomically. Full validation history is read-only and
+targets the same latest accepted run as `InspectContext`, while discarding every
+prompt/candidate/provider/raw-DTO field before return.
 
 ### 3. Domain
 
@@ -266,6 +298,12 @@ constraints, memories and revisions, processing runs, packets, retrieval
 results, model lifecycle, validation, correction, terminal failures, settings,
 and evaluations. The detailed transaction/recovery contract is in
 `docs/contracts/Persistence.md`.
+
+The existing projects/conversation-state, memory/source/revision,
+request/response/validation/correction/failure, and settings records contain all
+TASK-0017 authoritative data. Presentation ordinals, page generations,
+configuration origins, and theme application are ephemeral/in-memory values;
+TASK-0017 adds no table, column, migration, or alternate store.
 
 The MVP performs at most three text-generation calls per run: one initial call
 and two revisions. Provider transport failures are not automatically retried.
