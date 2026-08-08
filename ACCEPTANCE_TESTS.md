@@ -10,7 +10,10 @@
 - A case asserts observable data, UI state, or returned result; it does not only
   assert that a mock method was called.
 - Fixture files are versioned, synthetic, and free of prior private
-  conversations. The fixture version is persisted in evaluation results.
+  conversations. Deterministic fixture versions are persisted in their
+  evaluation results. AT-016 instead records its fixture version in the closed
+  standalone evidence artifact defined below; it does not create an
+  `evaluation_cases` or `evaluation_runs` row.
 - Every test that contacts live Ollama is marked `ollama` and excluded from the
   default test command. AT-016 is the sole live-model complete-pipeline
   criterion; TASK-0012's marked live adapter test execution is component
@@ -743,29 +746,292 @@ verification; it neither executes nor satisfies AT-016. Both scopes use the
 `ollama` marker and `CONTEXT_FOR_AI_RUN_OLLAMA` convention, while the default
 suite excludes all marked live tests.
 
-When AT-016 is explicitly selected, an absent variable skips as environment
-absence and never counts as evidence. A present value other than exactly `1`
-fails as an invalid opt-in. With exact value `1`, every preflight condition below
-is executed and a missing or invalid condition fails the test:
+AT-016 may run only after the complete default/non-live suite and every AT-001
+through AT-015 criterion are green in their required environments. If either
+prerequisite is not green, AT-016 is not started and no AT-016 evidence artifact
+is written. The completion report retains the prerequisite commands and
+results; a later AT-016 artifact records only their closed `PASSED` statuses.
 
-1. The fixture configuration uses a direct numeric-loopback Ollama endpoint,
-   `temperature: 0.0`, timeout `60`, and a named installed local model supplied
-   through `CONTEXT_FOR_AI__MODEL__NAME`.
-2. The daemon health, native cloud-disabled status, and exact local-model
-   preflight from `OllamaAdapter.md` succeed before the prompt is sent.
-3. The test records only normalized allowlisted model/provider metadata,
-   configuration fingerprint, Ollama version, OS, and elapsed time as an
-   artifact. It records no raw CLI/provider response, endpoint, header, secret,
-   message, prompt, partial output, or response content in logs or metadata.
-4. The deterministic fixture asks for the exact text token
-   `CONTEXT_FOR_AI_SMOKE_OK`; packet constraints require that token.
+When AT-016 is explicitly selected, an absent
+`CONTEXT_FOR_AI_RUN_OLLAMA` skips as environment absence, writes no artifact,
+and never counts as evidence. A present value other than exactly `1` fails as an
+invalid opt-in before the AT-016 artifact lifecycle begins. Exact value `1`
+begins one opted-in acceptance execution and requires a present, non-empty
+`CONTEXT_FOR_AI__MODEL__NAME`; absence or invalidity is a failed execution and
+must produce a safe failed artifact when artifact writing remains available.
+`CONTEXT_FOR_AI__MODEL__BASE_URL` remains an optional validated override, not a
+third opt-in variable.
 
-**Action:** run the complete one-process pipeline against local Ollama.
-**Pass:** health check succeeds, one buffered response arrives within timeout,
-validation passes the token constraint, every lifecycle/trace record persists,
-and the QML UI displays the linked accepted assistant text. A missing daemon,
-cloud-disable attestation, local model, timeout, malformed response, or token
-mismatch is a failed opt-in acceptance result—not a silently skipped pass.
+#### Versioned synthetic fixture
+
+The fixture directory is `tests/fixtures/at_016_local_ollama_smoke/`. Its
+`VERSION` file contains exactly:
+
+```text
+at-016-local-ollama-smoke-v1
+```
+
+It is an independent copy of
+`tests/fixtures/complete_configuration/`, whose source `VERSION` is
+`mvp-config-fixture-v2`. The copy contains `config/app.yaml`,
+`config/context.yaml`, `config/logging.yaml`, `config/memory.yaml`,
+`config/models.yaml`, and `config/validation.yaml` plus its own `VERSION`; the
+live fixture does not load or mutate the source directory. Every unlisted rule,
+list, scalar, and path value is copied value-for-value. The AT-016 copy has only
+these fixed differences and live substitutions:
+
+- `model.base_url` is `http://127.0.0.1:11434`; the optional existing
+  `CONTEXT_FOR_AI__MODEL__BASE_URL` override may replace it only through the
+  normal loader and must still be direct numeric-loopback HTTP.
+- `model.name` is the valid non-live placeholder
+  `at-016-model-must-be-overridden`; exact opt-in rejects a missing model-name
+  environment value before this placeholder can reach composition or the
+  adapter. The required override supplies one installed model identity and is
+  normalized by the existing configuration contract.
+- `model.context_window_tokens` is `4096`.
+- `model.request_timeout_seconds` is `60`.
+- `model.temperature` is `0.0`.
+- `context.maximum_prompt_tokens` is `2048` and
+  `context.reserved_response_tokens` is `512`; the effective prompt budget is
+  therefore `2048`.
+- `validation.max_revisions` is `0`. Every other validation rule is copied
+  unchanged, including `TEXT_ANSWER -> NON_EMPTY_TEXT`.
+
+The fixture is copied to one isolated application root. Its `../data` and
+`../data/logs` paths therefore resolve inside that isolated root. The empty
+database contains no project, topic, task, message, memory, named item, or
+processing run. Normal startup creates/selects exactly one unscoped
+conversation with the canonical version-`0` state: null project, topic, active
+task, previous task, and expected output type, plus an empty topic stack.
+
+The exact submitted user message is:
+
+```text
+Exactly answer CONTEXT_FOR_AI_SMOKE_OK.
+```
+
+The deterministic pre-provider expectations are:
+
+- one `answer` intent-rule match, `IntentType.ANSWER`, confidence `1.00`, and
+  expected output `TEXT_ANSWER`;
+- one `exactly` qualifier with normalized capture
+  `answer context for ai smoke ok`, action `answer`, and object
+  `context for ai smoke ok`;
+- zero reference mentions and an empty retrieval selection;
+- no project, topic, or task proposal; the committed state changes only its
+  expected output type to `TEXT_ANSWER` under the existing state contract;
+- one active current-message `REQUIRED` constraint at priority `1000` with
+  normalized rule `MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK`;
+- the unchanged active derived `FORBIDDEN`
+  `MUST_NOT_EXECUTE:IMAGE_OR_ACTION` constraint at priority `1000`; and
+- response policy `TEXT_ANSWER`, `NON_EMPTY_TEXT`, text-only, no actions, and
+  correction limit `0`.
+
+No new validation predicate exists. The normal validator evaluates
+`MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK` as the consecutive normalized
+token sequence `answer context for ai smoke ok` in one candidate sentence. The
+candidate must also be substantive and contain no configured action marker.
+Separately, the AT-016 test performs a content-private smoke assertion that the
+raw buffered candidate contains at least one exact case-sensitive
+`CONTEXT_FOR_AI_SMOKE_OK` occurrence whose adjacent characters, when present,
+are not ASCII letters, digits, or underscore. The assertion inspects content
+in memory but never emits the sentinel or candidate to a log or artifact.
+
+Raw response equality is not required. Additional natural-language text is
+permitted only when the normal validator still passes and the bounded exact
+sentinel occurrence exists. This makes the oracle structural rather than an
+exact-prose comparison.
+
+`validation.max_revisions: 0` makes AT-016 a one-generation smoke. There is
+exactly one attempt-`0` request and at most one completed buffered response; no
+correction row or revision request is permitted. If that first response fails
+provider-envelope validation, the normal response validator, or the private
+sentinel assertion, AT-016 fails. Production correction behavior outside this
+fixture is unchanged.
+
+#### Live action and success assertions
+
+The real outer composition loads and validates the fixture, constructs the
+production Ollama adapter from the normalized endpoint/model identity, and runs
+the complete one-process/QML submission path. The adapter performs its exact
+uncached `/api/version`, `/api/status`, `/api/show`, and `/api/generate`
+sequence. `/api/show`, not `ollama list`, pulling, alias discovery, or an
+operator assertion, proves model existence. `/api/version` is the only Ollama
+version source. The one absolute `60`-second gateway deadline and the existing
+`stream:false`, `raw:true`, `think:false`, `truncate:false`, and `shift:false`
+wire contract remain unchanged.
+
+Pass requires all of the following:
+
+1. The default suite and AT-001 through AT-015 prerequisite statuses are
+   `PASSED`.
+2. Static configuration and all three live preflight checks pass before the
+   prompt-bearing request.
+3. One complete valid response is privately buffered within the shared
+   deadline, and both the normal response validator and the private sentinel
+   assertion pass.
+4. Exactly one initial request, one response, one passed validation, and one
+   final `ASSISTANT` message persist with the complete correlation set. The
+   assistant message, persisted response, returned `assistant_text`, facade
+   value, and QML-visible accepted text obey the existing byte-exact lineage
+   contract.
+5. The normal no-correction success trace sequence persists with exact stages
+   and correlations. Serialized routine logs and traces contain none of the
+   fixture user text, sentinel, rendered/raw prompt, packet JSON, candidate or
+   assistant text, raw provider body/exception, endpoint, headers, credentials,
+   cookies, environment values, `.env` content, absolute sensitive paths, or
+   complete configuration.
+6. The standalone evidence artifact below is written atomically, re-read, and
+   validated against its closed schema.
+
+Every invalid configuration, non-local endpoint, unavailable or incompatible
+daemon, failed native cloud-disable attestation, missing or remote-marked model,
+timeout, cancellation, malformed or wrong-model provider response, validation
+failure, sentinel mismatch, persistence or lineage failure, missing or
+redaction-violating trace, QML result mismatch, or evidence failure is a failed
+opted-in acceptance result, never a dynamic skip.
+
+#### Standalone evidence ownership and schema
+
+The AT-016 acceptance harness in the testing/evaluation layer owns one
+standalone local JSON artifact. Production application code, SQLite
+repositories, `evaluation_cases`, `evaluation_runs`, routine logging, and QML
+do not own or write it. The Definition-of-Done completion report references and
+summarizes the artifact but is not the artifact itself.
+
+The UTF-8 JSON document is one closed object with exactly these fields. JSON
+object keys are serialized in lexicographic order with compact separators, no
+duplicate keys, no ASCII escaping of ordinary Unicode, and one final LF.
+
+```text
+{
+  "acceptance_id": "AT-016",
+  "configuration_fingerprint": <64 lowercase hex characters or null>,
+  "failure": null | {
+    "code": <closed code permitted for the stage below>,
+    "stage": <closed stage below>
+  },
+  "fixture_version": "at-016-local-ollama-smoke-v1",
+  "gateway_elapsed_microseconds": <non-negative integer or null>,
+  "limitations": [
+    "MODEL_SPECIFIC_LIVE_ACCEPTANCE",
+    "NON_CRYPTOGRAPHIC_LOCALITY_ATTESTATION",
+    "STRUCTURAL_SMOKE_ORACLE_ONLY"
+  ],
+  "model": null | {
+    "identity": <normalized configured model identity>,
+    "tag": <normalized explicit or inserted model tag>
+  },
+  "os": null | {
+    "machine": <non-empty string>,
+    "release": <non-empty string>,
+    "system": <non-empty string>
+  },
+  "prerequisites": {
+    "at_001_through_at_015": "PASSED",
+    "default_non_live_suite": "PASSED"
+  },
+  "provider": null | {
+    "cloud_disable_source": "env" | "config" | "both",
+    "name": "ollama",
+    "version": <validated /api/version string>
+  },
+  "recorded_at_utc": <YYYY-MM-DDTHH:MM:SS.ffffffZ>,
+  "result": "PASSED" | "FAILED",
+  "schema_version": "at-016-evidence-v1"
+}
+```
+
+`model` and `configuration_fingerprint` are non-null after successful complete
+configuration validation and null when that evidence is unavailable. `provider`
+is non-null only when the exact normalized fields are available from a durably
+persisted `CompletedGeneration`; its `version` is the artifact's sole
+Ollama-version field. Provider duration fields, token usage, and `done_reason`
+are not required evidence and are omitted.
+
+`gateway_elapsed_microseconds` is the persisted integral-microsecond projection
+of the already-authoritative monotonic `CompletedGeneration.elapsed`, covering
+all preflight checks through final envelope validation. It is non-null exactly
+when that completed-generation evidence is durably available; it is null rather
+than guessed for every earlier failure. There is no second total-test duration.
+
+During artifact finalization for every otherwise writable exact-opt-in
+execution, the acceptance harness collects OS evidence only through Python
+standard-library `platform.system()`, `platform.release()`, and
+`platform.machine()`, applies `str.strip()` to each result, and stores them
+respectively as `system`, `release`, and `machine`. It does not call or serialize
+`platform.node()`, `platform.platform()`, `platform.uname()`, hostname,
+username, distribution marketing data, or any machine-unique identifier. If any
+of the three allowed values is empty, `os` is null. That observation selects
+`EVIDENCE/OS_METADATA_UNAVAILABLE` when the execution has no earlier failure;
+it does not replace an already-selected earlier safe failure pair.
+
+`result=PASSED` requires null `failure` and non-null configuration fingerprint,
+model, provider, OS, and gateway elapsed fields. `result=FAILED` requires one
+non-null failure pair from this closed table. The first safely classifiable
+failure in the table's execution order is retained; a later assertion or OS
+observation cannot replace it. Producing steps that were safely completed retain
+their allowlisted fields, steps not reached leave their fields null, and OS is
+handled by the finalization rule above. `ACCEPTANCE/UNEXPECTED_RESULT` is the
+last-resort safe projection only when no earlier observation maps to another
+listed pair; it never retains the unexpected value or exception.
+
+| Stage | Permitted safe code |
+|---|---|
+| `CONFIGURATION` | `MODEL_NAME_REQUIRED`, `CONFIGURATION_INVALID` |
+| `STARTUP` | `STARTUP_FAILED` |
+| `TRANSPORT` | `PROVIDER_UNAVAILABLE`, `MODEL_NOT_FOUND`, `MODEL_TIMEOUT`, `MODEL_CANCELLED`, `INVALID_PROVIDER_RESPONSE` |
+| `VALIDATION` | `VALIDATION_EXHAUSTED`, `SMOKE_SENTINEL_MISMATCH` |
+| `PERSISTENCE` | `PERSISTENCE_ERROR` |
+| `LINEAGE` | `LINEAGE_MISMATCH` |
+| `TRACE` | `TRACE_ASSERTION_FAILED` |
+| `REDACTION` | `REDACTION_ASSERTION_FAILED` |
+| `UI` | `UI_ASSERTION_FAILED` |
+| `EVIDENCE` | `OS_METADATA_UNAVAILABLE` |
+| `ACCEPTANCE` | `UNEXPECTED_RESULT` |
+
+No message, diagnostic, provider status/payload, exception text/type, traceback,
+or unrestricted details field exists. The fixed `limitations` array is the
+complete artifact limitation vocabulary and order; free-form limitations are
+prohibited. The completion report may explain these codes without quoting any
+prohibited content.
+
+The artifact additionally prohibits fixture user text, sentinel/token text,
+rendered or raw prompt, packet JSON, raw candidate/response/final assistant
+text, raw provider objects, endpoint/base URL, headers, authorization/cookie
+data, credentials, secrets, process environment values, `.env` content,
+absolute sensitive paths, complete configuration, hostname, username, and
+machine-unique identifiers.
+
+#### File location, publication, and retention
+
+Each exact-opt-in execution creates one unique artifact under the
+repository-relative local directory `data/acceptance/at-016/`. The filename is
+`at-016-<timestamp>.json`, where `<timestamp>` is the artifact's
+`recorded_at_utc` with punctuation removed, for example
+`at-016-20260808T123456123456Z.json`. The harness creates the directory when
+needed and never embeds its absolute path in the document.
+
+The harness writes a uniquely named temporary sibling, closes it, re-reads and
+validates the exact schema and prohibited-content assertions, then publishes it
+by an atomic same-directory rename only when the final filename does not exist.
+A collision fails rather than overwriting. Every repeated execution therefore
+creates a distinct artifact; the harness never appends to or replaces an older
+artifact.
+
+`data/acceptance/` is local-only completion evidence and must be covered by the
+repository ignore rules before TASK-0018 live execution is implemented. Neither
+the application nor acceptance harness automatically expires or deletes it. It
+is retained until the operator explicitly removes it after it is no longer
+needed for completion evidence, and it must not be committed.
+
+An exact-opt-in execution attempts to write a `PASSED` or `FAILED` artifact
+after all safely classifiable assertions. If artifact creation, serialization,
+schema validation, prohibited-content validation, or atomic publication fails,
+AT-016 fails and no valid evidence may be claimed. Because a failed writer
+cannot reliably attest to its own failure, `EVIDENCE_WRITE_FAILED` is reported
+only as a safe test/completion-report code; it is not fabricated inside a valid
+artifact. No evidence failure becomes a warning or skip.
 
 ## Requirement traceability
 

@@ -24,7 +24,7 @@ also agree.
 | D-006 | Resolved for the provider-independent contract below: `ModelGateway` returns typed values, application/repository code persists lifecycle state, and live/recovery token ownership is explicit. TASK-0012 must preserve this contract at the Ollama transport boundary. | `TASK-0011`, `TASK-0012` |
 | D-007 | Resolved: `docs/diagrams/SEQUENCES.md` now shows duplicate/existing, global Busy, clarification, joined context/state CAS, `PENDING` claim, bounded generation/correction, and one-shot recovery branches. | `TASK-0014` |
 | D-008 | Resolved for TASK-0010 below: the fixed prompt-policy/schema versions, versioning rules, complete packet/aggregate shapes, rendering grammar, evidence, retrieval, budgeting, omission, and typed-overflow contracts are authoritative. | `TASK-0010` |
-| D-009 | Define evaluation-case and evaluation-run JSON shapes, category taxonomy, fixture linkage, expected observables, and repository/use-case boundary; alternatively defer runtime evaluation persistence consistently. | `TASK-0005`, `TASK-0018` |
+| D-009 | The TASK-0018 portion is resolved: AT-016 uses one closed standalone local JSON artifact owned by its testing/evaluation harness and creates no runtime evaluation row. General evaluation-case/evaluation-run shapes, taxonomy, repositories, use cases, and runtime persistence retain their deferred status. | `TASK-0005`, `TASK-0018` |
 | D-010 | Resolved: `ConfigurationAndLogging.md` fixes event/stage/correlation/error/order semantics and AT-014/AT-015 contain exact owning assertions, including recovery and redaction. | `TASK-0014` |
 | D-011 | Reconcile local-Ollama opt-in semantics in `TASK-0012` and `TASK-0018`: no flag skips; flag present makes invalid daemon/model/configuration a failed opt-in test. | `TASK-0018` |
 | D-012 | Resolved: TASK-0013 retains pure validator/correction and bounded preconstructed repository evidence; TASK-0014 owns complete provider-facing AT-012 orchestration. | `TASK-0013`, `TASK-0014` |
@@ -321,6 +321,40 @@ No TASK-0017 specification gate remains. Implementation is still ordered behind
 completed, green TASK-0016 exit criteria and its prerequisite chain; that block
 is not a specification ambiguity. D-013/D-014 retain every unrelated delivery-
 task portion not already resolved elsewhere in this register.
+
+### TASK-0018 gate reconciliation
+
+G18-01, G18-02, and G18-03 are closed by the complete AT-016 contract in
+`ACCEPTANCE_TESTS.md` and the aligned
+`tasks/TASK-0018-LOCAL-OLLAMA-SMOKE-ACCEPTANCE.md` task sheet.
+
+The fixture is one independent, versioned copy of the established complete
+six-file configuration with closed deltas, an empty initial state, one exact
+message, deterministic pre-provider expectations, the existing normalized
+validation predicate, one private bounded sentinel assertion, and zero
+revisions. It therefore permits one provider generation and defines a
+structural smoke oracle without fixing or publishing the model's surrounding
+prose.
+
+The TASK-0018 portion of D-009 is resolved by one standalone
+`at-016-evidence-v1` local JSON artifact per exact-opt-in execution. Its owner,
+allowlisted fields, safe failure codes, canonical serialization, authoritative
+gateway timing projection, bounded OS source, prohibited content, unique atomic
+publication, and operator-managed retention are closed. It creates no
+`evaluation_cases` or `evaluation_runs` row and requires no database schema,
+migration, repository, use case, application, QML, routine-log, or trace-schema
+change. The remaining general evaluation framework described by D-009 stays
+deferred.
+
+The existing D-011 behavior is neither rewritten nor reopened: the default
+suite excludes live tests; explicitly selecting AT-016 without the opt-in flag
+is the sole skip; a present non-`1` flag fails; exact `1` requires the model-name
+override; and every other opted-in failure fails. This bounded reconciliation
+does not alter D-014 or any unrelated deferred-task portion.
+
+Specification closure does not execute AT-016 or clear its delivery order.
+TASK-0018 implementation and live acceptance remain blocked until TASK-0017 and
+its prerequisite chain are implemented with green exit criteria.
 
 ## Historical planning reconciliation
 
