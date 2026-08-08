@@ -13,8 +13,10 @@ Deliver a local desktop prototype that proves the complete context-processing pi
 2. Conversation, message, project, topic, task, context-decision, model-call,
    validation, and memory storage in SQLite.
 3. Explicit create/select/archive project operations, explicit create/select
-   conversation operations, and conversation state tracking for the active
-   project, topic, task, previous task, and expected text output type.
+   conversation operations, one deterministic unscoped first-run conversation
+   bootstrap before the minimum shell becomes send-ready, and conversation state
+   tracking for the active project, topic, task, previous task, and expected text
+   output type.
 4. Deterministic rule-based intent, qualifier, output-type, and confidence
    interpretation.
 5. Deterministic basic reference resolution using recent state, recent

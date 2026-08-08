@@ -3,8 +3,9 @@
 The detailed deterministic behavior for these requirements is normative in
 `docs/contracts/DomainAndDecisionRules.md`, `docs/contracts/ContextPacket.md`,
 `docs/contracts/ProcessUserMessage.md`, `docs/contracts/ModelGateway.md`,
-`docs/contracts/OllamaAdapter.md`, `docs/contracts/Persistence.md`, and
-`docs/contracts/ResponseValidation.md`.
+`docs/contracts/OllamaAdapter.md`, `docs/contracts/Persistence.md`,
+`docs/contracts/ResponseValidation.md`, and
+`docs/contracts/PresentationShell.md`.
 
 ## Functional requirements
 
@@ -30,6 +31,11 @@ topic, active task, previous task, and expected text output type.
 
 The user shall be able to explicitly create/select conversations and
 create/select/archive projects under the canonical lifecycle invariants.
+Before the minimum shell becomes send-ready, startup shall select the last valid
+conversation, otherwise the most recently updated conversation, or atomically
+create exactly one unscoped null-title conversation with a version-`0` state on
+an empty first-run database. This startup default does not replace the explicit
+conversation-management operations owned by later UI work.
 
 ### FR-004 Intent interpretation
 
@@ -143,10 +149,13 @@ terminal-state lineage back to the user message. A successful run shall link the
 displayed assistant message to exactly one accepted model response with
 byte-exact UTF-8 text equality. Repeating an
 existing idempotency key returns the existing run; a fresh key during an active
-global run is a pre-acceptance busy result. Startup shall invoke one bounded
-foreground recovery entry before accepting new submissions; recovery shall
-resume only provably not-yet-sent work and shall terminalize, never retry, an
-uncertain `IN_FLIGHT` model call.
+global run is a pre-acceptance busy result. Before QML creation, startup shall
+perform one bounded application recovery preflight. It shall start no foreground
+worker when no non-terminal run exists; when one exists, it shall invoke exactly
+one bounded foreground `RecoverProcessingRun` after the shell root loads and
+before accepting new submissions. Recovery shall resume only provably
+not-yet-sent work and shall terminalize, never retry, an uncertain `IN_FLIGHT`
+model call.
 
 ### FR-018 Configuration and observability
 
@@ -156,6 +165,12 @@ conversation, message, processing run, and manual-memory lifecycle. Required
 events, recovery order, correlation fields, safe error codes, and redaction
 rules are defined in `docs/contracts/ConfigurationAndLogging.md` and are
 acceptance-tested.
+
+Configuration, migration, composition, recovery-preflight, and QML-load startup
+failures shall use the closed safe presentation in
+`docs/contracts/PresentationShell.md`. Failures before QML loading shall create
+no QML engine or root; a QML-load failure shall leave no usable root. None shall
+start a foreground worker or reveal a raw diagnostic or configured value.
 
 ## Non-functional requirements
 
@@ -212,7 +227,13 @@ inward interfaces without changing domain or context-intelligence rules.
 ### NFR-008 Responsive UI
 
 Long-running processing shall not block the QML UI thread. The UI shall expose
-progress, cancellation, duplicate-submit prevention, and typed error states.
-It shall enforce one global foreground execution, including a one-shot startup
-recovery when required, and use the canonical ephemeral-worker/queued-signal/SQLite-thread
-ownership contract and never force-terminate a worker thread.
+presentation-owned indeterminate progress, cancellation, duplicate-submit
+prevention, and typed error states. It shall enforce one global foreground
+execution, including one-shot startup recovery only when preflight requires it,
+and use the canonical ephemeral-worker/queued-signal/SQLite-thread ownership
+contract in `docs/contracts/PresentationShell.md`. UI state may change only on
+the GUI thread by applying the immutable startup-preparation value, handling
+local actions, handling queued immutable terminal values, or handling the queued
+worker-finished ownership notification; that notification cannot select a
+result state. Progress shall not be derived from infrastructure traces, and no
+worker thread may be force-terminated.

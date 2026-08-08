@@ -6,6 +6,7 @@ scope, requirements, architecture, and schema documents.
 
 | Component | Owns | Must not own |
 |---|---|---|
+| PrepareApplicationShell | One pre-QML recovery preflight and deterministic initial-conversation selection/first-run creation | Recovery classification/resumption, UI state, worker creation, polling |
 | ProcessUserMessage | Idempotent pipeline orchestration and lifecycle transitions | Context rules, SQL, provider-specific calls |
 | RecoverProcessingRun | One-shot foreground startup recovery of the sole global non-terminal run | Polling, queues, daemon work, uncertain-call retry |
 | ConversationStateManager | Deterministic active-state transitions | Model calls, UI rendering |
@@ -24,4 +25,13 @@ scope, requirements, architecture, and schema documents.
 | TraceLogger | `emit(TraceEvent)` for redacted structured stage/recovery events | Alternate ambient-correlation APIs, raw message/prompt/response logging, domain policy decisions |
 | TransactionBoundary | One connection-local re-entrant transaction whose nested users join the outer commit/rollback | Cross-thread contexts, independent nested commits, provider calls inside a transaction |
 | Repository implementations | Persistence mechanics | Domain policy decisions |
-| Presentation layer | Display and user actions | Context intelligence rules |
+| ShellApplicationScopeFactory | Calling-thread construction and same-thread disposal of startup/foreground application scopes and their SQLite graphs | Shared/cross-thread connections, queues, service location from QML |
+| IdempotencyKeyFactory | One caller-owned UUID for each controller-accepted submission | Run admission, persistence, duplicate classification, recovery IDs |
+| StartupErrorPresenter | One safe stderr presentation and, for interactive desktop mode, one entry-point-owned native non-QML modal | Raw diagnostics, QML fallback, recovery-result presentation |
+| ForegroundRunController | Private execution role of `ShellFacade`: one ephemeral worker/token, duplicate suppression, cancellation/shutdown, queued terminal handoff | A second public controller/state store, application decisions, SQL, provider calls, trace-derived progress, force termination |
+| ShellFacade | The one entry-point-owned GUI QObject, closed GUI state, safe result projection, chat actions, one `CHAT` route | QML-owned lifetime, raw application DTO branching in QML, diagnostics, deferred-page placeholders |
+| Presentation layer | Display and explicit user actions through application interfaces | Context intelligence rules, SQL, provider/Ollama access |
+
+The exact TASK-0015 interfaces, state machine, startup/error behavior, scope
+lifetime, responsiveness, result projection, route ownership, and QML packaging
+rules are normative in `docs/contracts/PresentationShell.md`.

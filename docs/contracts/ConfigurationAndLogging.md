@@ -93,6 +93,12 @@ The only editable SQLite settings keys in MVP are `ui.theme`
 only. Every other settings key is rejected; these settings never alter YAML
 behavior or create an active-project source of truth.
 
+TASK-0015 shell preparation may read `ui.last_selected_conversation_id` only as
+the first preference in the deterministic conversation-selection order in
+`PresentationShell.md`. A missing/stale value is not a configuration error and
+does not authorize project selection or creation of any object other than the
+one contracted first-run conversation.
+
 ## Required YAML schema
 
 ### `app.yaml`
@@ -411,7 +417,23 @@ allowlisted provider metadata, and rule IDs only.
 
 ## Startup and test behavior
 
-Configuration validates before the QML window opens. Tests use isolated fixture
-directories and explicit environment mappings. A valid fixture must load all
-six files; an invalid fixture must name the failed file/key and produce a typed
-`ConfigurationError`. No test reads a developer's `.env` or user data path.
+Configuration and logger construction validate before `QApplication`, the QML
+engine, the presentation controller, or any QML object is created on a successful
+startup. Tests use isolated fixture directories and explicit environment
+mappings. A valid fixture must load all six files; an invalid fixture must name
+the failed file/key and produce a typed `ConfigurationError`. No test reads a
+developer's `.env` or user data path.
+
+A configuration/logger failure is projected to the closed `CONFIGURATION`
+`StartupFailureView` in `PresentationShell.md`: the safe public message plus the
+typed file/key location are allowed, while the rejected value, expected-shape
+diagnostic, absolute path, exception, and configuration contents are hidden.
+The entry point writes that safe projection to stderr and, for an interactive
+desktop launch, may create a short-lived `QApplication` solely for the contracted
+non-QML modal dialog. It creates no QML engine, startup/foreground application
+scope, or worker after such a failure. Offscreen and `--check` presentation use
+the non-modal recording/stderr path.
+
+Migration, composition, recovery-preflight, and QML-load failures are not
+reclassified as `ConfigurationError`; their separate safe startup projections
+and ordering are authoritative in `PresentationShell.md`.

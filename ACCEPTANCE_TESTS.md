@@ -23,15 +23,37 @@
 
 ### AT-001 Application startup and configuration
 
-**Fixture:** a complete valid six-file YAML configuration, including intent,
-qualifier, output-shape, preserve-verb, and action-marker rules, and an isolated
-data directory. **Action:** bootstrap the application using the QML offscreen
-test platform. **Pass:** configuration validates, the migration bootstrap ledger
-initializes an empty database (canonical schema migrations are accepted in
-AT-002/Task 0004), the QML root window is created, and no unhandled
-import/configuration error occurs. Repeat with one invalid key/range/rule-table
-violation per fixture; each run must fail before QML creation with a typed
-`ConfigurationError` naming the file/key.
+**Configuration/migration fixture and retained ownership:** use a complete valid
+six-file YAML configuration, including intent, qualifier, output-shape,
+preserve-verb, and action-marker rules, and an isolated data directory. Existing
+configuration and migration owners retain exhaustive validation and canonical
+ledger/schema assertions. A valid fixture validates and initializes the empty
+database. One invalid key/range/rule-table violation per fixture fails before
+startup-scope or QML creation with a typed `ConfigurationError` naming the
+file/key and no rejected value. TASK-0015 does not redefine those validators or
+migrations.
+
+**TASK-0015 shell fixture/action:** use the valid empty database, the offscreen
+QML platform, a recording startup-error presenter, and the same recursively
+packaged QML tree from both a source checkout and an installed-package fixture.
+Run complete shell startup with no non-terminal run.
+
+**TASK-0015 shell pass:** startup follows the exact order in
+`PresentationShell.md`; the startup scope creates/selects exactly one unscoped
+conversation with its version-`0` state and closes before QML creation; no
+foreground worker starts; exactly one packaged root is created on route `CHAT`;
+the shell enters `IDLE` and is send-ready; all local nested QML imports resolve
+without a current-working-directory fallback; and no unhandled import,
+configuration, composition, or QML error occurs.
+
+**TASK-0015 startup-failure pass:** inject, separately, typed configuration,
+migration, composition, recovery-preflight, and QML root/nested-asset load
+failures. Each produces exactly its closed `StartupFailureView`, one safe stderr
+record, and one recording-presenter call for an interactive launch; creates no
+usable QML root or foreground worker; exits non-zero; and exposes none of the
+prohibited diagnostics. Configuration failure alone exposes its typed file/key.
+The offscreen presenter never opens a modal dialog. The production contract is
+the same projection rendered by the non-QML Qt modal dialog.
 
 ### AT-002 Exact user-message persistence
 
@@ -347,16 +369,68 @@ contains invalid candidate text, and the caller gets the canonical safe
 failure. TASK-0014 owns full application acceptance of AT-012; TASK-0013 retains
 the component assertions above.
 
-### AT-013 Context inspection UI
+### AT-013 Context inspection UI and shell responsiveness
 
-**Fixture:** one processed mock-provider message containing state, intent,
-references, constraints, retrieval, confidence, and validation data. **Action:**
-open the context-inspection page. **Pass:** it visibly presents every FR-015
-field, including reference status/evidence, retrieval scores/reasons, confidence,
-validation status, and any controlled failure or clarification. The QML UI stays
-responsive while a pending foreground request is cancelled; the worker-owned
-SQLite connection is not accessed from the GUI thread, and its queued terminal
-signal is the only UI state mutation path.
+**TASK-0015 shell fixture:** a prepared shell conversation, fixed idempotency and
+execution IDs, an isolated SQLite database, final TASK-0014 application use
+cases, a mock gateway held before its terminal checkpoint, an instrumented scope
+and connection factory, a recording facade-thread observer, and the QML offscreen
+platform. No context-inspection route or page participates.
+
+**TASK-0015 shell action:** reject an empty composer value, then start one chat
+submission whose non-empty text includes leading/trailing whitespace; wait until
+the mock is held, attempt a second submit, post multiple GUI event-loop
+sentinels, request cancellation, release the held checkpoint, and observe the
+terminal state. In a separate held execution, request application close while
+the worker is active.
+
+**TASK-0015 shell-responsiveness pass:** all of these assertions hold
+independently:
+
+- while the mock is held, every posted GUI sentinel is processed within the
+  bounded test timeout and the shell remains readable/actionable;
+- the accepted execution shows only contracted indeterminate controller
+  progress, never trace-derived stage/percent/token/partial-output progress;
+- empty input dispatches nothing; the accepted request carries the composer text
+  byte-for-byte, `project_id=null`, and exactly one caller-owned idempotency key;
+  the composer clears only after acceptance, while rejected/duplicate actions
+  preserve it;
+- the second submit is suppressed in both QML enablement and the controller,
+  allocates no key/token/worker, invokes no use case, and creates no queue item;
+- the first cancellation action moves the GUI immediately to
+  `CANCELLATION_REQUESTED`, repeated cancellation is a no-op, and the eventual
+  typed terminal value alone selects the terminal state;
+- the foreground SQLite connection is created, used by every repository, and
+  closed on the same worker thread, which differs from the GUI thread; no
+  connection/cursor/row/repository crosses the boundary and SQLite thread checks
+  are not disabled;
+- the worker emits one immutable terminal envelope after scope closure; its
+  explicitly queued delivery is handled on the GUI thread and is the only
+  worker-to-UI result-state mutation path; the queued finished notification
+  changes only worker ownership/derived enablement, and a mismatched/late
+  envelope is ignored;
+- success exposes only exact validated assistant text, clarification only the
+  deterministic question, and every cancellation/busy/existing/persistence/
+  controlled/recovery failure only the allowlisted safe presentation in
+  `PresentationShell.md`; no candidate or hidden diagnostic reaches QML; and
+- shutdown disables submission, requests cancellation once, continues to
+  process GUI events, performs no blocking join or force termination, closes the
+  scope/worker after the terminal/finished notifications, and only then allows
+  Qt exit.
+
+The test timeout is a harness bound for a failed liveness assertion, not a
+product polling interval or latency promise.
+
+**Later context-page fixture/action/pass:** the later context-inspection owner
+uses one processed mock-provider message containing state, intent, references,
+constraints, retrieval, confidence, and validation data, opens the real
+context-inspection page, and visibly presents every FR-015 field, including
+reference status/evidence, retrieval scores/reasons, confidence, validation
+status, and any controlled failure or clarification.
+
+TASK-0015 owns only the shell-responsiveness pass and must not register or render
+a context-page placeholder. The later context-inspection task owns the page pass.
+Full AT-013 is satisfied only when both passes are green.
 
 ### AT-014 Manual memory lifecycle
 
@@ -441,9 +515,13 @@ daemon, or background worker participates.
 
 **Recovery pass:**
 
-- Startup calls the empty-request recovery use case once after bootstrap and
-  before admission. No active run returns `NoRecoveryRequiredResult` and starts
-  no worker. Each active-run fixture produces one finite foreground result.
+- Direct invocation of the empty-request TASK-0014 recovery use case with no
+  active run returns `NoRecoveryRequiredResult`; the application use case itself
+  never creates a worker. Each active-run fixture produces one finite result.
+  TASK-0015 startup separately performs `PrepareApplicationShell`: with no active
+  run, no foreground worker starts; a required run starts one foreground recovery
+  only after the QML root loads and before admission, as exercised by
+  AT-001/AT-013.
 - Every recovery-matrix row is exercised: `PERSISTED`, `CONTEXT_READY`,
   `PENDING`, uncertain `IN_FLIGHT`, passing validation without final link,
   failed validation below/at its packet limit, and terminal

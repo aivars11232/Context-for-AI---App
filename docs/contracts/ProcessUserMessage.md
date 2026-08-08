@@ -395,15 +395,21 @@ directly because no completed recovery may be claimed. A recovered
 durable failure; recovery can never produce the pre-acceptance cancellation
 shape.
 
-The outer application startup/composition coordinator invokes this use case
-once after configuration validation and database migration/bootstrap and before
-enabling new submissions. If a run exists, the foreground execution owner runs
-this one finite invocation to a returned result, using a fresh owned token and
-the same bounded gateway timeout rules as a submission. In presentation
-composition, the visible foreground controller may host that finite invocation,
-but it does not enqueue, poll, schedule, detach, or keep a daemon alive. With no
-run, recovery returns `NoRecoveryRequiredResult` synchronously and starts no
-worker.
+TASK-0015 presentation startup first calls the separate
+`PrepareApplicationShell` application entry defined by
+`PresentationShell.md`. Its read-only preflight neither classifies nor resumes a
+run. When preflight reports no active run, presentation does not invoke this use
+case and starts no foreground worker. When preflight reports one active run,
+presentation loads the shell in its disabled recovery state and invokes this use
+case exactly once before enabling submissions.
+
+That one finite foreground invocation uses a fresh owned token and the same
+bounded gateway timeout rules as a submission. The visible foreground controller
+hosts it without enqueueing, polling, scheduling, detaching, or keeping a daemon
+alive. `RecoverProcessingRun` still performs its own authoritative lookup and
+may return `NoRecoveryRequiredResult` if state changed after preflight or when a
+non-presentation caller invokes it directly. The application use case itself
+never creates a worker in either branch.
 
 Recovery first validates the current immutable configuration snapshot, loads
 the one run and lineage, compares fingerprints, then applies exactly one row of
@@ -443,6 +449,9 @@ submission/recovery use cases, provider-facing transaction sequence, repeated
 candidate/correction lifecycle, assistant linkage, and complete AT-002, AT-012,
 and AT-015 application acceptance. This split does not move SQL, context rules,
 gateway transport, or presentation ownership into the application use case.
+TASK-0015 owns only the separate shell preflight, foreground presentation, and
+worker composition described by `PresentationShell.md`; it does not alter this
+public algebra or any TASK-0014 transaction/recovery decision.
 
 ## Prohibited behavior
 

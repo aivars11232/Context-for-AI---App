@@ -341,11 +341,15 @@ finite-form and exact-registry-name mentions defined below.
 ## State transitions and concurrency
 
 - A user explicitly creates a project in `ACTIVE` status or a conversation with
-  a default version-`0` state. A new conversation may be unscoped. The selected
-  conversation is an ephemeral UI choice, not a second persisted active-project
-  field. A user may select only an existing `ACTIVE` project for a conversation;
-  that association is the sole persisted active project and the change occurs in
-  the acceptance transaction with one state-version increment.
+  a default version-`0` state. The sole non-user exception is
+  `PrepareApplicationShell`: when no conversation exists on first-run startup,
+  it may atomically create exactly one unscoped, null-title conversation and its
+  default version-`0` state as defined by `PresentationShell.md`. It creates no
+  project or other domain object. A new conversation may be unscoped. The
+  selected conversation is an ephemeral UI choice, not a second persisted
+  active-project field. A user may select only an existing `ACTIVE` project for
+  a conversation; that association is the sole persisted active project and the
+  change occurs in the acceptance transaction with one state-version increment.
 - A user may explicitly archive an `ACTIVE` project only when it has no
   non-terminal run. Archiving changes only `projects.status`; it preserves its
   conversations, memories, and entity rows, makes it unavailable for new

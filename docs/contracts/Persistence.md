@@ -47,6 +47,29 @@ transaction ownership while joining TASK-0014's wider context transaction when
 called by `ProcessUserMessage`. There is one physical commit and no partial
 context projection.
 
+## TASK-0015 connection and thread ownership
+
+`PresentationShell.md` defines two composition scope kinds. Each scope creates
+its repositories, connection-local `TransactionBoundary`, and SQLite connection
+on the calling thread and closes the connection on that same thread.
+
+- The pre-QML `StartupApplicationScope` is opened synchronously before a Qt
+  application, controller, or QML object exists. It performs only the recovery
+  preflight and initial-conversation selection/first-run creation, then closes.
+  Migration bootstrap uses a separate earlier short-lived connection. Neither
+  connection is retained into GUI startup.
+- A `ForegroundApplicationScope` is opened inside the one ephemeral worker for
+  an accepted submission or required recovery. Every repository operation for
+  that execution uses that scope's single worker-owned connection. The scope
+  closes before the worker emits its immutable terminal envelope.
+
+No connection, transaction context, cursor, SQLite row, or repository instance
+crosses the startup/GUI/worker boundaries. The GUI-owned controller and QML
+never receive or invoke one. Disabling SQLite thread-affinity enforcement or
+constructing a connection on the GUI thread for later worker use is prohibited.
+Non-SQLite immutable application result DTOs may cross only through the queued
+terminal handoff defined by `PresentationShell.md`.
+
 ## Canonical transaction boundaries
 
 No SQLite transaction is held during a gateway/provider call.

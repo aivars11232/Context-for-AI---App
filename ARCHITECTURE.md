@@ -56,35 +56,49 @@ application process; the UI exposes progress, cancellation, typed failures, and
 a disabled/duplicate-submit state. This is not a durable background worker,
 queue, or autonomous subsystem.
 
+Before Qt/QML creation, one short-lived startup application scope performs the
+recovery preflight and initial-conversation selection/first-run creation defined
+by `docs/contracts/PresentationShell.md`; its startup-owned SQLite connection is
+closed before the GUI is created. No foreground worker starts when preflight
+finds no active run. When it finds one, the QML root is created in a disabled
+recovery state and `RecoverProcessingRun` is invoked once in the same bounded
+foreground model before submissions are enabled.
+
 The Qt GUI thread exclusively owns QML objects, controllers, view models, and
-all UI state. `ForegroundRunController` creates one ephemeral worker thread for
-an explicit user submission or for the startup coordinator's one already-
-accepted recovery invocation; it never keeps a queue or polls for work. Startup
-recovery is invoked once after validated configuration/database bootstrap and
-before new submissions are enabled. The worker owns every SQLite
-connection it uses, creates/closes it in that thread, and returns immutable
-result DTOs through queued Qt signals. The GUI thread never passes a SQLite
-connection, ORM row, mutable domain object, or provider buffer across the
-thread boundary.
+all UI state. `ForegroundRunController` creates one ephemeral worker thread only
+for an accepted explicit user submission or required startup recovery; it never
+keeps a queue or polls for work. The worker opens one fresh application scope,
+creates/uses/closes that scope's SQLite connection in its own thread, and emits
+one immutable terminal envelope only after scope closure. The GUI thread never
+receives a SQLite connection, cursor/row, mutable domain object, provider buffer,
+or worker-affine object. Terminal and worker-finished connections are queued.
+Only the terminal envelope may select a result state; the finished notification
+may only release worker ownership and update enablement derived from that
+ownership.
 
 Cancellation sets a per-execution thread-safe token observed by the application
 at its defined checkpoints and by the gateway before and while it waits; it
 never force-terminates a Python/Qt thread. A recovery invocation receives a
-fresh token rather than reconstructing pre-restart cancellation. On app shutdown the
-controller disables new submissions, requests cancellation, and delays final
-Qt exit until the worker emits a terminal DTO or the bounded provider timeout
-has produced its typed terminal outcome. A late signal after a controller is
-disposed is ignored safely. The controller joins/closes the ephemeral worker
-after terminal delivery. These foreground tasks are user-owned and finite, not
-background workers.
+fresh token rather than reconstructing pre-restart cancellation. On app shutdown
+the controller disables new submissions, requests cancellation once, keeps the
+GUI event loop alive, and delays final Qt exit until the terminal value and
+worker-finished notification arrive. It never blocks the GUI waiting for a live
+worker or adds a second transport timeout. A mismatched or late signal after
+terminal delivery, replacement, shutdown disposal, or controller disposal is
+ignored safely. These foreground tasks are user-owned and finite, not background
+workers. The complete states, safe display, worker lifetime, and disposal rules
+are authoritative in `docs/contracts/PresentationShell.md`.
 
 ### 2. Application
 
-Coordinates `ProcessUserMessage`, explicit memory CRUD, project selection,
+Coordinates `PrepareApplicationShell`, `ProcessUserMessage`,
+`RecoverProcessingRun`, explicit memory CRUD, project selection,
 project/conversation creation and archive, named-item registration, context
 inspection, validation inspection, configuration inspection, and evaluation
-execution. It owns run lifecycle transitions and transaction orchestration, not
-context rules or SQL.
+execution. Shell preparation owns only the read-only recovery preflight and
+deterministic initial-conversation selection/first-run creation. It does not
+classify or resume recovery. Application owns run lifecycle transitions and
+transaction orchestration, not context rules, UI state, worker creation, or SQL.
 
 ### 3. Domain
 
@@ -185,6 +199,13 @@ There is no `api/`, `workers/`, `embeddings/`, or `files/` MVP package. A shared
 catch-all package is prohibited; reusable types belong in the innermost owning
 layer.
 
+QML assets may be split into nested directories under `ui/qml/`, but every root
+and nested asset is packaged recursively and loaded from the installed package
+resource tree rather than the process working directory. Missing/unresolved
+assets fail through the closed pre-shell QML-load projection before any
+foreground worker starts. `docs/contracts/PresentationShell.md` is authoritative
+for this loading boundary.
+
 ## Main processing pipeline
 
 ```text
@@ -210,11 +231,13 @@ idempotency key, and an owned cancellation token
 → Return one exhaustive typed public result
 ```
 
-After process restart, the startup coordinator invokes the separate
-`RecoverProcessingRun` use case once in the same bounded foreground execution
-model. It classifies the sole possible global non-terminal run, resumes only a
-provably not-yet-sent step, and terminalizes an uncertain `IN_FLIGHT` request
-without another provider call. This is neither a queue nor a background worker.
+After process restart, the pre-QML startup coordinator performs one read-only
+application recovery preflight. With no global non-terminal run, it starts no
+foreground worker. With one, the loaded shell invokes the separate
+`RecoverProcessingRun` use case once in the bounded foreground execution model.
+That use case revalidates/classifies the run, resumes only a provably
+not-yet-sent step, and terminalizes an uncertain `IN_FLIGHT` request without
+another provider call. This is neither a queue nor a background worker.
 
 Memory records are never automatically created, merged, rewritten, expired, or
 deleted by this pipeline.

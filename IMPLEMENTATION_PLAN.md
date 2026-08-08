@@ -65,6 +65,13 @@ pass through the public submission/recovery use cases with the mock provider.
 Implement the QML shell, bounded foreground request presentation, context
 inspection, and explicit manual memory/project/validation/settings views.
 
+TASK-0015 owns only the `CHAT` shell, startup/error/first-conversation flow,
+worker-scoped foreground execution, safe typed presentation, recursive QML
+packaging, and the shell-responsiveness portion of AT-013 under
+`docs/contracts/PresentationShell.md`. The detailed context-inspection page and
+other named views remain with their later owners; TASK-0015 creates no
+placeholder routes for them.
+
 **Exit:** AT-013 and AT-014 pass; no UI thread blocking or hidden automatic
 memory mutation remains.
 
