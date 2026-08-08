@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import inspect
 from pathlib import Path
 import sqlite3
@@ -14,9 +15,11 @@ from typing import get_type_hints
 
 import pytest
 
+from context_for_ai.context_engine.prompt_rendering import _plan_initial
 from context_for_ai.domain.decisions import (
     CONDITION_GRAMMAR_VERSION,
     CONTEXT_PACKET_SCHEMA_VERSION,
+    PROMPT_POLICY_VERSION,
     Condition,
     Constraint,
     ContextPacket,
@@ -103,6 +106,7 @@ from context_for_ai.domain.ports import (
     TopicRepository,
     TransactionBoundary,
     ValidationRepository,
+    ContextBudgetExceeded,
 )
 from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, UnitScore
 from context_for_ai.infrastructure.database import (
@@ -138,6 +142,114 @@ def identifier(number: int) -> DomainId:
 
 def stamp(seconds: int) -> datetime:
     return BASE_TIME + timedelta(seconds=seconds)
+
+
+def context_packet_fixture(
+    *,
+    packet_id: DomainId,
+    run: ProcessingRun,
+    message: Message,
+    created_at: datetime,
+    results: tuple[RetrievalResult, ...] = (),
+    memories: tuple[Memory, ...] = (),
+) -> ContextPacket:
+    assert tuple(result.memory_id for result in results) == tuple(
+        memory.id for memory in memories
+    )
+    confidence = Decimal("1") if not results else results[0].score.value
+    payload: dict[str, object] = {
+        "schema_version": CONTEXT_PACKET_SCHEMA_VERSION,
+        "trace": {
+            "processing_run_id": str(run.id),
+            "conversation_id": str(run.conversation_id),
+            "user_message_id": str(message.id),
+            "state_version": 0,
+            "configuration_fingerprint": run.configuration_fingerprint,
+        },
+        "request": {
+            "original_text": message.original_text,
+            "intent": "ANSWER",
+            "intent_rule_id": "fixture-intent",
+            "expected_output_type": "TEXT_ANSWER",
+            "qualifiers": (),
+            "confidence": confidence,
+        },
+        "active_state": {
+            "project_id": None,
+            "topic_id": None,
+            "task_id": None,
+            "previous_task_id": None,
+            "topic_stack": (),
+        },
+        "validation_context": {
+            "rule_set_version": "fixture-validation-v1",
+            "active_topic": None,
+            "output_shape_rule": {
+                "id": "fixture-shape-answer",
+                "output_type": "TEXT_ANSWER",
+                "shape": "NON_EMPTY_TEXT",
+            },
+            "preserve_change_verb_list_id": "fixture-preserve-v1",
+            "preserve_change_verbs": ("change",),
+            "action_markers": ("TOOL_CALL:",),
+        },
+        "references": (),
+        "constraints": (),
+        "retrieval": tuple(
+            {
+                "memory_id": str(memory.id),
+                "content": memory.content,
+                "score": result.score.value,
+                "rank": result.rank,
+                "reasons": result.reasons,
+                "scope": memory.scope.value,
+                "confidence": memory.confidence.value,
+            }
+            for result, memory in zip(results, memories, strict=True)
+        ),
+        "confidence": {
+            "interpretation": confidence,
+            "references": None,
+            "retrieval": None if not results else results[0].score.value,
+            "overall": confidence,
+        },
+        "response_policy": {
+            "output_type": "TEXT_ANSWER",
+            "validate_before_display": True,
+            "text_only": True,
+            "no_actions": True,
+            "streaming": False,
+            "correction_limit": 2,
+            "model_generation_limit": 3,
+            "absolute_model_generation_cap": 3,
+        },
+        "rendering": {
+            "prompt_policy_version": PROMPT_POLICY_VERSION,
+            "token_estimator": "conservative_utf8_v1",
+            "token_budget": 10000,
+            "mandatory_estimated_tokens": 0,
+            "estimated_prompt_tokens": 0,
+            "included_sections": (),
+            "omitted_sections": (),
+        },
+    }
+    plan = _plan_initial(
+        context_packet_id=packet_id,
+        packet_json=FrozenJsonObject(payload),
+        effective_budget=10000,
+    )
+    assert not isinstance(plan, ContextBudgetExceeded)
+    payload["rendering"] = plan.metadata.to_json_object()
+    return ContextPacket(
+        packet_id,
+        run.id,
+        message.id,
+        FrozenJsonObject(payload),
+        CONTEXT_PACKET_SCHEMA_VERSION,
+        PROMPT_POLICY_VERSION,
+        run.configuration_fingerprint,
+        created_at,
+    )
 
 
 @pytest.fixture
@@ -281,20 +393,11 @@ def add_empty_packet(
     *,
     packet_number: int = 30,
 ) -> tuple[ContextPacketRecord, ProcessingRun]:
-    packet = ContextPacket(
-        identifier(packet_number),
-        core.run.id,
-        core.user_message.id,
-        FrozenJsonObject(
-            {
-                "exact_request": core.user_message.original_text,
-                "nested": {"values": [1, True, None, "café"]},
-            }
-        ),
-        CONTEXT_PACKET_SCHEMA_VERSION,
-        "prompt-policy-v1",
-        core.run.configuration_fingerprint,
-        stamp(10),
+    packet = context_packet_fixture(
+        packet_id=identifier(packet_number),
+        run=core.run,
+        message=core.user_message,
+        created_at=stamp(10),
     )
     record = ContextPacketRecord(packet, (), ())
     context_ready = replace(core.run, status=ProcessingRunStatus.CONTEXT_READY)
@@ -582,6 +685,41 @@ def test_core_entity_state_message_and_archive_repositories(
     assert all(entity.is_active is False for entity in stale_candidates)
 
 
+def test_context_packet_rejects_trace_conversation_outside_its_run(
+    connection: sqlite3.Connection,
+) -> None:
+    bundle = repositories(connection)
+    core = seed_core(bundle)
+    packet = context_packet_fixture(
+        packet_id=identifier(30),
+        run=core.run,
+        message=core.user_message,
+        created_at=stamp(10),
+    )
+    payload = dict(packet.packet_json.items())
+    trace = packet.packet_json["trace"]
+    assert isinstance(trace, FrozenJsonObject)
+    payload["trace"] = {
+        **dict(trace.items()),
+        "conversation_id": str(identifier(999)),
+    }
+    mismatched = ContextPacket(
+        packet.id,
+        packet.processing_run_id,
+        packet.message_id,
+        FrozenJsonObject(payload),
+        packet.schema_version,
+        packet.prompt_policy_version,
+        packet.configuration_fingerprint,
+        packet.created_at,
+    )
+
+    with pytest.raises(LifecycleInvariantError, match="trace conversation"):
+        bundle.packets.add(ContextPacketRecord(mismatched, (), ()))
+
+    assert bundle.packets.get(packet.id) is None
+
+
 def test_decision_memory_and_packet_aggregates_round_trip_exactly(
     connection: sqlite3.Connection,
 ) -> None:
@@ -722,25 +860,10 @@ def test_decision_memory_and_packet_aggregates_round_trip_exactly(
     bundle.constraints.add_all((conditional, hard))
     assert bundle.constraints.list_for_run(core.run.id) == (hard, conditional)
 
-    packet = ContextPacket(
-        identifier(130),
-        core.run.id,
-        core.user_message.id,
-        FrozenJsonObject(
-            {
-                "request": core.user_message.original_text,
-                "flags": [True, False, None],
-                "nested": {"café": "☕", "count": 2},
-            }
-        ),
-        CONTEXT_PACKET_SCHEMA_VERSION,
-        "prompt-policy-v1",
-        core.run.configuration_fingerprint,
-        stamp(14),
-    )
+    packet_id = identifier(130)
     retrieval = RetrievalResult(
         identifier(131),
-        packet.id,
+        packet_id,
         selected_memory.id,
         0,
         UnitScore("0.75"),
@@ -757,12 +880,20 @@ def test_decision_memory_and_packet_aggregates_round_trip_exactly(
     )
     exclusion = RetrievalExclusion(
         identifier(132),
-        packet.id,
+        packet_id,
         duplicate_memory.id,
         RetrievalExclusionReason.DUPLICATE_CONTENT,
         UnitScore("0.75"),
         FrozenJsonObject({"retained_memory_id": str(selected_memory.id)}),
         stamp(14),
+    )
+    packet = context_packet_fixture(
+        packet_id=packet_id,
+        run=core.run,
+        message=core.user_message,
+        created_at=stamp(14),
+        results=(retrieval,),
+        memories=(selected_memory,),
     )
     packet_record = ContextPacketRecord(packet, (retrieval,), (exclusion,))
     bundle.packets.add(packet_record)

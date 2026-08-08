@@ -6,6 +6,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+import json
 import math
 from typing import Callable
 from uuid import UUID, uuid4
@@ -151,7 +152,7 @@ class FrozenJsonObject(Mapping[str, object]):
         return len(self._items)
 
 
-type JsonScalar = None | bool | int | float | str
+type JsonScalar = None | bool | int | float | Decimal | str
 type FrozenJsonValue = JsonScalar | FrozenJsonObject | tuple[FrozenJsonValue, ...]
 
 
@@ -166,6 +167,10 @@ def freeze_json(value: object) -> FrozenJsonValue:
         if not math.isfinite(value):
             raise DomainValidationError("JSON numbers must be finite.")
         return value
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise DomainValidationError("JSON decimal numbers must be finite.")
+        return value
     if isinstance(value, Mapping):
         return FrozenJsonObject(value)
     if isinstance(value, (list, tuple)):
@@ -173,3 +178,113 @@ def freeze_json(value: object) -> FrozenJsonValue:
     raise DomainValidationError(
         f"Unsupported JSON value type: {type(value).__name__}."
     )
+
+
+def _canonical_json_string(value: str) -> str:
+    rendered: list[str] = ['"']
+    short_escapes = {
+        '"': '\\"',
+        "\\": "\\\\",
+        "\b": "\\b",
+        "\t": "\\t",
+        "\n": "\\n",
+        "\f": "\\f",
+        "\r": "\\r",
+    }
+    for character in value:
+        escaped = short_escapes.get(character)
+        if escaped is not None:
+            rendered.append(escaped)
+            continue
+        code_point = ord(character)
+        if 0xD800 <= code_point <= 0xDFFF:
+            raise DomainValidationError(
+                "Canonical JSON strings cannot contain lone UTF-16 surrogates."
+            )
+        if (
+            code_point <= 0x001F
+            or 0x007F <= code_point <= 0x009F
+            or code_point in (0x2028, 0x2029)
+        ):
+            rendered.append(f"\\u{code_point:04x}")
+        else:
+            rendered.append(character)
+    rendered.append('"')
+    return "".join(rendered)
+
+
+def canonical_json(value: object) -> str:
+    """Return strict one-line canonical JSON for packet and prompt values.
+
+    Generic durable JSON may continue to contain finite binary floats. The
+    packet codec is deliberately stricter and rejects them recursively.
+    """
+
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, Decimal):
+        return canonical_decimal_string(value)
+    if isinstance(value, float):
+        raise DomainValidationError(
+            "Canonical packet JSON rejects binary floating-point values."
+        )
+    if isinstance(value, str):
+        return _canonical_json_string(value)
+    if isinstance(value, FrozenJsonObject):
+        items = value._items
+        return "{" + ",".join(
+            f"{_canonical_json_string(key)}:{canonical_json(item)}"
+            for key, item in items
+        ) + "}"
+    if isinstance(value, Mapping):
+        return canonical_json(FrozenJsonObject(value))
+    if isinstance(value, (tuple, list)):
+        return "[" + ",".join(canonical_json(item) for item in value) + "]"
+    raise DomainValidationError(
+        f"Unsupported canonical JSON value type: {type(value).__name__}."
+    )
+
+
+def parse_canonical_json_object(value: str) -> FrozenJsonObject:
+    """Parse one strict canonical JSON object and reject alternate encodings."""
+
+    if not isinstance(value, str) or not value:
+        raise DomainValidationError("Canonical JSON text must be non-empty.")
+
+    def reject_constant(raw: str) -> object:
+        raise DomainValidationError(f"Canonical JSON rejects {raw}.")
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, item in pairs:
+            if key in result:
+                raise DomainValidationError(
+                    f"Canonical JSON contains duplicate key {key!r}."
+                )
+            result[key] = item
+        return result
+
+    try:
+        parsed = json.loads(
+            value,
+            parse_float=Decimal,
+            parse_int=int,
+            parse_constant=reject_constant,
+            object_pairs_hook=unique_object,
+        )
+    except DomainValidationError:
+        raise
+    except (json.JSONDecodeError, TypeError, ValueError) as error:
+        raise DomainValidationError("Invalid canonical JSON object.") from error
+    if not isinstance(parsed, Mapping):
+        raise DomainValidationError("Canonical packet JSON must be an object.")
+    frozen = FrozenJsonObject(parsed)
+    if canonical_json(frozen) != value:
+        raise DomainValidationError("Packet JSON is not in canonical form.")
+    return frozen

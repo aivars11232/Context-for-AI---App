@@ -9,6 +9,7 @@ from context_for_ai.application.contracts import (
     ArchiveProjectOutput,
     CreateMemory,
     CreateMemoryInput,
+    ContextPacketStage,
     EditMemory,
     EditMemoryInput,
     GetMemory,
@@ -81,6 +82,7 @@ from context_for_ai.application.memory import (
     ListMemoriesService,
     SoftDeleteMemoryService,
 )
+from context_for_ai.application.context_packet import ContextPacketStageService
 
 
 __all__ = [
@@ -96,6 +98,8 @@ __all__ = [
     "ClarificationRequired",
     "ContextBudgetExceededError",
     "ContextConstructionError",
+    "ContextPacketStage",
+    "ContextPacketStageService",
     "CreateMemory",
     "CreateMemoryInput",
     "CreateMemoryService",

@@ -15,7 +15,9 @@ from context_for_ai.domain.enums import (
     PipelineStage,
     ProcessingRunStatus,
     ProviderKind,
+    ValidationCheckId,
     ValidationStatus,
+    ValidationViolationCode,
 )
 from context_for_ai.domain.errors import LifecycleInvariantError
 from context_for_ai.domain.lifecycle import (
@@ -26,6 +28,8 @@ from context_for_ai.domain.lifecycle import (
     ProcessingRun,
     SafeFailure,
     ValidationResult,
+    ValidationViolation,
+    ValidationViolationEvidence,
 )
 from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, UnitScore
 
@@ -148,6 +152,41 @@ def test_validation_and_correction_records_preserve_typed_evidence() -> None:
         )
 
 
+def test_validation_violation_is_closed_immutable_correction_evidence() -> None:
+    evidence = ValidationViolationEvidence(
+        ValidationCheckId.REQUIRED_CONSTRAINT,
+        "required-rule",
+        3,
+    )
+    violation = ValidationViolation(
+        0,
+        ValidationViolationCode.MISSING_REQUIREMENT,
+        "The response does not satisfy a required constraint.",
+        identifier(8),
+        evidence,
+    )
+
+    assert violation.to_json_object() == FrozenJsonObject(
+        {
+            "ordinal": 0,
+            "code": "MISSING_REQUIREMENT",
+            "message": "The response does not satisfy a required constraint.",
+            "constraint_id": str(identifier(8)),
+            "evidence": {
+                "check_id": "REQUIRED_CONSTRAINT",
+                "rule_id": "required-rule",
+                "evidence_ordinal": 3,
+            },
+        }
+    )
+    with pytest.raises(LifecycleInvariantError, match="canonical code message"):
+        ValidationViolation(
+            0,
+            ValidationViolationCode.MISSING_REQUIREMENT,
+            "wrong",
+            identifier(8),
+            evidence,
+        )
 def test_clarification_and_safe_failure_are_distinct_typed_results() -> None:
     clarification = ClarificationRequest(
         identifier(11),

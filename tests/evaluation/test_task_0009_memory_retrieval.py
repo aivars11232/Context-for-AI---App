@@ -26,8 +26,14 @@ from context_for_ai.application import (
     SoftDeleteMemoryService,
 )
 from context_for_ai.context_engine import DeterministicContextRetriever
+from context_for_ai.context_engine.prompt_rendering import _plan_initial
 from context_for_ai.domain import MEMORY_REVISION_SCHEMA_VERSION
-from context_for_ai.domain.decisions import CONTEXT_PACKET_SCHEMA_VERSION, ContextPacket
+from context_for_ai.domain.decisions import (
+    CONTEXT_PACKET_SCHEMA_VERSION,
+    PROMPT_POLICY_VERSION,
+    ContextPacket,
+    RetrievalResult,
+)
 from context_for_ai.domain.entities import Conversation, Memory, Message, Project
 from context_for_ai.domain.enums import (
     MemoryEffectiveStatus,
@@ -43,7 +49,7 @@ from context_for_ai.domain.enums import (
 )
 from context_for_ai.domain.errors import LifecycleInvariantError
 from context_for_ai.domain.lifecycle import ProcessingRun
-from context_for_ai.domain.ports.context import RetrievalRequest
+from context_for_ai.domain.ports.context import ContextBudgetExceeded, RetrievalRequest
 from context_for_ai.domain.ports.records import ContextPacketRecord, MemoryRecord
 from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, UnitScore
 from context_for_ai.infrastructure.database import (
@@ -66,6 +72,114 @@ EVALUATED_AT = BASE_TIME + timedelta(days=100)
 
 def identifier(number: int) -> DomainId:
     return DomainId(f"90000000-0000-4000-8000-{number:012d}")
+
+
+def caller_packet_fixture(
+    *,
+    packet_id: DomainId,
+    run: ProcessingRun,
+    message: Message,
+    created_at: datetime,
+    results: tuple[RetrievalResult, ...],
+    memories: tuple[Memory, ...],
+) -> ContextPacket:
+    assert tuple(value.memory_id for value in results) == tuple(
+        value.id for value in memories
+    )
+    confidence = Decimal("1") if not results else results[0].score.value
+    payload: dict[str, object] = {
+        "schema_version": CONTEXT_PACKET_SCHEMA_VERSION,
+        "trace": {
+            "processing_run_id": str(run.id),
+            "conversation_id": str(run.conversation_id),
+            "user_message_id": str(message.id),
+            "state_version": 0,
+            "configuration_fingerprint": run.configuration_fingerprint,
+        },
+        "request": {
+            "original_text": message.original_text,
+            "intent": "ANSWER",
+            "intent_rule_id": "task-0009-fixture",
+            "expected_output_type": "TEXT_ANSWER",
+            "qualifiers": (),
+            "confidence": confidence,
+        },
+        "active_state": {
+            "project_id": None,
+            "topic_id": None,
+            "task_id": None,
+            "previous_task_id": None,
+            "topic_stack": (),
+        },
+        "validation_context": {
+            "rule_set_version": "fixture-validation-v1",
+            "active_topic": None,
+            "output_shape_rule": {
+                "id": "fixture-shape-answer",
+                "output_type": "TEXT_ANSWER",
+                "shape": "NON_EMPTY_TEXT",
+            },
+            "preserve_change_verb_list_id": "fixture-preserve-v1",
+            "preserve_change_verbs": ("change",),
+            "action_markers": ("TOOL_CALL:",),
+        },
+        "references": (),
+        "constraints": (),
+        "retrieval": tuple(
+            {
+                "memory_id": str(memory.id),
+                "content": memory.content,
+                "score": result.score.value,
+                "rank": result.rank,
+                "reasons": result.reasons,
+                "scope": memory.scope.value,
+                "confidence": memory.confidence.value,
+            }
+            for result, memory in zip(results, memories, strict=True)
+        ),
+        "confidence": {
+            "interpretation": confidence,
+            "references": None,
+            "retrieval": None if not results else results[0].score.value,
+            "overall": confidence,
+        },
+        "response_policy": {
+            "output_type": "TEXT_ANSWER",
+            "validate_before_display": True,
+            "text_only": True,
+            "no_actions": True,
+            "streaming": False,
+            "correction_limit": 2,
+            "model_generation_limit": 3,
+            "absolute_model_generation_cap": 3,
+        },
+        "rendering": {
+            "prompt_policy_version": PROMPT_POLICY_VERSION,
+            "token_estimator": "conservative_utf8_v1",
+            "token_budget": 10000,
+            "mandatory_estimated_tokens": 0,
+            "estimated_prompt_tokens": 0,
+            "included_sections": (),
+            "omitted_sections": (),
+        },
+    }
+    plan = _plan_initial(
+        context_packet_id=packet_id,
+        packet_json=FrozenJsonObject(payload),
+        effective_budget=10000,
+    )
+    assert not isinstance(plan, ContextBudgetExceeded)
+    payload["rendering"] = plan.metadata.to_json_object()
+    return ContextPacket(
+        packet_id,
+        run.id,
+        message.id,
+        FrozenJsonObject(payload),
+        CONTEXT_PACKET_SCHEMA_VERSION,
+        PROMPT_POLICY_VERSION,
+        run.configuration_fingerprint,
+        created_at,
+    )
 
 
 class FixedClock:
@@ -470,15 +584,14 @@ def test_at_008_retrieval_matrix_persists_caller_packet_without_mutation(
         for number in range(300, 300 + len(considered_records))
     ]
 
-    packet = ContextPacket(
-        request.context_packet_id,
-        scope.run.id,
-        scope.message.id,
-        FrozenJsonObject({"fixture_version": FIXTURE_VERSION}),
-        CONTEXT_PACKET_SCHEMA_VERSION,
-        "prompt-policy-v1",
-        scope.run.configuration_fingerprint,
-        EVALUATED_AT,
+    memory_by_id = {value.memory.id: value.memory for value in considered_records}
+    packet = caller_packet_fixture(
+        packet_id=request.context_packet_id,
+        run=scope.run,
+        message=scope.message,
+        created_at=EVALUATED_AT,
+        results=decision.selected,
+        memories=tuple(memory_by_id[value.memory_id] for value in decision.selected),
     )
     packet_record = ContextPacketRecord(packet, decision.selected, decision.excluded)
     bundle.packets.add(packet_record)

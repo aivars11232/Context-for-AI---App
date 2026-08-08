@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
@@ -26,13 +27,15 @@ from context_for_ai.application.memory import (
     SoftDeleteMemoryService,
 )
 from context_for_ai.context_engine.retrieval import DeterministicContextRetriever
+from context_for_ai.context_engine.prompt_rendering import _plan_initial
 from context_for_ai.domain.decisions import (
     CONTEXT_PACKET_SCHEMA_VERSION,
+    PROMPT_POLICY_VERSION,
     ContextPacket,
     RetrievalExclusion,
     RetrievalResult,
 )
-from context_for_ai.domain.entities import Conversation, Message, Project
+from context_for_ai.domain.entities import Conversation, Memory, Message, Project
 from context_for_ai.domain.enums import (
     MemoryEffectiveStatus,
     MemoryRevisionOperation,
@@ -46,7 +49,7 @@ from context_for_ai.domain.enums import (
 )
 from context_for_ai.domain.errors import LifecycleInvariantError
 from context_for_ai.domain.lifecycle import ProcessingRun
-from context_for_ai.domain.ports.context import RetrievalRequest
+from context_for_ai.domain.ports.context import ContextBudgetExceeded, RetrievalRequest
 from context_for_ai.domain.ports.errors import PersistenceError
 from context_for_ai.domain.ports.records import ContextPacketRecord, MemoryRecord
 from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, UnitScore
@@ -68,6 +71,114 @@ BASE_TIME = datetime(2026, 8, 2, 10, 0, tzinfo=timezone.utc)
 
 def identifier(number: int) -> DomainId:
     return DomainId(f"80000000-0000-4000-8000-{number:012d}")
+
+
+def caller_packet_fixture(
+    *,
+    packet_id: DomainId,
+    run: ProcessingRun,
+    message: Message,
+    created_at: datetime,
+    results: tuple[RetrievalResult, ...],
+    memories: tuple[Memory, ...],
+) -> ContextPacket:
+    assert tuple(value.memory_id for value in results) == tuple(
+        value.id for value in memories
+    )
+    confidence = Decimal("1") if not results else results[0].score.value
+    payload: dict[str, object] = {
+        "schema_version": CONTEXT_PACKET_SCHEMA_VERSION,
+        "trace": {
+            "processing_run_id": str(run.id),
+            "conversation_id": str(run.conversation_id),
+            "user_message_id": str(message.id),
+            "state_version": 0,
+            "configuration_fingerprint": run.configuration_fingerprint,
+        },
+        "request": {
+            "original_text": message.original_text,
+            "intent": "ANSWER",
+            "intent_rule_id": "task-0009-fixture",
+            "expected_output_type": "TEXT_ANSWER",
+            "qualifiers": (),
+            "confidence": confidence,
+        },
+        "active_state": {
+            "project_id": None,
+            "topic_id": None,
+            "task_id": None,
+            "previous_task_id": None,
+            "topic_stack": (),
+        },
+        "validation_context": {
+            "rule_set_version": "fixture-validation-v1",
+            "active_topic": None,
+            "output_shape_rule": {
+                "id": "fixture-shape-answer",
+                "output_type": "TEXT_ANSWER",
+                "shape": "NON_EMPTY_TEXT",
+            },
+            "preserve_change_verb_list_id": "fixture-preserve-v1",
+            "preserve_change_verbs": ("change",),
+            "action_markers": ("TOOL_CALL:",),
+        },
+        "references": (),
+        "constraints": (),
+        "retrieval": tuple(
+            {
+                "memory_id": str(memory.id),
+                "content": memory.content,
+                "score": result.score.value,
+                "rank": result.rank,
+                "reasons": result.reasons,
+                "scope": memory.scope.value,
+                "confidence": memory.confidence.value,
+            }
+            for result, memory in zip(results, memories, strict=True)
+        ),
+        "confidence": {
+            "interpretation": confidence,
+            "references": None,
+            "retrieval": None if not results else results[0].score.value,
+            "overall": confidence,
+        },
+        "response_policy": {
+            "output_type": "TEXT_ANSWER",
+            "validate_before_display": True,
+            "text_only": True,
+            "no_actions": True,
+            "streaming": False,
+            "correction_limit": 2,
+            "model_generation_limit": 3,
+            "absolute_model_generation_cap": 3,
+        },
+        "rendering": {
+            "prompt_policy_version": PROMPT_POLICY_VERSION,
+            "token_estimator": "conservative_utf8_v1",
+            "token_budget": 10000,
+            "mandatory_estimated_tokens": 0,
+            "estimated_prompt_tokens": 0,
+            "included_sections": (),
+            "omitted_sections": (),
+        },
+    }
+    plan = _plan_initial(
+        context_packet_id=packet_id,
+        packet_json=FrozenJsonObject(payload),
+        effective_budget=10000,
+    )
+    assert not isinstance(plan, ContextBudgetExceeded)
+    payload["rendering"] = plan.metadata.to_json_object()
+    return ContextPacket(
+        packet_id,
+        run.id,
+        message.id,
+        FrozenJsonObject(payload),
+        CONTEXT_PACKET_SCHEMA_VERSION,
+        PROMPT_POLICY_VERSION,
+        run.configuration_fingerprint,
+        created_at,
+    )
 
 
 class FixedClock:
@@ -514,15 +625,14 @@ def test_all_candidate_retrieval_is_pure_and_packet_evidence_round_trips(
     assert exclusions[deleted.memory.id] is RetrievalExclusionReason.DELETED
     assert len(decision.selected) + len(decision.excluded) == len(candidates)
 
-    packet = ContextPacket(
-        identifier(250),
-        scope.run.id,
-        scope.message.id,
-        FrozenJsonObject({"fixture": "caller supplied"}),
-        CONTEXT_PACKET_SCHEMA_VERSION,
-        "prompt-policy-v1",
-        scope.run.configuration_fingerprint,
-        evaluated_at,
+    memory_by_id = {record.memory.id: record.memory for record in candidates}
+    packet = caller_packet_fixture(
+        packet_id=identifier(250),
+        run=scope.run,
+        message=scope.message,
+        created_at=evaluated_at,
+        results=decision.selected,
+        memories=tuple(memory_by_id[value.memory_id] for value in decision.selected),
     )
     packet_record = ContextPacketRecord(
         packet,
@@ -647,19 +757,10 @@ def test_packet_insert_rolls_back_packet_result_and_late_exclusion_failure(
         scope=MemoryScope.GLOBAL,
         content="Persisted memory",
     )
-    packet = ContextPacket(
-        identifier(510),
-        scope.run.id,
-        scope.message.id,
-        FrozenJsonObject({}),
-        CONTEXT_PACKET_SCHEMA_VERSION,
-        "prompt-policy-v1",
-        scope.run.configuration_fingerprint,
-        BASE_TIME + timedelta(hours=1),
-    )
+    packet_id = identifier(510)
     result = RetrievalResult(
         identifier(511),
-        packet.id,
+        packet_id,
         stored_memory.memory.id,
         0,
         UnitScore("0.5"),
@@ -672,12 +773,12 @@ def test_packet_insert_rolls_back_packet_result_and_late_exclusion_failure(
             "scope_match=0.6",
             "correction_match=0",
         ),
-        packet.created_at,
+        BASE_TIME + timedelta(hours=1),
     )
     missing_memory_id = identifier(999)
     exclusion = RetrievalExclusion(
         identifier(512),
-        packet.id,
+        packet_id,
         missing_memory_id,
         RetrievalExclusionReason.SCOPE_MISMATCH,
         None,
@@ -690,7 +791,16 @@ def test_packet_insert_rolls_back_packet_result_and_late_exclusion_failure(
                 "memory_project_id": None,
             }
         ),
-        packet.created_at,
+        BASE_TIME + timedelta(hours=1),
+    )
+
+    packet = caller_packet_fixture(
+        packet_id=packet_id,
+        run=scope.run,
+        message=scope.message,
+        created_at=BASE_TIME + timedelta(hours=1),
+        results=(result,),
+        memories=(stored_memory.memory,),
     )
 
     with pytest.raises(PersistenceError):

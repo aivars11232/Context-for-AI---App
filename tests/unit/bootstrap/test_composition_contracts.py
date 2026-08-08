@@ -92,6 +92,8 @@ def test_system_and_deterministic_bundles_cover_required_ports() -> None:
         "constraint_engine",
         "clarification_builder",
         "context_retriever",
+        "context_packet_builder",
+        "prompt_renderer",
         "response_validator",
         "correction_controller",
     }

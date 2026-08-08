@@ -31,6 +31,7 @@ from context_for_ai.domain.ports import (
     ConfigurationLoader,
     ConstraintEngine,
     ConstraintRepository,
+    ContextPacketBuilder,
     ContextPacketRepository,
     ContextRetriever,
     ConversationRepository,
@@ -46,6 +47,7 @@ from context_for_ai.domain.ports import (
     ModelGateway,
     ProcessingRunRepository,
     ProjectRepository,
+    PromptRenderer,
     ReferenceMentionExtractor,
     ReferenceResolver,
     ReferenceResolutionRepository,
@@ -104,6 +106,8 @@ class DeterministicComponents:
     constraint_engine: ConstraintEngine
     clarification_builder: ClarificationBuilder
     context_retriever: ContextRetriever
+    context_packet_builder: ContextPacketBuilder
+    prompt_renderer: PromptRenderer
     response_validator: ResponseValidator
     correction_controller: CorrectionController
 

@@ -18,6 +18,7 @@ from context_for_ai.application import (
     ArchiveProjectOutput,
     CreateMemory,
     CreateMemoryInput,
+    ContextPacketStage,
     EditMemory,
     EditMemoryInput,
     GetMemory,
@@ -81,6 +82,10 @@ from context_for_ai.domain.enums import (
 from context_for_ai.domain.errors import BusyError, LifecycleInvariantError
 from context_for_ai.domain.policies import memory_revision_metadata
 from context_for_ai.domain.ports.records import MemoryRecord
+from context_for_ai.domain.ports.context import (
+    ContextPacketBuildRequest,
+    ContextPacketBuildResult,
+)
 from context_for_ai.domain.value_objects import DomainId, UnitScore
 
 
@@ -173,6 +178,15 @@ def test_every_required_use_case_has_one_typed_execute_contract() -> None:
             "request": request_type,
             "return": output_type,
         }
+
+
+def test_context_packet_stage_uses_the_domain_build_contract_directly() -> None:
+    assert issubclass(ContextPacketStage, Protocol)
+    assert ContextPacketStage._is_protocol is True
+    assert get_type_hints(ContextPacketStage.execute) == {
+        "request": ContextPacketBuildRequest,
+        "return": ContextPacketBuildResult,
+    }
 
 
 def test_use_case_inputs_and_outputs_are_frozen_slotted_dataclasses() -> None:

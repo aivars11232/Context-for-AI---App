@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 
 from context_for_ai.domain.decisions import (
     CONDITION_GRAMMAR_VERSION,
     CONTEXT_PACKET_SCHEMA_VERSION,
+    PROMPT_POLICY_VERSION,
     Condition,
     Constraint,
     ConstraintConflictGroup,
@@ -63,6 +65,74 @@ SELECTED_REASONS = (
 
 def identifier(number: int) -> DomainId:
     return DomainId(f"10000000-0000-4000-8000-{number:012d}")
+
+
+def valid_packet_json(*, action_markers: list[str] | None = None) -> dict[str, object]:
+    return {
+        "schema_version": CONTEXT_PACKET_SCHEMA_VERSION,
+        "trace": {
+            "processing_run_id": str(identifier(1)),
+            "conversation_id": str(identifier(3)),
+            "user_message_id": str(identifier(2)),
+            "state_version": 4,
+            "configuration_fingerprint": "configuration-fingerprint",
+        },
+        "request": {
+            "original_text": "Explain the result.",
+            "intent": "EXPLAIN",
+            "intent_rule_id": "intent-explain",
+            "expected_output_type": "TEXT_EXPLANATION",
+            "qualifiers": (),
+            "confidence": Decimal("0.9"),
+        },
+        "active_state": {
+            "project_id": None,
+            "topic_id": None,
+            "task_id": None,
+            "previous_task_id": None,
+            "topic_stack": (),
+        },
+        "validation_context": {
+            "rule_set_version": "validation-v1",
+            "active_topic": None,
+            "output_shape_rule": {
+                "id": "shape-explanation",
+                "output_type": "TEXT_EXPLANATION",
+                "shape": "NON_EMPTY_TEXT",
+            },
+            "preserve_change_verb_list_id": "preserve-verbs-v1",
+            "preserve_change_verbs": ("change",),
+            "action_markers": action_markers or ["TOOL_CALL:"],
+        },
+        "references": (),
+        "constraints": (),
+        "retrieval": (),
+        "confidence": {
+            "interpretation": Decimal("0.9"),
+            "references": None,
+            "retrieval": None,
+            "overall": Decimal("0.9"),
+        },
+        "response_policy": {
+            "output_type": "TEXT_EXPLANATION",
+            "validate_before_display": True,
+            "text_only": True,
+            "no_actions": True,
+            "streaming": False,
+            "correction_limit": 2,
+            "model_generation_limit": 3,
+            "absolute_model_generation_cap": 3,
+        },
+        "rendering": {
+            "prompt_policy_version": PROMPT_POLICY_VERSION,
+            "token_estimator": "conservative_utf8_v1",
+            "token_budget": 1000,
+            "mandatory_estimated_tokens": 200,
+            "estimated_prompt_tokens": 200,
+            "included_sections": (),
+            "omitted_sections": (),
+        },
+    }
 
 
 def active_project_evidence(
@@ -588,17 +658,15 @@ def test_conditional_constraint_requires_fixed_grammar_and_hard_underlying_type(
 
 
 def test_packet_and_retrieval_records_freeze_nested_evidence() -> None:
-    packet_source = {
-        "trace": {"processing_run_id": str(identifier(1))},
-        "constraints": [{"id": str(identifier(5)), "priority": 1000}],
-    }
+    action_markers = ["TOOL_CALL:"]
+    packet_source = valid_packet_json(action_markers=action_markers)
     packet = ContextPacket(
         identifier(7),
         identifier(1),
         identifier(2),
         packet_source,  # type: ignore[arg-type]
         CONTEXT_PACKET_SCHEMA_VERSION,
-        "opaque-policy-version",
+        PROMPT_POLICY_VERSION,
         "configuration-fingerprint",
         NOW,
     )
@@ -620,13 +688,149 @@ def test_packet_and_retrieval_records_freeze_nested_evidence() -> None:
         FrozenJsonObject({"minimum_relevance_score": "0.5"}),
         NOW,
     )
-    packet_source["constraints"] = []
+    action_markers.append("ACTION_EXECUTED:")
 
-    assert packet.packet["constraints"] == (
-        FrozenJsonObject({"id": str(identifier(5)), "priority": 1000}),
-    )
+    validation_context = packet.packet_json["validation_context"]
+    assert isinstance(validation_context, FrozenJsonObject)
+    assert validation_context["action_markers"] == ("TOOL_CALL:",)
     assert selected.reasons == SELECTED_REASONS
     assert excluded.details["minimum_relevance_score"] == "0.5"
+
+
+def test_context_packet_rejects_v1_and_outer_payload_mismatch() -> None:
+    packet_json = valid_packet_json()
+    packet_json["schema_version"] = "mvp-context-packet-v1"
+    with pytest.raises(LifecycleInvariantError, match="v2"):
+        ContextPacket(
+            identifier(7),
+            identifier(1),
+            identifier(2),
+            packet_json,  # type: ignore[arg-type]
+            CONTEXT_PACKET_SCHEMA_VERSION,
+            PROMPT_POLICY_VERSION,
+            "configuration-fingerprint",
+            NOW,
+        )
+
+
+def test_context_packet_revalidates_nested_confidence_semantics() -> None:
+    packet_json = valid_packet_json()
+    confidence = packet_json["confidence"]
+    assert isinstance(confidence, dict)
+    confidence["overall"] = Decimal("0.8")
+
+    with pytest.raises(LifecycleInvariantError, match="normalized weighted mean"):
+        ContextPacket(
+            identifier(7),
+            identifier(1),
+            identifier(2),
+            packet_json,  # type: ignore[arg-type]
+            CONTEXT_PACKET_SCHEMA_VERSION,
+            PROMPT_POLICY_VERSION,
+            "configuration-fingerprint",
+            NOW,
+        )
+
+
+def test_context_packet_revalidates_fixed_response_policy_scalars() -> None:
+    packet_json = valid_packet_json()
+    response_policy = packet_json["response_policy"]
+    assert isinstance(response_policy, dict)
+    response_policy["streaming"] = 0
+
+    with pytest.raises(LifecycleInvariantError, match="fixed booleans"):
+        ContextPacket(
+            identifier(7),
+            identifier(1),
+            identifier(2),
+            packet_json,  # type: ignore[arg-type]
+            CONTEXT_PACKET_SCHEMA_VERSION,
+            PROMPT_POLICY_VERSION,
+            "configuration-fingerprint",
+            NOW,
+        )
+
+
+def test_context_packet_revalidates_rendering_estimate_relationships() -> None:
+    packet_json = valid_packet_json()
+    rendering = packet_json["rendering"]
+    assert isinstance(rendering, dict)
+    rendering["mandatory_estimated_tokens"] = 201
+
+    with pytest.raises(LifecycleInvariantError, match="fit its budget"):
+        ContextPacket(
+            identifier(7),
+            identifier(1),
+            identifier(2),
+            packet_json,  # type: ignore[arg-type]
+            CONTEXT_PACKET_SCHEMA_VERSION,
+            PROMPT_POLICY_VERSION,
+            "configuration-fingerprint",
+            NOW,
+        )
+
+
+def test_context_packet_revalidates_normalized_validation_tokens() -> None:
+    packet_json = valid_packet_json()
+    validation_context = packet_json["validation_context"]
+    assert isinstance(validation_context, dict)
+    validation_context["preserve_change_verbs"] = (" Change ",)
+
+    with pytest.raises(LifecycleInvariantError, match="normalized tokens"):
+        ContextPacket(
+            identifier(7),
+            identifier(1),
+            identifier(2),
+            packet_json,  # type: ignore[arg-type]
+            CONTEXT_PACKET_SCHEMA_VERSION,
+            PROMPT_POLICY_VERSION,
+            "configuration-fingerprint",
+            NOW,
+        )
+
+
+def test_context_packet_revalidates_topic_word_normalization() -> None:
+    packet_json = valid_packet_json()
+    active_state = packet_json["active_state"]
+    validation_context = packet_json["validation_context"]
+    assert isinstance(active_state, dict)
+    assert isinstance(validation_context, dict)
+    active_state["topic_id"] = str(identifier(20))
+    validation_context["active_topic"] = {
+        "topic_id": str(identifier(20)),
+        "terms": ("topic!",),
+    }
+
+    with pytest.raises(LifecycleInvariantError, match="normalized tokens"):
+        ContextPacket(
+            identifier(7),
+            identifier(1),
+            identifier(2),
+            packet_json,  # type: ignore[arg-type]
+            CONTEXT_PACKET_SCHEMA_VERSION,
+            PROMPT_POLICY_VERSION,
+            "configuration-fingerprint",
+            NOW,
+        )
+
+
+def test_context_packet_revalidates_rendered_section_presence() -> None:
+    packet_json = valid_packet_json()
+    rendering = packet_json["rendering"]
+    assert isinstance(rendering, dict)
+    rendering["included_sections"] = ("REFERENCES",)
+
+    with pytest.raises(LifecycleInvariantError, match="exactly match"):
+        ContextPacket(
+            identifier(7),
+            identifier(1),
+            identifier(2),
+            packet_json,  # type: ignore[arg-type]
+            CONTEXT_PACKET_SCHEMA_VERSION,
+            PROMPT_POLICY_VERSION,
+            "configuration-fingerprint",
+            NOW,
+        )
 
 
 @pytest.mark.parametrize(

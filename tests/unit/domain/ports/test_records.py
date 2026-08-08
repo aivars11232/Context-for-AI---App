@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 
 from context_for_ai.domain.decisions import (
     CONTEXT_PACKET_SCHEMA_VERSION,
+    PROMPT_POLICY_VERSION,
     ContextPacket,
     RetrievalExclusion,
     RetrievalResult,
@@ -24,7 +26,7 @@ from context_for_ai.domain.enums import (
     RetrievalExclusionReason,
 )
 from context_for_ai.domain.errors import LifecycleInvariantError
-from context_for_ai.domain.policies import memory_revision_metadata
+from context_for_ai.domain.policies import memory_revision_metadata, overall_confidence
 from context_for_ai.domain.ports.records import ContextPacketRecord, MemoryRecord
 from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, UnitScore
 
@@ -84,14 +86,95 @@ def memory_record() -> MemoryRecord:
     return MemoryRecord(memory, [source], [revision])  # type: ignore[arg-type]
 
 
-def packet() -> ContextPacket:
+def packet(results: tuple[RetrievalResult, ...] = ()) -> ContextPacket:
+    retrieval = tuple(
+        {
+            "memory_id": str(result.memory_id),
+            "content": f"Memory {result.memory_id}",
+            "score": result.score.value,
+            "rank": result.rank,
+            "reasons": result.reasons,
+            "scope": "GLOBAL",
+            "confidence": Decimal("1"),
+        }
+        for result in results
+    )
     return ContextPacket(
         identifier(10),
         identifier(11),
         identifier(12),
-        FrozenJsonObject({}),
+        FrozenJsonObject(
+            {
+                "schema_version": CONTEXT_PACKET_SCHEMA_VERSION,
+                "trace": {
+                    "processing_run_id": str(identifier(11)),
+                    "conversation_id": str(identifier(13)),
+                    "user_message_id": str(identifier(12)),
+                    "state_version": 0,
+                    "configuration_fingerprint": "configuration-fingerprint",
+                },
+                "request": {
+                    "original_text": "Remember this",
+                    "intent": "ANSWER",
+                    "intent_rule_id": "intent-answer",
+                    "expected_output_type": "TEXT_ANSWER",
+                    "qualifiers": (),
+                    "confidence": Decimal("1"),
+                },
+                "active_state": {
+                    "project_id": None,
+                    "topic_id": None,
+                    "task_id": None,
+                    "previous_task_id": None,
+                    "topic_stack": (),
+                },
+                "validation_context": {
+                    "rule_set_version": "validation-v1",
+                    "active_topic": None,
+                    "output_shape_rule": {
+                        "id": "shape-answer",
+                        "output_type": "TEXT_ANSWER",
+                        "shape": "NON_EMPTY_TEXT",
+                    },
+                    "preserve_change_verb_list_id": "preserve-v1",
+                    "preserve_change_verbs": ("change",),
+                    "action_markers": ("TOOL_CALL:",),
+                },
+                "references": (),
+                "constraints": (),
+                "retrieval": retrieval,
+                "confidence": {
+                    "interpretation": Decimal("1"),
+                    "references": None,
+                    "retrieval": None if not results else results[0].score.value,
+                    "overall": overall_confidence(
+                        interpretation=UnitScore("1"),
+                        retrieval=None if not results else results[0].score,
+                    ).value,
+                },
+                "response_policy": {
+                    "output_type": "TEXT_ANSWER",
+                    "validate_before_display": True,
+                    "text_only": True,
+                    "no_actions": True,
+                    "streaming": False,
+                    "correction_limit": 2,
+                    "model_generation_limit": 3,
+                    "absolute_model_generation_cap": 3,
+                },
+                "rendering": {
+                    "prompt_policy_version": PROMPT_POLICY_VERSION,
+                    "token_estimator": "conservative_utf8_v1",
+                    "token_budget": 1000,
+                    "mandatory_estimated_tokens": 200,
+                    "estimated_prompt_tokens": 200,
+                    "included_sections": (() if not results else ("RETRIEVAL",)),
+                    "omitted_sections": (),
+                },
+            }
+        ),
         CONTEXT_PACKET_SCHEMA_VERSION,
-        "prompt-policy-v1",
+        PROMPT_POLICY_VERSION,
         "configuration-fingerprint",
         NOW,
     )
@@ -151,12 +234,13 @@ def test_memory_record_rejects_incomplete_history() -> None:
 
 
 def test_context_packet_record_accepts_canonical_complete_evidence() -> None:
+    results = (
+        selected(evidence_id=20, memory_id=30, rank=0, score="0.9"),
+        selected(evidence_id=21, memory_id=31, rank=1, score="0.8"),
+    )
     record = ContextPacketRecord(
-        packet(),
-        [
-            selected(evidence_id=20, memory_id=30, rank=0, score="0.9"),
-            selected(evidence_id=21, memory_id=31, rank=1, score="0.8"),
-        ],
+        packet(results),
+        results,
         [
             excluded(evidence_id=22, memory_id=32),
             excluded(evidence_id=23, memory_id=33),

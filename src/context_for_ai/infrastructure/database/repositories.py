@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import replace
 from datetime import datetime
+from decimal import Decimal
 import json
 import sqlite3
 from typing import Callable, TypeVar
@@ -101,9 +102,11 @@ from context_for_ai.domain.value_objects import (
     FrozenJsonObject,
     FrozenJsonValue,
     UnitScore,
+    canonical_json,
     format_utc_timestamp,
     freeze_json,
     parse_utc_timestamp,
+    parse_canonical_json_object,
 )
 
 
@@ -241,6 +244,41 @@ def _decode_json_object(value: object) -> FrozenJsonObject:
     if not isinstance(decoded, FrozenJsonObject):
         raise PersistenceError("Stored JSON must be an object.")
     return decoded
+
+
+def _encode_packet_json(value: FrozenJsonObject) -> str:
+    try:
+        return canonical_json(value)
+    except DomainError as error:
+        raise PersistenceError("Context packet JSON is not canonical.") from error
+
+
+def _decode_packet_json(value: object) -> FrozenJsonObject:
+    try:
+        packet = _thaw_json(parse_canonical_json_object(str(value)))
+        if not isinstance(packet, dict):
+            raise PersistenceError("Stored context packet JSON must be an object.")
+
+        def exact_decimal(raw: object) -> object:
+            return Decimal(raw) if isinstance(raw, int) and not isinstance(raw, bool) else raw
+
+        request = packet["request"]
+        request["confidence"] = exact_decimal(request["confidence"])
+        for reference in packet["references"]:
+            reference["confidence"] = exact_decimal(reference["confidence"])
+            for evidence in reference["evidence"]:
+                evidence["score"] = exact_decimal(evidence["score"])
+        for constraint in packet["constraints"]:
+            constraint["confidence"] = exact_decimal(constraint["confidence"])
+        for selected in packet["retrieval"]:
+            selected["score"] = exact_decimal(selected["score"])
+            selected["confidence"] = exact_decimal(selected["confidence"])
+        confidence = packet["confidence"]
+        for key in ("interpretation", "references", "retrieval", "overall"):
+            confidence[key] = exact_decimal(confidence[key])
+        return FrozenJsonObject(packet)
+    except (DomainError, KeyError, TypeError) as error:
+        raise PersistenceError("Stored context packet JSON is not canonical.") from error
 
 
 def _decode_json_array(value: object) -> tuple[FrozenJsonValue, ...]:
@@ -487,7 +525,7 @@ def _context_packet(row: sqlite3.Row) -> ContextPacket:
         DomainId(str(row["id"])),
         DomainId(str(row["processing_run_id"])),
         DomainId(str(row["message_id"])),
-        _decode_json_object(row["packet_json"]),
+        _decode_packet_json(row["packet_json"]),
         str(row["schema_version"]),
         str(row["prompt_policy_version"]),
         str(row["configuration_fingerprint"]),
@@ -2398,7 +2436,7 @@ class SQLiteContextPacketRepository(_SQLiteRepository):
             run = _fetch_one(
                 self._connection,
                 """
-                SELECT user_message_id, configuration_fingerprint, status
+                SELECT conversation_id, user_message_id, configuration_fingerprint, status
                 FROM processing_runs WHERE id = ?
                 """,
                 (str(packet.processing_run_id),),
@@ -2411,6 +2449,13 @@ class SQLiteContextPacketRepository(_SQLiteRepository):
             if run["configuration_fingerprint"] != packet.configuration_fingerprint:
                 raise LifecycleInvariantError(
                     "Context packet configuration fingerprint must match its run."
+                )
+            trace = packet.packet_json["trace"]
+            if not isinstance(trace, FrozenJsonObject) or (
+                run["conversation_id"] != trace["conversation_id"]
+            ):
+                raise LifecycleInvariantError(
+                    "Context packet trace conversation must match its run."
                 )
             if ProcessingRunStatus(str(run["status"])) not in (
                 ProcessingRunStatus.PERSISTED,
@@ -2428,7 +2473,7 @@ class SQLiteContextPacketRepository(_SQLiteRepository):
                 """,
                 (
                     str(packet.id), str(packet.processing_run_id), str(packet.message_id),
-                    _encode_json(packet.packet), packet.schema_version,
+                    _encode_packet_json(packet.packet_json), packet.schema_version,
                     packet.prompt_policy_version, packet.configuration_fingerprint,
                     format_utc_timestamp(packet.created_at),
                 ),
@@ -2483,6 +2528,20 @@ class SQLiteContextPacketRepository(_SQLiteRepository):
             (str(packet.id),), _retrieval_exclusion, "retrieval exclusions",
         )
         try:
+            snapshots = packet.packet_json["retrieval"]
+            if isinstance(snapshots, tuple) and len(snapshots) == len(results):
+                exact_results: list[RetrievalResult] = []
+                for snapshot, result in zip(snapshots, results, strict=True):
+                    if not isinstance(snapshot, FrozenJsonObject):
+                        exact_results.append(result)
+                        continue
+                    exact_score = UnitScore(snapshot["score"])
+                    if float(exact_score.value) != float(result.score.value):
+                        raise LifecycleInvariantError(
+                            "Stored retrieval score does not match its packet snapshot."
+                        )
+                    exact_results.append(replace(result, score=exact_score))
+                results = tuple(exact_results)
             return ContextPacketRecord(packet, results, exclusions)
         except DomainError as error:
             raise PersistenceError("Stored context packet aggregate is invalid.") from error

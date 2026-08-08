@@ -43,6 +43,10 @@ from context_for_ai.domain.policies import (
     is_terminal_processing_run,
     memory_effective_status,
 )
+from context_for_ai.domain.ports.context import (
+    ContextPacketBuildRequest,
+    ContextPacketBuildResult,
+)
 from context_for_ai.domain.ports.records import (
     ContextPacketRecord,
     EvaluationCase,
@@ -721,6 +725,14 @@ class InspectContext(Protocol):
     """Return durable context evidence for one processing run."""
 
     def execute(self, request: InspectContextInput) -> InspectContextOutput: ...
+
+
+class ContextPacketStage(Protocol):
+    """Persist one packet outcome and its processing-run transition atomically."""
+
+    def execute(
+        self, request: ContextPacketBuildRequest
+    ) -> ContextPacketBuildResult: ...
 
 
 class SelectProject(Protocol):

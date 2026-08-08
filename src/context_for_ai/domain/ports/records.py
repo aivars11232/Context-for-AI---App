@@ -66,6 +66,36 @@ class ContextPacketRecord:
             context_packet_id=self.packet.id,
         )
 
+        payload_retrieval = self.packet.packet_json["retrieval"]
+        if not isinstance(payload_retrieval, tuple):
+            raise LifecycleInvariantError(
+                "Context packet retrieval payload must be an immutable array."
+            )
+        if len(payload_retrieval) != len(retrieval_results):
+            raise LifecycleInvariantError(
+                "Context packet selected snapshots must bijectively match retrieval results."
+            )
+        for snapshot, result in zip(payload_retrieval, retrieval_results, strict=True):
+            if not isinstance(snapshot, FrozenJsonObject) or (
+                snapshot["memory_id"] != str(result.memory_id)
+                or snapshot["rank"] != result.rank
+                or snapshot["score"] != result.score.value
+                or snapshot["reasons"] != result.reasons
+            ):
+                raise LifecycleInvariantError(
+                    "Context packet selected snapshot must match its retrieval result."
+                )
+        confidence = self.packet.packet_json["confidence"]
+        if not isinstance(confidence, FrozenJsonObject):
+            raise LifecycleInvariantError("Context packet confidence must be an object.")
+        expected_retrieval_confidence = (
+            None if not retrieval_results else retrieval_results[0].score.value
+        )
+        if confidence["retrieval"] != expected_retrieval_confidence:
+            raise LifecycleInvariantError(
+                "Context packet retrieval confidence must match the upstream decision."
+            )
+
         object.__setattr__(self, "retrieval_results", retrieval_results)
         object.__setattr__(self, "retrieval_exclusions", retrieval_exclusions)
 

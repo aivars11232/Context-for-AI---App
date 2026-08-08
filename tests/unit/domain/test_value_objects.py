@@ -19,9 +19,11 @@ from context_for_ai.domain.value_objects import (
     FrozenJsonObject,
     UnitScore,
     canonical_decimal_string,
+    canonical_json,
     ensure_utc,
     format_utc_timestamp,
     freeze_json,
+    parse_canonical_json_object,
     parse_utc_timestamp,
     utc_now,
 )
@@ -132,7 +134,52 @@ def test_frozen_json_is_recursive_order_independent_and_detached_from_input() ->
         first["new"] = "value"  # type: ignore[index]
 
 
-@pytest.mark.parametrize("value", [{1: "bad-key"}, float("nan"), Decimal("0.5")])
+@pytest.mark.parametrize("value", [{1: "bad-key"}, float("nan"), Decimal("NaN")])
 def test_frozen_json_rejects_values_that_are_not_valid_json(value: object) -> None:
     with pytest.raises(DomainValidationError):
         freeze_json(value)
+
+
+def test_canonical_json_retains_decimal_and_exact_escape_contract() -> None:
+    value = FrozenJsonObject(
+        {
+            "z": Decimal("0.6000"),
+            "a": 'quote" slash\\ line\n\u2028',
+            "array": (Decimal("0"), True, None, "é"),
+        }
+    )
+
+    rendered = canonical_json(value)
+
+    assert rendered == (
+        '{"a":"quote\\" slash\\\\ line\\n\\u2028",'
+        '"array":[0,true,null,"é"],"z":0.6}'
+    )
+    assert parse_canonical_json_object(rendered) == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        FrozenJsonObject({"score": 0.6}),
+        FrozenJsonObject({"nested": (FrozenJsonObject({"score": 0.6}),)}),
+        FrozenJsonObject({"text": "\ud800"}),
+    ],
+)
+def test_canonical_json_rejects_binary_float_and_lone_surrogate(value: object) -> None:
+    with pytest.raises(DomainValidationError):
+        canonical_json(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '{"a":1,"a":2}',
+        '{"b":1,"a":2}',
+        '{"a":1.0}',
+        '[1,2]',
+    ],
+)
+def test_canonical_json_parser_rejects_duplicate_or_noncanonical_objects(value: str) -> None:
+    with pytest.raises(DomainValidationError):
+        parse_canonical_json_object(value)

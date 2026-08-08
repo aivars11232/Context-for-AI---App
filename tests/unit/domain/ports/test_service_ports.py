@@ -42,6 +42,9 @@ from context_for_ai.domain.ports import (
     CompletedGeneration,
     ConfigurationLoader,
     ConfigurationSnapshot,
+    ContextPacketBuilder,
+    ContextPacketBuildRequest,
+    ContextPacketBuildResult,
     ConstraintEngine,
     ConstraintEvaluationRequest,
     ContextRetriever,
@@ -52,12 +55,17 @@ from context_for_ai.domain.ports import (
     InterpretationEngine,
     InterpretationRequest,
     ModelGateway,
+    OutputShapeRule,
+    PromptRenderer,
+    PromptRenderOutcome,
+    PromptRenderRequest,
     ResponseValidator,
     RetrievalDecision,
     RetrievalRequest,
     TraceEvent,
     TraceLogger,
     TransactionBoundary,
+    ValidationConfigurationSnapshot,
     ValidationRequest,
 )
 from context_for_ai.domain.ports.context import (
@@ -92,10 +100,12 @@ SERVICE_PROTOCOLS = (
     ConfigurationLoader,
     ConstraintEngine,
     ContextRetriever,
+    ContextPacketBuilder,
     CorrectionController,
     IdGenerator,
     InterpretationEngine,
     ModelGateway,
+    PromptRenderer,
     ReferenceMentionExtractor,
     ReferenceResolver,
     ResponseValidator,
@@ -178,6 +188,14 @@ def test_deterministic_component_ports_have_typed_single_operation_contracts() -
         "request": RetrievalRequest,
         "return": RetrievalDecision,
     }
+    assert get_type_hints(ContextPacketBuilder.build) == {
+        "request": ContextPacketBuildRequest,
+        "return": ContextPacketBuildResult,
+    }
+    assert get_type_hints(PromptRenderer.render) == {
+        "request": PromptRenderRequest,
+        "return": PromptRenderOutcome,
+    }
     assert get_type_hints(ResponseValidator.validate) == {
         "request": ValidationRequest,
         "return": ValidationResult,
@@ -196,10 +214,64 @@ def test_deterministic_component_ports_have_typed_single_operation_contracts() -
         ConstraintEvaluationRequest,
         ReferenceMentionExtractionRequest,
         ReferenceResolutionRequest,
+        ContextPacketBuildRequest,
+        PromptRenderRequest,
     ):
         assert is_dataclass(request_type)
         assert request_type.__dataclass_params__.frozen is True
         assert "__slots__" in vars(request_type)
+
+
+def test_validation_configuration_snapshot_requires_complete_model_shapes() -> None:
+    model_outputs = tuple(
+        output
+        for output in OutputType
+        if output not in {OutputType.CLARIFICATION, OutputType.CONTROLLED_FAILURE}
+    )
+    rules = tuple(
+        OutputShapeRule(f"shape-{output.value.casefold()}", output, "NON_EMPTY_TEXT")
+        for output in model_outputs
+    )
+    snapshot = ValidationConfigurationSnapshot(
+        "configuration-fingerprint",
+        2,
+        "validation-v1",
+        rules,
+        "preserve-verbs-v1",
+        ("change", "remove"),
+        ("TOOL_CALL:",),
+    )
+
+    assert snapshot.output_shape_rules == rules
+    with pytest.raises(LifecycleInvariantError, match="one rule per model output type"):
+        ValidationConfigurationSnapshot(
+            "configuration-fingerprint",
+            2,
+            "validation-v1",
+            rules[:-1],
+            "preserve-verbs-v1",
+            ("change",),
+            ("TOOL_CALL:",),
+        )
+
+    invalid_shape_rules = (
+        OutputShapeRule(
+            rules[0].id,
+            rules[0].output_type,
+            "NOT_A_SHAPE",  # type: ignore[arg-type]
+        ),
+        *rules[1:],
+    )
+    with pytest.raises(LifecycleInvariantError, match="shape must be canonical"):
+        ValidationConfigurationSnapshot(
+            "configuration-fingerprint",
+            2,
+            "validation-v1",
+            invalid_shape_rules,
+            "preserve-verbs-v1",
+            ("change",),
+            ("TOOL_CALL:",),
+        )
 
 
 def test_reference_requests_validate_spans_scope_order_and_prior_linkage() -> None:
