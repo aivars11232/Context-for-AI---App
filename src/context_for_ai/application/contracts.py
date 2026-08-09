@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum, unique
-from typing import Protocol
+from typing import Literal, Protocol
 
 from context_for_ai.domain.decisions import Constraint, ReferenceOutcome
 from context_for_ai.domain.entities import (
@@ -20,16 +20,19 @@ from context_for_ai.domain.entities import (
 from context_for_ai.domain.enums import (
     EntityType,
     EvaluationProviderMode,
+    FailureCode,
     IntentType,
     MemoryEffectiveStatus,
     MemoryScope,
     MemoryStatus,
     MemoryType,
     OutputType,
+    PipelineStage,
     ProcessingRunStatus,
     TaskStatus,
+    ValidationStatus,
 )
-from context_for_ai.domain.errors import BusyError, LifecycleInvariantError
+from context_for_ai.domain.errors import LifecycleInvariantError
 from context_for_ai.domain.lifecycle import (
     ClarificationRequest,
     CorrectionAttempt,
@@ -47,6 +50,7 @@ from context_for_ai.domain.ports.context import (
     ContextPacketBuildRequest,
     ContextPacketBuildResult,
 )
+from context_for_ai.domain.ports.model_gateway import CancellationToken
 from context_for_ai.domain.ports.records import (
     ContextPacketRecord,
     EvaluationCase,
@@ -66,17 +70,8 @@ def _non_negative_integer(field_name: str, value: int) -> None:
         raise LifecycleInvariantError(f"{field_name} must be non-negative.")
 
 
-@unique
-class ProcessResultKind(StrEnum):
-    """Canonical top-level result branches for message processing."""
-
-    FINAL = "FINAL"
-    EXISTING_RUN = "EXISTING_RUN"
-    BUSY = "BUSY"
-
-
 @dataclass(frozen=True, slots=True)
-class ProcessUserMessageInput:
+class ProcessUserMessageRequest:
     """One exact UI submission with caller-owned idempotency and project choice."""
 
     conversation_id: DomainId
@@ -87,128 +82,644 @@ class ProcessUserMessageInput:
     def __post_init__(self) -> None:
         if not isinstance(self.user_text, str):
             raise LifecycleInvariantError(
-                "ProcessUserMessageInput.user_text must be exact text."
+                "ProcessUserMessageRequest.user_text must be exact text."
             )
 
 
 @dataclass(frozen=True, slots=True)
-class ProcessUserMessageOutput:
-    """One final, idempotent-existing, or pre-acceptance-busy outcome."""
+class BusyErrorValue:
+    """Closed safe value for global foreground admission rejection."""
 
-    result_kind: ProcessResultKind
-    processing_run_id: DomainId | None = None
-    user_message_id: DomainId | None = None
-    processing_status: ProcessingRunStatus | None = None
-    active_processing_run_id: DomainId | None = None
-    active_processing_status: ProcessingRunStatus | None = None
-    busy_error: BusyError | None = None
-    assistant_message_id: DomainId | None = None
-    assistant_text: str | None = None
-    context_packet: ContextPacketRecord | None = None
-    validation_result: ValidationResult | None = None
-    current_state: ConversationState | None = None
-    safe_failure: SafeFailure | None = None
-    clarification: ClarificationRequest | None = None
+    active_processing_run_id: DomainId
+    code: Literal["BUSY"] = field(init=False, default="BUSY")
+    safe_message: Literal["Another request is already being processed."] = field(
+        init=False,
+        default="Another request is already being processed.",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class BusyResult:
+    """A fresh idempotency key was rejected before acceptance."""
+
+    active_processing_run_id: DomainId
+    active_processing_status: ProcessingRunStatus
+    error: BusyErrorValue
+    result_kind: Literal["BUSY"] = field(init=False, default="BUSY")
 
     def __post_init__(self) -> None:
-        accepted_fields = (
-            self.processing_run_id,
-            self.user_message_id,
-            self.processing_status,
-            self.assistant_message_id,
-            self.assistant_text,
-            self.context_packet,
-            self.validation_result,
-            self.current_state,
-            self.safe_failure,
-            self.clarification,
-        )
-        if self.result_kind is ProcessResultKind.BUSY:
+        if is_terminal_processing_run(self.active_processing_status):
+            raise LifecycleInvariantError(
+                "BusyResult must identify a non-terminal active run."
+            )
+        if self.error.active_processing_run_id != self.active_processing_run_id:
+            raise LifecycleInvariantError(
+                "BusyResult.error must identify the same active run."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class SucceededResult:
+    """A validated candidate was durably linked as the assistant message."""
+
+    processing_run_id: DomainId
+    user_message_id: DomainId
+    current_state: ConversationState
+    context_packet_id: DomainId
+    latest_validation_result: ValidationResult
+    assistant_message_id: DomainId
+    assistant_text: str
+    result_kind: Literal["SUCCEEDED"] = field(init=False, default="SUCCEEDED")
+    processing_status: ProcessingRunStatus = field(
+        init=False,
+        default=ProcessingRunStatus.SUCCEEDED,
+    )
+
+    def __post_init__(self) -> None:
+        if self.latest_validation_result.status is not ValidationStatus.PASSED:
+            raise LifecycleInvariantError(
+                "SucceededResult requires a passed latest validation result."
+            )
+        if not isinstance(self.assistant_text, str):
+            raise LifecycleInvariantError(
+                "SucceededResult.assistant_text must be exact text."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingRunResult:
+    """A read-only snapshot reconstructed for an existing idempotency key."""
+
+    processing_run_id: DomainId
+    user_message_id: DomainId
+    processing_status: ProcessingRunStatus
+    current_state: ConversationState
+    context_packet_id: DomainId | None
+    latest_validation_result: ValidationResult | None
+    assistant_message_id: DomainId | None
+    assistant_text: str | None
+    clarification: ClarificationRequest | None
+    safe_failure: SafeFailure | None
+    result_kind: Literal["EXISTING_RUN"] = field(
+        init=False,
+        default="EXISTING_RUN",
+    )
+
+    def __post_init__(self) -> None:
+        assistant_present = self.assistant_message_id is not None
+        if assistant_present != (self.assistant_text is not None):
+            raise LifecycleInvariantError(
+                "ExistingRunResult assistant ID and text must be present together."
+            )
+        if self.assistant_text is not None and not isinstance(self.assistant_text, str):
+            raise LifecycleInvariantError(
+                "ExistingRunResult.assistant_text must be exact text or null."
+            )
+        if self.processing_status is ProcessingRunStatus.SUCCEEDED:
             if (
-                self.active_processing_run_id is None
-                or self.active_processing_status is None
-                or self.busy_error is None
+                not assistant_present
+                or self.context_packet_id is None
+                or self.latest_validation_result is None
+                or self.latest_validation_result.status is not ValidationStatus.PASSED
+                or self.clarification is not None
+                or self.safe_failure is not None
             ):
                 raise LifecycleInvariantError(
-                    "BUSY output requires active run ID, status, and BusyError."
+                    "A succeeded existing run requires only its passed assistant lineage."
                 )
-            if is_terminal_processing_run(self.active_processing_status):
+        elif self.processing_status is ProcessingRunStatus.NEEDS_CLARIFICATION:
+            if (
+                self.clarification is None
+                or assistant_present
+                or self.context_packet_id is not None
+                or self.latest_validation_result is not None
+                or self.safe_failure is not None
+            ):
                 raise LifecycleInvariantError(
-                    "BUSY output must identify a non-terminal active run."
+                    "A clarification existing run requires only its clarification."
                 )
-            if any(value is not None for value in accepted_fields):
+        elif self.processing_status in {
+            ProcessingRunStatus.CONTROLLED_FAILURE,
+            ProcessingRunStatus.FAILED,
+            ProcessingRunStatus.CANCELLED,
+        }:
+            if self.safe_failure is None or assistant_present or self.clarification is not None:
                 raise LifecycleInvariantError(
-                    "BUSY output cannot contain newly accepted-run data."
+                    "A failed existing run requires only its terminal safe failure."
                 )
-            return
-
-        if (
-            self.active_processing_run_id is not None
-            or self.active_processing_status is not None
-            or self.busy_error is not None
+        elif assistant_present or self.clarification is not None or self.safe_failure is not None:
+            raise LifecycleInvariantError(
+                "A non-terminal existing run cannot expose a terminal payload."
+            )
+        if self.context_packet_id is None and self.processing_status in {
+            ProcessingRunStatus.CONTEXT_READY,
+            ProcessingRunStatus.GENERATING,
+            ProcessingRunStatus.REVISING,
+            ProcessingRunStatus.SUCCEEDED,
+        }:
+            raise LifecycleInvariantError(
+                "This existing run status requires a context packet."
+            )
+        if self.clarification is not None and (
+            self.clarification.processing_run_id != self.processing_run_id
         ):
             raise LifecycleInvariantError(
-                "Only BUSY output may contain active-run rejection data."
+                "ExistingRunResult clarification must belong to the run."
             )
+        if self.safe_failure is not None and (
+            self.safe_failure.processing_run_id != self.processing_run_id
+            or not self.safe_failure.is_terminal
+        ):
+            raise LifecycleInvariantError(
+                "ExistingRunResult safe failure must be terminal and belong to the run."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ClarificationResult:
+    """The deterministic context decision requires one user clarification."""
+
+    processing_run_id: DomainId
+    user_message_id: DomainId
+    current_state: ConversationState
+    clarification: ClarificationRequest
+    result_kind: Literal["CLARIFICATION_REQUIRED"] = field(
+        init=False,
+        default="CLARIFICATION_REQUIRED",
+    )
+    processing_status: ProcessingRunStatus = field(
+        init=False,
+        default=ProcessingRunStatus.NEEDS_CLARIFICATION,
+    )
+    context_packet_id: None = field(init=False, default=None)
+    latest_validation_result: None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        if self.clarification.processing_run_id != self.processing_run_id:
+            raise LifecycleInvariantError(
+                "ClarificationResult clarification must belong to the run."
+            )
+
+
+@unique
+class CancellationCheckpoint(StrEnum):
+    """The only application/provider cancellation observations exposed publicly."""
+
+    BEFORE_ACCEPTANCE = "BEFORE_ACCEPTANCE"
+    AFTER_ACCEPTANCE = "AFTER_ACCEPTANCE"
+    CONTEXT_CONSTRUCTION = "CONTEXT_CONSTRUCTION"
+    BEFORE_REQUEST_PREPARATION = "BEFORE_REQUEST_PREPARATION"
+    GATEWAY = "GATEWAY"
+
+
+@dataclass(frozen=True, slots=True)
+class CancelledResult:
+    """A closed pre-acceptance or durably accepted cancellation result."""
+
+    processing_run_id: DomainId | None
+    user_message_id: DomainId | None
+    processing_status: ProcessingRunStatus | None
+    current_state: ConversationState | None
+    context_packet_id: DomainId | None
+    latest_validation_result: ValidationResult | None
+    cancellation_code: FailureCode
+    checkpoint: CancellationCheckpoint
+    safe_failure: SafeFailure | None
+    failure_persisted: bool
+    result_kind: Literal["CANCELLED"] = field(init=False, default="CANCELLED")
+
+    def __post_init__(self) -> None:
+        if self.cancellation_code not in {
+            FailureCode.CANCELLED_BY_USER,
+            FailureCode.MODEL_CANCELLED,
+        }:
+            raise LifecycleInvariantError(
+                "CancelledResult requires a canonical cancellation code."
+            )
+        if not isinstance(self.checkpoint, CancellationCheckpoint) or not isinstance(
+            self.failure_persisted, bool
+        ):
+            raise LifecycleInvariantError(
+                "CancelledResult requires a typed checkpoint and persistence flag."
+            )
+        if self.checkpoint is CancellationCheckpoint.BEFORE_ACCEPTANCE:
+            if (
+                self.cancellation_code is not FailureCode.CANCELLED_BY_USER
+                or self.failure_persisted
+                or any(
+                    value is not None
+                    for value in (
+                        self.processing_run_id,
+                        self.user_message_id,
+                        self.processing_status,
+                        self.current_state,
+                        self.context_packet_id,
+                        self.latest_validation_result,
+                        self.safe_failure,
+                    )
+                )
+            ):
+                raise LifecycleInvariantError(
+                    "Pre-acceptance cancellation cannot contain durable run data."
+                )
+            return
         if (
             self.processing_run_id is None
             or self.user_message_id is None
-            or self.processing_status is None
+            or self.processing_status is not ProcessingRunStatus.CANCELLED
             or self.current_state is None
+            or self.safe_failure is None
+            or not self.failure_persisted
         ):
             raise LifecycleInvariantError(
-                "Accepted output requires run, message, status, and current state."
-            )
-        if self.result_kind is ProcessResultKind.FINAL and not (
-            is_terminal_processing_run(self.processing_status)
-        ):
-            raise LifecycleInvariantError("FINAL output requires a terminal run status.")
-        if (self.assistant_message_id is None) != (self.assistant_text is None):
-            raise LifecycleInvariantError(
-                "Assistant message ID and text must be present together."
-            )
-        if self.assistant_text is not None and not isinstance(self.assistant_text, str):
-            raise LifecycleInvariantError("Assistant output must be text.")
-        if self.assistant_message_id is not None and (
-            self.processing_status is not ProcessingRunStatus.SUCCEEDED
-        ):
-            raise LifecycleInvariantError(
-                "Only a SUCCEEDED run may expose final assistant text."
-            )
-        if self.clarification is not None and (
-            self.processing_status is not ProcessingRunStatus.NEEDS_CLARIFICATION
-        ):
-            raise LifecycleInvariantError(
-                "Clarification data requires NEEDS_CLARIFICATION status."
+                "Accepted cancellation requires durable IDs, state, status, and failure."
             )
         if (
-            self.processing_status is ProcessingRunStatus.NEEDS_CLARIFICATION
-            and self.clarification is None
+            self.safe_failure.processing_run_id != self.processing_run_id
+            or self.safe_failure.error_code is not self.cancellation_code
+            or not self.safe_failure.is_terminal
         ):
             raise LifecycleInvariantError(
-                "NEEDS_CLARIFICATION output requires its persisted request."
+                "Accepted cancellation failure must match and belong to the run."
+            )
+        if self.checkpoint is CancellationCheckpoint.GATEWAY:
+            if (
+                self.cancellation_code is not FailureCode.MODEL_CANCELLED
+                or self.context_packet_id is None
+            ):
+                raise LifecycleInvariantError(
+                    "Gateway cancellation requires MODEL_CANCELLED and a packet."
+                )
+        elif self.cancellation_code is not FailureCode.CANCELLED_BY_USER:
+            raise LifecycleInvariantError(
+                "Only gateway cancellation may use MODEL_CANCELLED."
+            )
+        if self.checkpoint in {
+            CancellationCheckpoint.AFTER_ACCEPTANCE,
+            CancellationCheckpoint.CONTEXT_CONSTRUCTION,
+        } and self.context_packet_id is not None:
+            raise LifecycleInvariantError(
+                "Context-stage cancellation cannot identify a context packet."
             )
         if (
-            self.context_packet is not None
-            and self.context_packet.packet.processing_run_id != self.processing_run_id
+            self.checkpoint is CancellationCheckpoint.BEFORE_REQUEST_PREPARATION
+            and self.context_packet_id is None
         ):
             raise LifecycleInvariantError(
-                "Context packet must belong to the output processing run."
+                "Request-preparation cancellation requires a context packet."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationExhaustedErrorValue:
+    """Closed public error for bounded correction exhaustion."""
+
+    code: FailureCode = field(init=False, default=FailureCode.VALIDATION_EXHAUSTED)
+    safe_message: Literal["The response did not pass validation."] = field(
+        init=False,
+        default="The response did not pass validation.",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationExhaustedResult:
+    """Every allowed candidate failed deterministic validation."""
+
+    processing_run_id: DomainId
+    user_message_id: DomainId
+    current_state: ConversationState
+    context_packet_id: DomainId
+    latest_validation_result: ValidationResult
+    error: ValidationExhaustedErrorValue
+    safe_failure: SafeFailure
+    result_kind: Literal["VALIDATION_EXHAUSTED"] = field(
+        init=False,
+        default="VALIDATION_EXHAUSTED",
+    )
+    processing_status: ProcessingRunStatus = field(
+        init=False,
+        default=ProcessingRunStatus.CONTROLLED_FAILURE,
+    )
+
+    def __post_init__(self) -> None:
+        if self.latest_validation_result.status is not ValidationStatus.FAILED:
+            raise LifecycleInvariantError(
+                "ValidationExhaustedResult requires a failed latest validation."
+            )
+        _validate_result_failure(
+            self.processing_run_id,
+            self.safe_failure,
+            FailureCode.VALIDATION_EXHAUSTED,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationErrorValue:
+    """Closed safe configuration failure without a configured value."""
+
+    file: str
+    key: str
+    code: FailureCode = field(init=False, default=FailureCode.CONFIGURATION_INVALID)
+    safe_message: Literal["The application configuration is invalid."] = field(
+        init=False,
+        default="The application configuration is invalid.",
+    )
+
+    def __post_init__(self) -> None:
+        _required_text("ConfigurationErrorValue.file", self.file)
+        _required_text("ConfigurationErrorValue.key", self.key)
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationFailureResult:
+    """Configuration acquisition failed before any repository access."""
+
+    error: ConfigurationErrorValue
+    result_kind: Literal["CONFIGURATION_FAILURE"] = field(
+        init=False,
+        default="CONFIGURATION_FAILURE",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PersistenceErrorValue:
+    """Closed safe persistence error with only the failed pipeline stage."""
+
+    failed_stage: PipelineStage
+    code: FailureCode = field(init=False, default=FailureCode.PERSISTENCE_ERROR)
+    safe_message: Literal["Processing could not be saved safely."] = field(
+        init=False,
+        default="Processing could not be saved safely.",
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.failed_stage, PipelineStage):
+            raise LifecycleInvariantError(
+                "PersistenceErrorValue.failed_stage must be canonical."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class PersistenceFailureResult:
+    """A mandatory write rolled back and could not be truthfully claimed."""
+
+    processing_run_id: DomainId | None
+    user_message_id: DomainId | None
+    processing_status: ProcessingRunStatus | None
+    current_state: ConversationState | None
+    context_packet_id: DomainId | None
+    latest_validation_result: ValidationResult | None
+    error: PersistenceErrorValue
+    safe_failure: SafeFailure | None
+    failure_persisted: bool
+    result_kind: Literal["PERSISTENCE_FAILURE"] = field(
+        init=False,
+        default="PERSISTENCE_FAILURE",
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.failure_persisted, bool):
+            raise LifecycleInvariantError(
+                "PersistenceFailureResult.failure_persisted must be boolean."
+            )
+        if self.failure_persisted:
+            if (
+                self.processing_run_id is None
+                or self.user_message_id is None
+                or self.processing_status is not ProcessingRunStatus.FAILED
+                or self.current_state is None
+                or self.safe_failure is None
+            ):
+                raise LifecycleInvariantError(
+                    "A persisted persistence failure requires its terminal run snapshot."
+                )
+            _validate_result_failure(
+                self.processing_run_id,
+                self.safe_failure,
+                FailureCode.PERSISTENCE_ERROR,
+            )
+            return
+        if self.safe_failure is not None:
+            raise LifecycleInvariantError(
+                "An unpersisted persistence failure cannot expose a SafeFailure."
+            )
+        has_run = self.processing_run_id is not None
+        if has_run:
+            if (
+                self.user_message_id is None
+                or self.processing_status is None
+                or self.current_state is None
+            ):
+                raise LifecycleInvariantError(
+                    "An accepted persistence failure requires its last durable snapshot."
+                )
+        elif any(
+            value is not None
+            for value in (
+                self.user_message_id,
+                self.processing_status,
+                self.current_state,
+                self.context_packet_id,
+                self.latest_validation_result,
+            )
+        ):
+            raise LifecycleInvariantError(
+                "A pre-acceptance persistence failure cannot contain run data."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ConcurrencyConflictErrorValue:
+    """Closed safe error for the second context state CAS conflict."""
+
+    code: FailureCode = field(init=False, default=FailureCode.CONCURRENCY_CONFLICT)
+    safe_message: Literal[
+        "The conversation changed while context was being prepared."
+    ] = field(
+        init=False,
+        default="The conversation changed while context was being prepared.",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ConcurrencyConflictResult:
+    """The one permitted context recomputation also lost its state CAS."""
+
+    processing_run_id: DomainId
+    user_message_id: DomainId
+    current_state: ConversationState
+    error: ConcurrencyConflictErrorValue
+    safe_failure: SafeFailure
+    result_kind: Literal["CONCURRENCY_CONFLICT"] = field(
+        init=False,
+        default="CONCURRENCY_CONFLICT",
+    )
+    processing_status: ProcessingRunStatus = field(
+        init=False,
+        default=ProcessingRunStatus.FAILED,
+    )
+    context_packet_id: None = field(init=False, default=None)
+    latest_validation_result: None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        _validate_result_failure(
+            self.processing_run_id,
+            self.safe_failure,
+            FailureCode.CONCURRENCY_CONFLICT,
+        )
+
+
+_CONTROLLED_FAILURE_CODES = frozenset(
+    {
+        FailureCode.CONTEXT_BUDGET_EXCEEDED,
+        FailureCode.CONTEXT_CONSTRUCTION_FAILED,
+        FailureCode.CONFIGURATION_CHANGED,
+        FailureCode.PROCESS_RESTARTED,
+        FailureCode.PERSISTENCE_ERROR,
+        FailureCode.PROVIDER_UNAVAILABLE,
+        FailureCode.MODEL_NOT_FOUND,
+        FailureCode.MODEL_TIMEOUT,
+        FailureCode.INVALID_PROVIDER_RESPONSE,
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledFailureError:
+    """Closed public projection of one canonical controlled safe failure."""
+
+    code: FailureCode
+    safe_message: str
+
+    def __post_init__(self) -> None:
+        if self.code not in _CONTROLLED_FAILURE_CODES:
+            raise LifecycleInvariantError(
+                "ControlledFailureError.code is not in the closed result family."
+            )
+        _required_text("ControlledFailureError.safe_message", self.safe_message)
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledFailureResult:
+    """A durably terminalized non-validation operational failure."""
+
+    processing_run_id: DomainId
+    user_message_id: DomainId
+    processing_status: ProcessingRunStatus
+    current_state: ConversationState
+    context_packet_id: DomainId | None
+    latest_validation_result: ValidationResult | None
+    error: ControlledFailureError
+    safe_failure: SafeFailure
+    result_kind: Literal["CONTROLLED_FAILURE"] = field(
+        init=False,
+        default="CONTROLLED_FAILURE",
+    )
+
+    def __post_init__(self) -> None:
+        if self.processing_status not in {
+            ProcessingRunStatus.CONTROLLED_FAILURE,
+            ProcessingRunStatus.FAILED,
+        }:
+            raise LifecycleInvariantError(
+                "ControlledFailureResult requires CONTROLLED_FAILURE or FAILED status."
+            )
+        _validate_result_failure(
+            self.processing_run_id,
+            self.safe_failure,
+            self.error.code,
+        )
+        if self.error.safe_message != self.safe_failure.safe_message:
+            raise LifecycleInvariantError(
+                "ControlledFailureResult error must match its SafeFailure."
+            )
+
+
+def _validate_result_failure(
+    processing_run_id: DomainId,
+    failure: SafeFailure,
+    expected_code: FailureCode,
+) -> None:
+    if (
+        failure.processing_run_id != processing_run_id
+        or failure.error_code is not expected_code
+        or not failure.is_terminal
+    ):
+        raise LifecycleInvariantError(
+            "Result SafeFailure must be terminal, match its code, and belong to the run."
+        )
+
+
+type ProcessUserMessageResult = (
+    SucceededResult
+    | ExistingRunResult
+    | BusyResult
+    | ClarificationResult
+    | CancelledResult
+    | ValidationExhaustedResult
+    | ConfigurationFailureResult
+    | PersistenceFailureResult
+    | ConcurrencyConflictResult
+    | ControlledFailureResult
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RecoverProcessingRunRequest:
+    """Deliberately empty request selecting only the global active run."""
+
+
+@dataclass(frozen=True, slots=True)
+class NoRecoveryRequiredResult:
+    """No global non-terminal processing run exists."""
+
+    result_kind: Literal["NO_RECOVERY_REQUIRED"] = field(
+        init=False,
+        default="NO_RECOVERY_REQUIRED",
+    )
+
+
+type RecoveredTerminalOutcome = (
+    SucceededResult
+    | ClarificationResult
+    | CancelledResult
+    | ValidationExhaustedResult
+    | ConcurrencyConflictResult
+    | ControlledFailureResult
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryCompletedResult:
+    """One active run was resumed or safely terminalized."""
+
+    processing_run_id: DomainId
+    outcome: RecoveredTerminalOutcome
+    result_kind: Literal["RECOVERY_COMPLETED"] = field(
+        init=False,
+        default="RECOVERY_COMPLETED",
+    )
+
+    def __post_init__(self) -> None:
+        if self.outcome.processing_run_id != self.processing_run_id:
+            raise LifecycleInvariantError(
+                "RecoveryCompletedResult outcome must identify the recovered run."
             )
         if (
-            self.clarification is not None
-            and self.clarification.processing_run_id != self.processing_run_id
+            isinstance(self.outcome, CancelledResult)
+            and self.outcome.checkpoint is CancellationCheckpoint.BEFORE_ACCEPTANCE
         ):
             raise LifecycleInvariantError(
-                "Clarification must belong to the output processing run."
+                "Recovery cannot produce pre-acceptance cancellation."
             )
-        if (
-            self.safe_failure is not None
-            and self.safe_failure.processing_run_id != self.processing_run_id
-        ):
-            raise LifecycleInvariantError(
-                "Safe failure must belong to the output processing run."
-            )
+
+
+type RecoveryResult = (
+    NoRecoveryRequiredResult
+    | RecoveryCompletedResult
+    | ConfigurationFailureResult
+    | PersistenceFailureResult
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -717,8 +1228,20 @@ class ProcessUserMessage(Protocol):
     """Coordinate one idempotent foreground message submission."""
 
     def execute(
-        self, request: ProcessUserMessageInput
-    ) -> ProcessUserMessageOutput: ...
+        self,
+        request: ProcessUserMessageRequest,
+        cancellation_token: CancellationToken,
+    ) -> ProcessUserMessageResult: ...
+
+
+class RecoverProcessingRun(Protocol):
+    """Resume or safely terminalize the one global non-terminal run."""
+
+    def execute(
+        self,
+        request: RecoverProcessingRunRequest,
+        cancellation_token: CancellationToken,
+    ) -> RecoveryResult: ...
 
 
 class InspectContext(Protocol):

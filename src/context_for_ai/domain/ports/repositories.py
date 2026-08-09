@@ -199,6 +199,10 @@ class ProcessingRunRepository(Protocol):
 
     def add(self, run: ProcessingRun) -> None: ...
 
+    def add_with_admission_race_capture(self, run: ProcessingRun) -> None:
+        """Insert an accepted run or raise AdmissionRaceError with its conflict."""
+        ...
+
     def get(self, processing_run_id: DomainId) -> ProcessingRun | None: ...
 
     def get_by_idempotency_key(

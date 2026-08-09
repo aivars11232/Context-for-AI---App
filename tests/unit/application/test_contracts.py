@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import is_dataclass
+from dataclasses import fields, is_dataclass
 from datetime import datetime, timedelta, timezone
 import inspect
 from typing import Protocol, get_type_hints
@@ -16,6 +16,17 @@ from context_for_ai.application import (
     ArchiveProject,
     ArchiveProjectInput,
     ArchiveProjectOutput,
+    BusyErrorValue,
+    BusyResult,
+    CancellationCheckpoint,
+    CancelledResult,
+    ClarificationResult,
+    ConcurrencyConflictErrorValue,
+    ConcurrencyConflictResult,
+    ConfigurationErrorValue,
+    ConfigurationFailureResult,
+    ControlledFailureError,
+    ControlledFailureResult,
     CreateMemory,
     CreateMemoryInput,
     ContextPacketStage,
@@ -33,16 +44,23 @@ from context_for_ai.application import (
     ListMemoriesInput,
     MemoryListOutput,
     MemoryOutput,
-    ProcessResultKind,
+    ExistingRunResult,
+    NoRecoveryRequiredResult,
+    PersistenceErrorValue,
+    PersistenceFailureResult,
     ProcessUserMessage,
-    ProcessUserMessageInput,
-    ProcessUserMessageOutput,
+    ProcessUserMessageRequest,
+    ProcessUserMessageResult,
     PreparedOutputTransition,
     PreparedTaskTransition,
     PreparedTopicTransition,
     RunEvaluation,
     RunEvaluationInput,
     RunEvaluationOutput,
+    RecoverProcessingRun,
+    RecoverProcessingRunRequest,
+    RecoveryCompletedResult,
+    RecoveryResult,
     SelectProject,
     SelectProjectInput,
     SelectProjectOutput,
@@ -51,6 +69,9 @@ from context_for_ai.application import (
     TransitionTaskStatus,
     TransitionTaskStatusInput,
     TransitionTaskStatusOutput,
+    SucceededResult,
+    ValidationExhaustedErrorValue,
+    ValidationExhaustedResult,
 )
 from context_for_ai.application.contracts import (
     RegisterNamedItem,
@@ -66,8 +87,14 @@ from context_for_ai.application.contracts import (
     RegisterTopicInput,
     RegisterTopicOutput,
 )
-from context_for_ai.domain.entities import Memory, MemoryRevision, MemorySource
+from context_for_ai.domain.entities import (
+    ConversationState,
+    Memory,
+    MemoryRevision,
+    MemorySource,
+)
 from context_for_ai.domain.enums import (
+    FailureCode,
     IntentType,
     LocalActor,
     MemoryEffectiveStatus,
@@ -77,20 +104,22 @@ from context_for_ai.domain.enums import (
     MemoryStatus,
     MemoryType,
     OutputType,
+    PipelineStage,
     ProcessingRunStatus,
 )
-from context_for_ai.domain.errors import BusyError, LifecycleInvariantError
+from context_for_ai.domain.errors import LifecycleInvariantError
+from context_for_ai.domain.lifecycle import SafeFailure
 from context_for_ai.domain.policies import memory_revision_metadata
 from context_for_ai.domain.ports.records import MemoryRecord
 from context_for_ai.domain.ports.context import (
     ContextPacketBuildRequest,
     ContextPacketBuildResult,
 )
+from context_for_ai.domain.ports.model_gateway import CancellationToken
 from context_for_ai.domain.value_objects import DomainId, UnitScore
 
 
 USE_CASE_SIGNATURES = {
-    ProcessUserMessage: (ProcessUserMessageInput, ProcessUserMessageOutput),
     InspectContext: (InspectContextInput, InspectContextOutput),
     SelectProject: (SelectProjectInput, SelectProjectOutput),
     ApplyConversationStateTransition: (
@@ -113,11 +142,142 @@ USE_CASE_SIGNATURES = {
 }
 
 
+PROCESS_RESULT_TYPES = {
+    SucceededResult,
+    ExistingRunResult,
+    BusyResult,
+    ClarificationResult,
+    CancelledResult,
+    ValidationExhaustedResult,
+    ConfigurationFailureResult,
+    PersistenceFailureResult,
+    ConcurrencyConflictResult,
+    ControlledFailureResult,
+}
+
+
+PROCESS_RESULT_FIELD_NAMES = {
+    SucceededResult: {
+        "result_kind",
+        "processing_run_id",
+        "user_message_id",
+        "processing_status",
+        "current_state",
+        "context_packet_id",
+        "latest_validation_result",
+        "assistant_message_id",
+        "assistant_text",
+    },
+    ExistingRunResult: {
+        "result_kind",
+        "processing_run_id",
+        "user_message_id",
+        "processing_status",
+        "current_state",
+        "context_packet_id",
+        "latest_validation_result",
+        "assistant_message_id",
+        "assistant_text",
+        "clarification",
+        "safe_failure",
+    },
+    BusyResult: {
+        "result_kind",
+        "active_processing_run_id",
+        "active_processing_status",
+        "error",
+    },
+    ClarificationResult: {
+        "result_kind",
+        "processing_run_id",
+        "user_message_id",
+        "processing_status",
+        "current_state",
+        "context_packet_id",
+        "latest_validation_result",
+        "clarification",
+    },
+    CancelledResult: {
+        "result_kind",
+        "processing_run_id",
+        "user_message_id",
+        "processing_status",
+        "current_state",
+        "context_packet_id",
+        "latest_validation_result",
+        "cancellation_code",
+        "checkpoint",
+        "safe_failure",
+        "failure_persisted",
+    },
+    ValidationExhaustedResult: {
+        "result_kind",
+        "processing_run_id",
+        "user_message_id",
+        "processing_status",
+        "current_state",
+        "context_packet_id",
+        "latest_validation_result",
+        "error",
+        "safe_failure",
+    },
+    ConfigurationFailureResult: {"result_kind", "error"},
+    PersistenceFailureResult: {
+        "result_kind",
+        "processing_run_id",
+        "user_message_id",
+        "processing_status",
+        "current_state",
+        "context_packet_id",
+        "latest_validation_result",
+        "error",
+        "safe_failure",
+        "failure_persisted",
+    },
+    ConcurrencyConflictResult: {
+        "result_kind",
+        "processing_run_id",
+        "user_message_id",
+        "processing_status",
+        "current_state",
+        "context_packet_id",
+        "latest_validation_result",
+        "error",
+        "safe_failure",
+    },
+    ControlledFailureResult: {
+        "result_kind",
+        "processing_run_id",
+        "user_message_id",
+        "processing_status",
+        "current_state",
+        "context_packet_id",
+        "latest_validation_result",
+        "error",
+        "safe_failure",
+    },
+}
+
+
 def _id(value: int) -> DomainId:
     return DomainId(f"00000000-0000-0000-0000-{value:012d}")
 
 
 NOW = datetime(2026, 8, 2, 10, 0, tzinfo=timezone.utc)
+
+
+def _state() -> ConversationState:
+    return ConversationState(_id(100), None, None, None, None, (), 0, NOW)
+
+
+def _failure(
+    run_id: DomainId,
+    code: FailureCode,
+    *,
+    stage: PipelineStage = PipelineStage.TERMINALIZATION,
+    safe_message: str = "Safe failure.",
+) -> SafeFailure:
+    return SafeFailure(_id(900), run_id, stage, code, safe_message, {}, True, NOW)
 
 
 def _memory_record(
@@ -180,6 +340,19 @@ def test_every_required_use_case_has_one_typed_execute_contract() -> None:
         }
 
 
+def test_processing_use_cases_require_one_caller_owned_cancellation_token() -> None:
+    assert get_type_hints(ProcessUserMessage.execute) == {
+        "request": ProcessUserMessageRequest,
+        "cancellation_token": CancellationToken,
+        "return": ProcessUserMessageResult,
+    }
+    assert get_type_hints(RecoverProcessingRun.execute) == {
+        "request": RecoverProcessingRunRequest,
+        "cancellation_token": CancellationToken,
+        "return": RecoveryResult,
+    }
+
+
 def test_context_packet_stage_uses_the_domain_build_contract_directly() -> None:
     assert issubclass(ContextPacketStage, Protocol)
     assert ContextPacketStage._is_protocol is True
@@ -196,7 +369,22 @@ def test_use_case_inputs_and_outputs_are_frozen_slotted_dataclasses() -> None:
         for dto in request_and_output
     }
     dto_types.update(
-        {PreparedTopicTransition, PreparedTaskTransition, PreparedOutputTransition}
+        {
+            PreparedTopicTransition,
+            PreparedTaskTransition,
+            PreparedOutputTransition,
+            ProcessUserMessageRequest,
+            RecoverProcessingRunRequest,
+            NoRecoveryRequiredResult,
+            RecoveryCompletedResult,
+            BusyErrorValue,
+            ConfigurationErrorValue,
+            PersistenceErrorValue,
+            ConcurrencyConflictErrorValue,
+            ControlledFailureError,
+            ValidationExhaustedErrorValue,
+            *PROCESS_RESULT_TYPES,
+        }
     )
     for dto_type in dto_types:
         assert is_dataclass(dto_type)
@@ -204,34 +392,194 @@ def test_use_case_inputs_and_outputs_are_frozen_slotted_dataclasses() -> None:
         assert "__slots__" in vars(dto_type)
 
 
-def test_busy_output_has_no_newly_accepted_run_data() -> None:
-    output = ProcessUserMessageOutput(
-        result_kind=ProcessResultKind.BUSY,
+def test_public_process_result_algebra_has_exact_closed_variant_fields() -> None:
+    assert set(ProcessUserMessageResult.__value__.__args__) == PROCESS_RESULT_TYPES
+    for result_type, expected_names in PROCESS_RESULT_FIELD_NAMES.items():
+        assert {item.name for item in fields(result_type)} == expected_names
+
+
+def test_process_request_preserves_exact_text_without_normalization() -> None:
+    text = "  leading é\ntrailing  "
+    request = ProcessUserMessageRequest(_id(1), text, _id(2), None)
+
+    assert request.user_text.encode("utf-8") == text.encode("utf-8")
+
+
+def test_busy_result_contains_only_matching_global_active_run_data() -> None:
+    output = BusyResult(
         active_processing_run_id=_id(1),
         active_processing_status=ProcessingRunStatus.GENERATING,
-        busy_error=BusyError("A foreground run is active."),
+        error=BusyErrorValue(_id(1)),
     )
 
-    assert output.processing_run_id is None
-    assert output.user_message_id is None
-
-
-def test_busy_output_rejects_a_terminal_active_run() -> None:
-    with pytest.raises(LifecycleInvariantError, match="non-terminal"):
-        ProcessUserMessageOutput(
-            result_kind=ProcessResultKind.BUSY,
-            active_processing_run_id=_id(1),
-            active_processing_status=ProcessingRunStatus.SUCCEEDED,
-            busy_error=BusyError("A foreground run is active."),
+    assert output.result_kind == "BUSY"
+    assert output.error.code == "BUSY"
+    assert output.error.safe_message == "Another request is already being processed."
+    with pytest.raises(LifecycleInvariantError, match="same active run"):
+        BusyResult(
+            _id(1),
+            ProcessingRunStatus.GENERATING,
+            BusyErrorValue(_id(2)),
         )
 
 
-def test_process_result_kind_is_exactly_the_documented_three_branches() -> None:
-    assert {kind.value for kind in ProcessResultKind} == {
-        "FINAL",
-        "EXISTING_RUN",
-        "BUSY",
-    }
+def test_busy_result_rejects_a_terminal_active_run() -> None:
+    with pytest.raises(LifecycleInvariantError, match="non-terminal"):
+        BusyResult(
+            _id(1),
+            ProcessingRunStatus.SUCCEEDED,
+            BusyErrorValue(_id(1)),
+        )
+
+
+def test_preacceptance_cancelled_result_is_the_only_null_run_shape() -> None:
+    result = CancelledResult(
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        FailureCode.CANCELLED_BY_USER,
+        CancellationCheckpoint.BEFORE_ACCEPTANCE,
+        None,
+        False,
+    )
+
+    assert result.result_kind == "CANCELLED"
+    with pytest.raises(LifecycleInvariantError, match="cannot contain durable"):
+        CancelledResult(
+            _id(1),
+            None,
+            None,
+            None,
+            None,
+            None,
+            FailureCode.CANCELLED_BY_USER,
+            CancellationCheckpoint.BEFORE_ACCEPTANCE,
+            None,
+            False,
+        )
+
+
+def test_accepted_cancelled_result_requires_matching_terminal_failure() -> None:
+    run_id = _id(1)
+    failure = _failure(
+        run_id,
+        FailureCode.CANCELLED_BY_USER,
+        stage=PipelineStage.CONTEXT,
+        safe_message="The request was cancelled.",
+    )
+    result = CancelledResult(
+        run_id,
+        _id(2),
+        ProcessingRunStatus.CANCELLED,
+        _state(),
+        None,
+        None,
+        FailureCode.CANCELLED_BY_USER,
+        CancellationCheckpoint.AFTER_ACCEPTANCE,
+        failure,
+        True,
+    )
+
+    assert result.failure_persisted is True
+    with pytest.raises(LifecycleInvariantError, match="match and belong"):
+        CancelledResult(
+            run_id,
+            _id(2),
+            ProcessingRunStatus.CANCELLED,
+            _state(),
+            None,
+            None,
+            FailureCode.CANCELLED_BY_USER,
+            CancellationCheckpoint.AFTER_ACCEPTANCE,
+            _failure(run_id, FailureCode.MODEL_CANCELLED),
+            True,
+        )
+
+
+def test_configuration_and_persistence_results_enforce_closed_shapes() -> None:
+    result = ConfigurationFailureResult(
+        ConfigurationErrorValue("models.yaml", "model.name")
+    )
+    assert result.error.safe_message == "The application configuration is invalid."
+    with pytest.raises(LifecycleInvariantError, match="non-empty"):
+        ConfigurationErrorValue("models.yaml", "")
+
+    preacceptance = PersistenceFailureResult(
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        PersistenceErrorValue(PipelineStage.ACCEPTANCE),
+        None,
+        False,
+    )
+    assert preacceptance.failure_persisted is False
+    with pytest.raises(LifecycleInvariantError, match="cannot contain run data"):
+        PersistenceFailureResult(
+            None,
+            _id(2),
+            None,
+            None,
+            None,
+            None,
+            PersistenceErrorValue(PipelineStage.ACCEPTANCE),
+            None,
+            False,
+        )
+
+
+def test_controlled_failure_requires_matching_closed_failure_projection() -> None:
+    run_id = _id(1)
+    failure = _failure(
+        run_id,
+        FailureCode.PROCESS_RESTARTED,
+        stage=PipelineStage.RECOVERY,
+        safe_message="The interrupted model request cannot be safely repeated.",
+    )
+    result = ControlledFailureResult(
+        run_id,
+        _id(2),
+        ProcessingRunStatus.FAILED,
+        _state(),
+        _id(3),
+        None,
+        ControlledFailureError(
+            FailureCode.PROCESS_RESTARTED,
+            "The interrupted model request cannot be safely repeated.",
+        ),
+        failure,
+    )
+
+    assert result.error.code is FailureCode.PROCESS_RESTARTED
+    with pytest.raises(LifecycleInvariantError, match="closed result family"):
+        ControlledFailureError(
+            FailureCode.VALIDATION_EXHAUSTED,
+            "The response did not pass validation.",
+        )
+
+
+def test_recovery_contract_is_empty_and_rejects_preacceptance_cancellation() -> None:
+    assert fields(RecoverProcessingRunRequest) == ()
+    assert NoRecoveryRequiredResult().result_kind == "NO_RECOVERY_REQUIRED"
+    preacceptance = CancelledResult(
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        FailureCode.CANCELLED_BY_USER,
+        CancellationCheckpoint.BEFORE_ACCEPTANCE,
+        None,
+        False,
+    )
+    with pytest.raises(LifecycleInvariantError, match="identify the recovered run"):
+        RecoveryCompletedResult(_id(1), preacceptance)
 
 
 def test_prepared_control_transition_rejects_topic_or_task_proposals() -> None:

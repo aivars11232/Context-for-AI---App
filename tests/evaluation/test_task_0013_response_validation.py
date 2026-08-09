@@ -59,8 +59,10 @@ from context_for_ai.domain.value_objects import (
 from context_for_ai.infrastructure.database import apply_migrations, connect_database
 from tests.integration.test_sqlite_repositories import (
     add_empty_packet as add_database_packet,
+    completed_response_projection,
     identifier as database_id,
     initial_request,
+    model_request_projection,
     repositories,
     seed_core,
     stamp,
@@ -506,20 +508,25 @@ def test_component_at012_typed_persistence_is_exact_adjacent_and_atomic(
             completed_at=stamp(21),
         )
         bundle.models.update_request(in_flight)
-        bundle.models.update_request(succeeded)
+        response_id = database_id(41)
         response = ModelResponse(
-            database_id(41),
+            response_id,
             succeeded.id,
             "TOOL_CALL:\nTOOL_CALL:",
-            FrozenJsonObject({"complete": True}),
+            completed_response_projection(succeeded, response_id),
             None,
             stamp(21),
         )
-        bundle.models.add_response(response)
-        report = validate_response(packet_record.packet, response)
+        report = replace(
+            validate_response(packet_record.packet, response),
+            created_at=response.created_at,
+        )
         assert report.status is ValidationStatus.FAILED
         assert any(item.warning_code is not None for item in report.evidence)
-        bundle.validations.add(report)
+        with bundle.transactions.transaction():
+            bundle.models.update_request(succeeded)
+            bundle.models.add_response(response)
+            bundle.validations.add(report)
         assert bundle.validations.get(report.id) == report
         stored = connection.execute(
             """
@@ -535,8 +542,9 @@ def test_component_at012_typed_persistence_is_exact_adjacent_and_atomic(
 
         revising = replace(generating, status=ProcessingRunStatus.REVISING)
         bundle.runs.update(revising)
+        skipped_id = database_id(49)
         skipped = ModelRequest(
-            database_id(49),
+            skipped_id,
             core.run.id,
             packet_record.packet.id,
             ModelRequestPurpose.REVISION,
@@ -545,7 +553,13 @@ def test_component_at012_typed_persistence_is_exact_adjacent_and_atomic(
             "fixture-model",
             ModelRequestStatus.PENDING,
             "Skipped revision prompt",
-            FrozenJsonObject({"attempt": 2}),
+            model_request_projection(
+                request_id=skipped_id,
+                processing_run_id=core.run.id,
+                context_packet_id=packet_record.packet.id,
+                attempt_number=2,
+                render_kind="CORRECTION",
+            ),
             None,
             None,
             None,
@@ -554,12 +568,19 @@ def test_component_at012_typed_persistence_is_exact_adjacent_and_atomic(
         with pytest.raises(LifecycleInvariantError, match="preceding failed"):
             bundle.models.add_request(skipped)
 
+        revision_id = database_id(44)
         revision = replace(
             skipped,
-            id=database_id(44),
+            id=revision_id,
             attempt_number=1,
             rendered_prompt="Adjacent revision prompt",
-            request=FrozenJsonObject({"attempt": 1}),
+            request=model_request_projection(
+                request_id=revision_id,
+                processing_run_id=core.run.id,
+                context_packet_id=packet_record.packet.id,
+                attempt_number=1,
+                render_kind="CORRECTION",
+            ),
         )
         correction = CorrectionAttempt(
             database_id(45),
@@ -617,18 +638,23 @@ def test_component_at012_preconstructed_exhaustion_failure_has_no_correction(
             completed_at=stamp(21),
         )
         bundle.models.update_request(in_flight)
-        bundle.models.update_request(succeeded)
+        response_id = database_id(41)
         response = ModelResponse(
-            database_id(41),
+            response_id,
             succeeded.id,
             "TOOL_CALL:",
-            FrozenJsonObject({"complete": True}),
+            completed_response_projection(succeeded, response_id),
             None,
             stamp(21),
         )
-        bundle.models.add_response(response)
-        report = validate_response(packet_record.packet, response)
-        bundle.validations.add(report)
+        report = replace(
+            validate_response(packet_record.packet, response),
+            created_at=response.created_at,
+        )
+        with bundle.transactions.transaction():
+            bundle.models.update_request(succeeded)
+            bundle.models.add_response(response)
+            bundle.validations.add(report)
         exhausted = CorrectionExhausted(
             core.run.id,
             packet_record.packet.id,

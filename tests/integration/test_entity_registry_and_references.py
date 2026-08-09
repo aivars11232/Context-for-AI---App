@@ -37,7 +37,9 @@ from context_for_ai.domain.entities import (
 )
 from context_for_ai.domain.enums import (
     EntityType,
+    FailureCode,
     MessageRole,
+    PipelineStage,
     ProcessingRunStatus,
     ProjectStatus,
     ReferenceRankReason,
@@ -45,19 +47,20 @@ from context_for_ai.domain.enums import (
     TaskStatus,
 )
 from context_for_ai.domain.errors import LifecycleInvariantError
-from context_for_ai.domain.lifecycle import ProcessingRun
+from context_for_ai.domain.lifecycle import ProcessingRun, SafeFailure
 from context_for_ai.domain.ports.context import (
     ReferenceMentionExtractionRequest,
     ReferenceResolutionRequest,
 )
 from context_for_ai.domain.ports.errors import PersistenceError
 from context_for_ai.domain.state_transitions import initial_conversation_state
-from context_for_ai.domain.value_objects import DomainId, UnitScore
+from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, UnitScore
 from context_for_ai.infrastructure.database import (
     SQLiteConversationRepository,
     SQLiteConversationStateRepository,
     SQLiteEntityRepository,
     SQLiteMessageRepository,
+    SQLiteModelCallRepository,
     SQLiteProcessingRunRepository,
     SQLiteProjectRepository,
     SQLiteReferenceResolutionRepository,
@@ -116,6 +119,7 @@ def database(tmp_path: Path) -> SimpleNamespace:
         topics=SQLiteTopicRepository(connection),
         tasks=SQLiteTaskRepository(connection),
         messages=SQLiteMessageRepository(connection),
+        model_calls=SQLiteModelCallRepository(connection),
         entities=SQLiteEntityRepository(connection),
         runs=SQLiteProcessingRunRepository(connection),
         references=SQLiteReferenceResolutionRepository(connection),
@@ -515,13 +519,31 @@ def test_reference_lineage_prior_query_exact_persistence_and_zero_mentions(
     database.references.add_all(prior_decision.outcomes)
     prior_outcome = prior_decision.outcomes[0]
     assert prior_outcome.source_message_id == source.id
-    database.runs.update(
-        replace(
-            prior_run,
-            status=ProcessingRunStatus.FAILED,
-            completed_at=stamp(31),
+    with database.transactions.transaction():
+        database.model_calls.add_failure(
+            SafeFailure(
+                identifier(399),
+                prior_run.id,
+                PipelineStage.TERMINALIZATION,
+                FailureCode.PERSISTENCE_ERROR,
+                "Processing could not be saved safely.",
+                FrozenJsonObject(
+                    {
+                        "failed_stage": PipelineStage.CONTEXT.value,
+                        "prior_run_status": ProcessingRunStatus.PERSISTED.value,
+                    }
+                ),
+                True,
+                stamp(31),
+            )
         )
-    )
+        database.runs.update(
+            replace(
+                prior_run,
+                status=ProcessingRunStatus.FAILED,
+                completed_at=stamp(31),
+            )
+        )
 
     current_mentions = extractor.extract(
         ReferenceMentionExtractionRequest(current_message, (), candidates)

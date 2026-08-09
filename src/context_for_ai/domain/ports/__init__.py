@@ -51,6 +51,7 @@ from context_for_ai.domain.ports.context import (
     ValidationRequest,
 )
 from context_for_ai.domain.ports.errors import (
+    AdmissionRaceError,
     ConcurrencyConflictError,
     ConfigurationError,
     PersistenceError,
@@ -107,6 +108,7 @@ from context_for_ai.domain.ports.system import (
 
 
 __all__ = [
+    "AdmissionRaceError",
     "ApplicationSettings",
     "CancellationToken",
     "ClarificationRepository",

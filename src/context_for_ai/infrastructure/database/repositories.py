@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 import json
@@ -18,9 +18,11 @@ from context_for_ai.context_engine.normalization import (
     normalize_text,
 )
 from context_for_ai.domain.decisions import (
+    PROMPT_POLICY_VERSION,
     Condition,
     Constraint,
     ContextPacket,
+    OmissionRecord,
     ReferenceCandidateEvidence,
     ReferenceOutcome,
     RetrievalExclusion,
@@ -60,7 +62,11 @@ from context_for_ai.domain.enums import (
     ModelRequestPurpose,
     ModelRequestStatus,
     OutputType,
+    OmissionProjection,
+    OmissionReason,
     PipelineStage,
+    PromptRenderKind,
+    PromptSection,
     ProcessingRunStatus,
     ProjectStatus,
     ProviderKind,
@@ -98,7 +104,7 @@ from context_for_ai.domain.policies import (
     require_project_transition,
     require_task_transition,
 )
-from context_for_ai.domain.ports.errors import PersistenceError
+from context_for_ai.domain.ports.errors import AdmissionRaceError, PersistenceError
 from context_for_ai.domain.ports.records import (
     ContextPacketRecord,
     EvaluationCase,
@@ -111,6 +117,7 @@ from context_for_ai.domain.value_objects import (
     FrozenJsonObject,
     FrozenJsonValue,
     UnitScore,
+    canonical_decimal_string,
     canonical_json,
     format_utc_timestamp,
     freeze_json,
@@ -121,6 +128,47 @@ from context_for_ai.domain.value_objects import (
 
 _T = TypeVar("_T")
 _RowMapper = Callable[[sqlite3.Row], _T]
+
+
+@dataclass(slots=True)
+class _JoinedTransactionState:
+    """Active state for one connection-local outer transaction."""
+
+    connection: sqlite3.Connection
+    depth: int = 0
+    rollback_only: bool = False
+    commit_validators: dict[str, Callable[[], None]] = field(default_factory=dict)
+
+
+_ACTIVE_TRANSACTION_STATES: dict[int, _JoinedTransactionState] = {}
+
+
+def _active_transaction_state(
+    connection: sqlite3.Connection,
+) -> _JoinedTransactionState | None:
+    state = _ACTIVE_TRANSACTION_STATES.get(id(connection))
+    if state is not None and state.connection is not connection:
+        raise PersistenceError("SQLite transaction state ownership is inconsistent.")
+    return state
+
+
+def _mark_rollback_only(connection: sqlite3.Connection) -> None:
+    state = _active_transaction_state(connection)
+    if state is not None:
+        state.rollback_only = True
+
+
+def _register_commit_validator(
+    connection: sqlite3.Connection,
+    key: str,
+    validator: Callable[[], None],
+) -> None:
+    state = _active_transaction_state(connection)
+    if state is None:
+        raise PersistenceError(
+            "A repository commit validator requires an active transaction."
+        )
+    state.commit_validators.setdefault(key, validator)
 
 
 def _rollback_owned(connection: sqlite3.Connection, owns_transaction: bool) -> None:
@@ -138,24 +186,75 @@ def _write_transaction(
 ) -> Iterator[None]:
     """Run one write atomically, joining an explicit outer transaction if present."""
 
-    owns_transaction = not connection.in_transaction
     try:
-        if owns_transaction:
-            connection.execute("BEGIN IMMEDIATE")
-        yield
-        if owns_transaction:
-            connection.commit()
+        with _joined_write_transaction(connection):
+            yield
+    except PersistenceError:
+        raise
     except sqlite3.IntegrityError as error:
-        _rollback_owned(connection, owns_transaction)
         raise PersistenceError(
             f"{operation} violated a SQLite integrity constraint."
         ) from error
     except sqlite3.Error as error:
-        _rollback_owned(connection, owns_transaction)
         raise PersistenceError(f"{operation} failed in SQLite.") from error
+
+
+@contextmanager
+def _joined_write_transaction(connection: sqlite3.Connection) -> Iterator[None]:
+    """Own or join one physical transaction with rollback-only propagation."""
+
+    state = _active_transaction_state(connection)
+    owns_transaction = state is None
+    if owns_transaction:
+        if connection.in_transaction:
+            raise PersistenceError(
+                "SQLite transaction boundary cannot adopt an ambient transaction."
+            )
+        state = _JoinedTransactionState(connection)
+        _ACTIVE_TRANSACTION_STATES[id(connection)] = state
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+        except sqlite3.Error as error:
+            _ACTIVE_TRANSACTION_STATES.pop(id(connection), None)
+            raise PersistenceError("SQLite transaction failed in SQLite.") from error
+
+    assert state is not None
+    state.depth += 1
+    try:
+        yield
     except BaseException:
-        _rollback_owned(connection, owns_transaction)
+        state.rollback_only = True
+        state.depth -= 1
+        if owns_transaction:
+            try:
+                _rollback_owned(connection, True)
+            finally:
+                _ACTIVE_TRANSACTION_STATES.pop(id(connection), None)
         raise
+    else:
+        state.depth -= 1
+        if not owns_transaction:
+            return
+        try:
+            if state.rollback_only:
+                _rollback_owned(connection, True)
+                raise PersistenceError(
+                    "SQLite transaction rolled back because a joined operation failed."
+                )
+            for validator in state.commit_validators.values():
+                validator()
+            connection.commit()
+        except PersistenceError:
+            _rollback_owned(connection, True)
+            raise
+        except sqlite3.Error as error:
+            _rollback_owned(connection, True)
+            raise PersistenceError("SQLite transaction failed in SQLite.") from error
+        except BaseException:
+            _rollback_owned(connection, True)
+            raise
+        finally:
+            _ACTIVE_TRANSACTION_STATES.pop(id(connection), None)
 
 
 class SQLiteTransactionBoundary:
@@ -166,7 +265,7 @@ class SQLiteTransactionBoundary:
         self._connection.row_factory = sqlite3.Row
 
     def transaction(self) -> AbstractContextManager[None]:
-        return _write_transaction(self._connection, "SQLite transaction")
+        return _joined_write_transaction(self._connection)
 
 
 def _fetch_one(
@@ -2481,27 +2580,58 @@ def _validate_processing_run_timestamps(run: ProcessingRun) -> None:
 
 
 class SQLiteProcessingRunRepository(_SQLiteRepository):
-    def add(self, run: ProcessingRun) -> None:
+    def _validate_new_run(self, run: ProcessingRun) -> None:
         _validate_processing_run_timestamps(run)
         if run.status is not ProcessingRunStatus.PERSISTED:
             raise LifecycleInvariantError(
                 "A new processing run must start in PERSISTED status."
             )
-        with self._write("Add processing run"):
-            message = _fetch_one(
-                self._connection,
-                "SELECT conversation_id, role FROM messages WHERE id = ?",
-                (str(run.user_message_id),),
-                "Validate processing run message",
+        message = _fetch_one(
+            self._connection,
+            "SELECT conversation_id, role FROM messages WHERE id = ?",
+            (str(run.user_message_id),),
+            "Validate processing run message",
+        )
+        if (
+            message is None
+            or message["conversation_id"] != str(run.conversation_id)
+            or message["role"] != MessageRole.USER.value
+        ):
+            raise LifecycleInvariantError(
+                "A processing run requires its conversation's USER message."
             )
-            if (
-                message is None
-                or message["conversation_id"] != str(run.conversation_id)
-                or message["role"] != MessageRole.USER.value
-            ):
-                raise LifecycleInvariantError(
-                    "A processing run requires its conversation's USER message."
-                )
+
+    def _insert(self, run: ProcessingRun) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO processing_runs (
+                id, conversation_id, user_message_id, idempotency_key, status,
+                state_version_at_start, configuration_fingerprint,
+                started_at, completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(run.id), str(run.conversation_id), str(run.user_message_id),
+                run.idempotency_key, run.status.value, run.state_version_at_start,
+                run.configuration_fingerprint, format_utc_timestamp(run.started_at),
+                None
+                if run.completed_at is None
+                else format_utc_timestamp(run.completed_at),
+            ),
+        )
+
+    def _captured_admission_conflict(self, run: ProcessingRun) -> ProcessingRun | None:
+        same_key = self.get_by_idempotency_key(
+            conversation_id=run.conversation_id,
+            idempotency_key=DomainId(run.idempotency_key),
+        )
+        if same_key is not None:
+            return same_key
+        return self.get_non_terminal()
+
+    def add(self, run: ProcessingRun) -> None:
+        with self._write("Add processing run"):
+            self._validate_new_run(run)
             existing = self.get_by_idempotency_key(
                 conversation_id=run.conversation_id,
                 idempotency_key=DomainId(run.idempotency_key),
@@ -2512,23 +2642,21 @@ class SQLiteProcessingRunRepository(_SQLiteRepository):
                 raise PersistenceError(
                     "The processing-run idempotency key already identifies another stored state."
                 )
-            self._connection.execute(
-                """
-                INSERT INTO processing_runs (
-                    id, conversation_id, user_message_id, idempotency_key, status,
-                    state_version_at_start, configuration_fingerprint,
-                    started_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(run.id), str(run.conversation_id), str(run.user_message_id),
-                    run.idempotency_key, run.status.value, run.state_version_at_start,
-                    run.configuration_fingerprint, format_utc_timestamp(run.started_at),
-                    None
-                    if run.completed_at is None
-                    else format_utc_timestamp(run.completed_at),
-                ),
-            )
+            self._insert(run)
+
+    def add_with_admission_race_capture(self, run: ProcessingRun) -> None:
+        with self._write("Add processing run for admission"):
+            self._validate_new_run(run)
+            conflict = self._captured_admission_conflict(run)
+            if conflict is not None:
+                raise AdmissionRaceError(conflict)
+            try:
+                self._insert(run)
+            except sqlite3.IntegrityError:
+                conflict = self._captured_admission_conflict(run)
+                if conflict is None:
+                    raise
+                raise AdmissionRaceError(conflict) from None
 
     def get(self, processing_run_id: DomainId) -> ProcessingRun | None:
         return self._one(
@@ -2559,7 +2687,11 @@ class SQLiteProcessingRunRepository(_SQLiteRepository):
             )
         )
         return self._one(
-            f"SELECT * FROM processing_runs WHERE status IN ({placeholders}) LIMIT 1",
+            f"""
+            SELECT * FROM processing_runs
+            WHERE status IN ({placeholders})
+            ORDER BY started_at, id LIMIT 1
+            """,
             statuses,
             _processing_run,
             "non-terminal processing run",
@@ -2606,6 +2738,7 @@ class SQLiteProcessingRunRepository(_SQLiteRepository):
             )
             if cursor.rowcount != 1:
                 raise PersistenceError("Processing run update did not affect exactly one row.")
+            _register_run_terminal_validation(self._connection, run.id)
 
 
 class SQLiteContextPacketRepository(_SQLiteRepository):
@@ -2788,6 +2921,410 @@ def _validate_model_request_shape(request: ModelRequest, run: ProcessingRun) -> 
         )
 
 
+def _exact_object_keys(
+    value: object,
+    expected: frozenset[str],
+    field_name: str,
+) -> FrozenJsonObject:
+    if not isinstance(value, FrozenJsonObject) or frozenset(value) != expected:
+        raise LifecycleInvariantError(f"{field_name} must have exact canonical fields.")
+    return value
+
+
+def _projection_uint(value: object, field_name: str, *, minimum: int = 0) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+        raise LifecycleInvariantError(f"{field_name} must be an integer >= {minimum}.")
+    return value
+
+
+def _validate_model_request_projection(request: ModelRequest) -> None:
+    projection = _exact_object_keys(
+        request.request,
+        frozenset(
+            {"schema_version", "correlation", "generation_settings", "rendering"}
+        ),
+        "ModelRequest.request_json",
+    )
+    if projection["schema_version"] != "mvp-model-request-v1":
+        raise LifecycleInvariantError(
+            "ModelRequest.request_json requires mvp-model-request-v1."
+        )
+    correlation = _exact_object_keys(
+        projection["correlation"],
+        frozenset(
+            {
+                "processing_run_id",
+                "context_packet_id",
+                "model_request_id",
+                "attempt_number",
+            }
+        ),
+        "ModelRequest.request_json.correlation",
+    )
+    if correlation != FrozenJsonObject(
+        {
+            "processing_run_id": str(request.processing_run_id),
+            "context_packet_id": str(request.context_packet_id),
+            "model_request_id": str(request.id),
+            "attempt_number": request.attempt_number,
+        }
+    ):
+        raise LifecycleInvariantError(
+            "ModelRequest.request_json correlation must match its row."
+        )
+
+    settings = _exact_object_keys(
+        projection["generation_settings"],
+        frozenset(
+            {
+                "context_window_tokens",
+                "request_timeout_seconds",
+                "temperature_decimal",
+            }
+        ),
+        "ModelRequest.request_json.generation_settings",
+    )
+    _projection_uint(
+        settings["context_window_tokens"],
+        "ModelRequest context_window_tokens",
+        minimum=1024,
+    )
+    timeout = _projection_uint(
+        settings["request_timeout_seconds"],
+        "ModelRequest request_timeout_seconds",
+        minimum=1,
+    )
+    if timeout > 300:
+        raise LifecycleInvariantError(
+            "ModelRequest request_timeout_seconds cannot exceed 300."
+        )
+    temperature_text = settings["temperature_decimal"]
+    if not isinstance(temperature_text, str):
+        raise LifecycleInvariantError(
+            "ModelRequest temperature_decimal must be canonical text."
+        )
+    try:
+        temperature = Decimal(temperature_text)
+    except (ArithmeticError, ValueError) as error:
+        raise LifecycleInvariantError(
+            "ModelRequest temperature_decimal must be canonical text."
+        ) from error
+    if (
+        not temperature.is_finite()
+        or temperature < Decimal("0")
+        or temperature > Decimal("2")
+        or canonical_decimal_string(temperature) != temperature_text
+    ):
+        raise LifecycleInvariantError(
+            "ModelRequest temperature_decimal must be canonical and in range."
+        )
+
+    rendering = _exact_object_keys(
+        projection["rendering"],
+        frozenset(
+            {
+                "render_kind",
+                "prompt_policy_version",
+                "estimated_prompt_tokens",
+                "effective_prompt_budget",
+                "included_sections",
+                "omitted_sections",
+            }
+        ),
+        "ModelRequest.request_json.rendering",
+    )
+    expected_render_kind = (
+        PromptRenderKind.INITIAL
+        if request.purpose is ModelRequestPurpose.INITIAL
+        else PromptRenderKind.CORRECTION
+    )
+    if rendering["render_kind"] != expected_render_kind.value:
+        raise LifecycleInvariantError(
+            "ModelRequest render kind must match its request purpose."
+        )
+    if rendering["prompt_policy_version"] != PROMPT_POLICY_VERSION:
+        raise LifecycleInvariantError(
+            "ModelRequest rendering requires the canonical prompt policy."
+        )
+    _projection_uint(
+        rendering["estimated_prompt_tokens"],
+        "ModelRequest estimated_prompt_tokens",
+    )
+    _projection_uint(
+        rendering["effective_prompt_budget"],
+        "ModelRequest effective_prompt_budget",
+    )
+    included_raw = rendering["included_sections"]
+    if not isinstance(included_raw, tuple):
+        raise LifecycleInvariantError(
+            "ModelRequest included_sections must be a canonical array."
+        )
+    try:
+        included = tuple(PromptSection(value) for value in included_raw)
+    except (TypeError, ValueError) as error:
+        raise LifecycleInvariantError(
+            "ModelRequest included_sections must be canonical."
+        ) from error
+    canonical_sections = tuple(
+        section for section in PromptSection if section in included
+    )
+    if included != canonical_sections or len(set(included)) != len(included):
+        raise LifecycleInvariantError(
+            "ModelRequest included_sections require canonical order without duplicates."
+        )
+    omitted_raw = rendering["omitted_sections"]
+    if not isinstance(omitted_raw, tuple):
+        raise LifecycleInvariantError(
+            "ModelRequest omitted_sections must be a canonical array."
+        )
+    for raw in omitted_raw:
+        item = _exact_object_keys(
+            raw,
+            frozenset(
+                {"section", "projection", "reason", "item_keys", "estimated_tokens"}
+            ),
+            "ModelRequest omission record",
+        )
+        try:
+            omission = OmissionRecord(
+                PromptSection(item["section"]),
+                OmissionProjection(item["projection"]),
+                OmissionReason(item["reason"]),
+                item["item_keys"],  # type: ignore[arg-type]
+                item["estimated_tokens"],  # type: ignore[arg-type]
+            )
+        except (TypeError, ValueError) as error:
+            raise LifecycleInvariantError(
+                "ModelRequest omission record must be canonical."
+            ) from error
+        if omission.to_json_object() != item:
+            raise LifecycleInvariantError(
+                "ModelRequest omission record must be canonical."
+            )
+    if not isinstance(request.rendered_prompt, str) or not request.rendered_prompt.strip():
+        raise LifecycleInvariantError(
+            "ModelRequest rendered_prompt must be non-empty exact text."
+        )
+
+
+def _validate_model_response_projection(
+    response: ModelResponse,
+    request: ModelRequest,
+) -> None:
+    projection = _exact_object_keys(
+        response.metadata,
+        frozenset(
+            {
+                "schema_version",
+                "correlation",
+                "elapsed_microseconds",
+                "token_usage",
+                "provider_metadata",
+            }
+        ),
+        "ModelResponse.metadata_json",
+    )
+    if projection["schema_version"] != "mvp-completed-generation-v1":
+        raise LifecycleInvariantError(
+            "ModelResponse.metadata_json requires mvp-completed-generation-v1."
+        )
+    correlation = _exact_object_keys(
+        projection["correlation"],
+        frozenset(
+            {
+                "processing_run_id",
+                "context_packet_id",
+                "model_request_id",
+                "model_response_id",
+                "attempt_number",
+            }
+        ),
+        "ModelResponse.metadata_json.correlation",
+    )
+    if correlation != FrozenJsonObject(
+        {
+            "processing_run_id": str(request.processing_run_id),
+            "context_packet_id": str(request.context_packet_id),
+            "model_request_id": str(request.id),
+            "model_response_id": str(response.id),
+            "attempt_number": request.attempt_number,
+        }
+    ):
+        raise LifecycleInvariantError(
+            "ModelResponse.metadata_json correlation must match its lineage."
+        )
+    _projection_uint(
+        projection["elapsed_microseconds"],
+        "ModelResponse elapsed_microseconds",
+    )
+    usage = projection["token_usage"]
+    if usage is not None:
+        usage_object = _exact_object_keys(
+            usage,
+            frozenset({"prompt_tokens", "generated_tokens", "total_tokens"}),
+            "ModelResponse token_usage",
+        )
+        for field_name, value in usage_object.items():
+            if value is not None:
+                _projection_uint(value, f"ModelResponse token_usage.{field_name}")
+    if not isinstance(projection["provider_metadata"], FrozenJsonObject):
+        raise LifecycleInvariantError(
+            "ModelResponse provider_metadata must be a JSON object."
+        )
+    if not isinstance(response.response_text, str) or not response.response_text.strip():
+        raise LifecycleInvariantError(
+            "ModelResponse response_text must be complete non-whitespace text."
+        )
+
+
+def _validate_request_artifact_cardinality(
+    connection: sqlite3.Connection,
+    request_id: DomainId,
+) -> None:
+    row = _fetch_one(
+        connection,
+        """
+        SELECT model_requests.status AS request_status,
+               model_requests.purpose AS request_purpose,
+               model_requests.attempt_number AS attempt_number,
+               COUNT(DISTINCT model_responses.id) AS response_count,
+               COUNT(DISTINCT validation_results.id) AS validation_count,
+               COUNT(DISTINCT correction_attempts.id) AS correction_count
+        FROM model_requests
+        LEFT JOIN model_responses
+          ON model_responses.model_request_id = model_requests.id
+        LEFT JOIN validation_results
+          ON validation_results.model_response_id = model_responses.id
+        LEFT JOIN correction_attempts
+          ON correction_attempts.revised_model_request_id = model_requests.id
+        WHERE model_requests.id = ?
+        GROUP BY model_requests.id
+        """,
+        (str(request_id),),
+        "Validate model request artifact cardinality",
+    )
+    if row is None:
+        raise PersistenceError("Model request artifact validation requires its request.")
+    request_status = ModelRequestStatus(str(row["request_status"]))
+    response_count = int(row["response_count"])
+    validation_count = int(row["validation_count"])
+    if request_status is ModelRequestStatus.SUCCEEDED:
+        if response_count != 1 or validation_count != 1:
+            raise LifecycleInvariantError(
+                "A SUCCEEDED request requires exactly one response and validation."
+            )
+    elif response_count != 0 or validation_count != 0:
+        raise LifecycleInvariantError(
+            "Only a SUCCEEDED request may have response and validation artifacts."
+        )
+    expected_corrections = (
+        0
+        if row["request_purpose"] == ModelRequestPurpose.INITIAL.value
+        and int(row["attempt_number"]) == 0
+        else 1
+    )
+    if int(row["correction_count"]) != expected_corrections:
+        raise LifecycleInvariantError(
+            "A revision request requires exactly one adjacent correction row."
+        )
+
+
+def _register_request_artifact_validation(
+    connection: sqlite3.Connection,
+    request_id: DomainId,
+) -> None:
+    _register_commit_validator(
+        connection,
+        f"model-request:{request_id}",
+        lambda: _validate_request_artifact_cardinality(connection, request_id),
+    )
+
+
+def _validate_run_terminal_cardinality(
+    connection: sqlite3.Connection,
+    processing_run_id: DomainId,
+) -> None:
+    row = _fetch_one(
+        connection,
+        """
+        SELECT processing_runs.status AS run_status,
+               processing_runs.completed_at AS completed_at,
+               COUNT(DISTINCT pipeline_failures.id) AS failure_count,
+               COUNT(DISTINCT CASE WHEN pipeline_failures.is_terminal = 1
+                                   THEN pipeline_failures.id END) AS terminal_failure_count,
+               MAX(CASE WHEN pipeline_failures.is_terminal = 1
+                        THEN pipeline_failures.created_at END) AS failure_created_at,
+               COUNT(DISTINCT clarification_requests.id) AS clarification_count,
+               COUNT(DISTINCT CASE WHEN model_responses.assistant_message_id IS NOT NULL
+                                   THEN model_responses.assistant_message_id END)
+                   AS assistant_count
+        FROM processing_runs
+        LEFT JOIN pipeline_failures
+          ON pipeline_failures.processing_run_id = processing_runs.id
+        LEFT JOIN clarification_requests
+          ON clarification_requests.processing_run_id = processing_runs.id
+        LEFT JOIN model_requests
+          ON model_requests.processing_run_id = processing_runs.id
+        LEFT JOIN model_responses
+          ON model_responses.model_request_id = model_requests.id
+        WHERE processing_runs.id = ?
+        GROUP BY processing_runs.id
+        """,
+        (str(processing_run_id),),
+        "Validate processing run terminal cardinality",
+    )
+    if row is None:
+        raise PersistenceError("Terminal cardinality validation requires its run.")
+    status = ProcessingRunStatus(str(row["run_status"]))
+    failure_count = int(row["failure_count"])
+    terminal_failure_count = int(row["terminal_failure_count"])
+    clarification_count = int(row["clarification_count"])
+    assistant_count = int(row["assistant_count"])
+    if status is ProcessingRunStatus.SUCCEEDED:
+        if failure_count != 0 or clarification_count != 0 or assistant_count != 1:
+            raise LifecycleInvariantError(
+                "A SUCCEEDED run requires one assistant and no failure or clarification."
+            )
+    elif status is ProcessingRunStatus.NEEDS_CLARIFICATION:
+        if failure_count != 0 or clarification_count != 1 or assistant_count != 0:
+            raise LifecycleInvariantError(
+                "A clarification run requires one clarification and no failure or assistant."
+            )
+    elif status in {
+        ProcessingRunStatus.CONTROLLED_FAILURE,
+        ProcessingRunStatus.FAILED,
+        ProcessingRunStatus.CANCELLED,
+    }:
+        if (
+            failure_count != 1
+            or terminal_failure_count != 1
+            or clarification_count != 0
+            or assistant_count != 0
+        ):
+            raise LifecycleInvariantError(
+                "A failed or cancelled run requires exactly one terminal failure."
+            )
+        if row["completed_at"] != row["failure_created_at"]:
+            raise LifecycleInvariantError(
+                "A terminal failure and its run must share one completion timestamp."
+            )
+    elif failure_count != 0 or clarification_count != 0 or assistant_count != 0:
+        raise LifecycleInvariantError(
+            "A non-terminal run cannot have terminal outcome artifacts."
+        )
+
+
+def _register_run_terminal_validation(
+    connection: sqlite3.Connection,
+    processing_run_id: DomainId,
+) -> None:
+    _register_commit_validator(
+        connection,
+        f"processing-run:{processing_run_id}",
+        lambda: _validate_run_terminal_cardinality(connection, processing_run_id),
+    )
+
+
 class SQLiteModelCallRepository(_SQLiteRepository):
     def _run_for_request(self, request: ModelRequest) -> ProcessingRun:
         return _require_existing(
@@ -2798,6 +3335,7 @@ class SQLiteModelCallRepository(_SQLiteRepository):
     def add_request(self, request: ModelRequest) -> None:
         run = self._run_for_request(request)
         _validate_model_request_shape(request, run)
+        _validate_model_request_projection(request)
         if request.status is not ModelRequestStatus.PENDING:
             raise LifecycleInvariantError("A new model request must start as PENDING.")
         if run.status in TERMINAL_PROCESSING_RUN_STATUSES:
@@ -2861,6 +3399,7 @@ class SQLiteModelCallRepository(_SQLiteRepository):
                     request.error_code, request.safe_error_message,
                 ),
             )
+            _register_request_artifact_validation(self._connection, request.id)
 
     def get_request(self, request_id: DomainId) -> ModelRequest | None:
         return self._one(
@@ -2882,6 +3421,7 @@ class SQLiteModelCallRepository(_SQLiteRepository):
     def update_request(self, request: ModelRequest) -> None:
         run = self._run_for_request(request)
         _validate_model_request_shape(request, run)
+        _validate_model_request_projection(request)
         with self._write("Update model request"):
             current = _require_existing(self.get_request(request.id), "Model request")
             immutable_current = (
@@ -2898,6 +3438,10 @@ class SQLiteModelCallRepository(_SQLiteRepository):
                 raise LifecycleInvariantError("Model request input fields are immutable.")
             if current == request:
                 return
+            if run.status in TERMINAL_PROCESSING_RUN_STATUSES:
+                raise LifecycleInvariantError(
+                    "A terminal run cannot receive a model request update."
+                )
             require_model_request_transition(current.status, request.status)
             cursor = self._connection.execute(
                 """
@@ -2919,6 +3463,7 @@ class SQLiteModelCallRepository(_SQLiteRepository):
             )
             if cursor.rowcount != 1:
                 raise PersistenceError("Model request update did not affect exactly one row.")
+            _register_request_artifact_validation(self._connection, request.id)
 
     def add_response(self, response: ModelResponse) -> None:
         if response.assistant_message_id is not None:
@@ -2929,13 +3474,19 @@ class SQLiteModelCallRepository(_SQLiteRepository):
             request = _require_existing(
                 self.get_request(response.model_request_id), "Model response request"
             )
+            _validate_model_response_projection(response, request)
+            run = self._run_for_request(request)
+            if run.status in TERMINAL_PROCESSING_RUN_STATUSES:
+                raise LifecycleInvariantError(
+                    "A terminal run cannot receive a model response."
+                )
             if request.status is not ModelRequestStatus.SUCCEEDED:
                 raise LifecycleInvariantError(
                     "A model response requires a SUCCEEDED request."
                 )
-            if request.completed_at is None or response.created_at < request.completed_at:
+            if request.completed_at is None or response.created_at != request.completed_at:
                 raise LifecycleInvariantError(
-                    "Model response creation cannot precede request completion."
+                    "Model response and request completion must share one timestamp."
                 )
             self._connection.execute(
                 """
@@ -2950,6 +3501,7 @@ class SQLiteModelCallRepository(_SQLiteRepository):
                     format_utc_timestamp(response.created_at),
                 ),
             )
+            _register_request_artifact_validation(self._connection, request.id)
 
     def get_response(self, response_id: DomainId) -> ModelResponse | None:
         return self._one(
@@ -2982,7 +3534,9 @@ class SQLiteModelCallRepository(_SQLiteRepository):
                 self._connection,
                 """
                 SELECT validation_results.status AS validation_status,
+                       model_responses.response_text AS response_text,
                        messages.role AS message_role,
+                       messages.original_text AS message_text,
                        messages.conversation_id AS message_conversation_id,
                        processing_runs.conversation_id AS run_conversation_id,
                        processing_runs.status AS run_status
@@ -3010,6 +3564,12 @@ class SQLiteModelCallRepository(_SQLiteRepository):
             if row["message_conversation_id"] != row["run_conversation_id"]:
                 raise LifecycleInvariantError(
                     "Assistant message must belong to the run conversation."
+                )
+            if str(row["response_text"]).encode("utf-8") != str(
+                row["message_text"]
+            ).encode("utf-8"):
+                raise LifecycleInvariantError(
+                    "Assistant message bytes must exactly equal the accepted response."
                 )
             if ProcessingRunStatus(str(row["run_status"])) in TERMINAL_PROCESSING_RUN_STATUSES:
                 raise LifecycleInvariantError(
@@ -3118,6 +3678,10 @@ class SQLiteModelCallRepository(_SQLiteRepository):
                     format_utc_timestamp(correction.created_at),
                 ),
             )
+            _register_request_artifact_validation(
+                self._connection,
+                correction.revised_model_request_id,
+            )
 
     def list_corrections_for_run(
         self, processing_run_id: DomainId
@@ -3142,6 +3706,24 @@ class SQLiteModelCallRepository(_SQLiteRepository):
                 raise LifecycleInvariantError(
                     "Pipeline failure cannot precede processing-run acceptance."
                 )
+            existing_terminal = tuple(
+                item
+                for item in self.list_failures_for_run(failure.processing_run_id)
+                if item.is_terminal
+            )
+            if failure.is_terminal and existing_terminal:
+                if existing_terminal == (failure,):
+                    return
+                raise PersistenceError(
+                    "The processing run already has a different terminal failure."
+                )
+            if run.status in {
+                ProcessingRunStatus.SUCCEEDED,
+                ProcessingRunStatus.NEEDS_CLARIFICATION,
+            }:
+                raise LifecycleInvariantError(
+                    "Successful and clarification runs cannot receive failures."
+                )
             self._connection.execute(
                 """
                 INSERT INTO pipeline_failures (
@@ -3155,6 +3737,10 @@ class SQLiteModelCallRepository(_SQLiteRepository):
                     failure.safe_message, _encode_json(failure.details),
                     int(failure.is_terminal), format_utc_timestamp(failure.created_at),
                 ),
+            )
+            _register_run_terminal_validation(
+                self._connection,
+                failure.processing_run_id,
             )
 
     def list_failures_for_run(
@@ -3195,10 +3781,14 @@ class SQLiteValidationRepository(_SQLiteRepository):
                 self._connection,
                 """
                 SELECT model_responses.created_at AS response_created_at,
-                       model_requests.status AS request_status
+                       model_requests.status AS request_status,
+                       model_requests.id AS model_request_id,
+                       processing_runs.status AS run_status
                 FROM model_responses
                 JOIN model_requests
                   ON model_requests.id = model_responses.model_request_id
+                JOIN processing_runs
+                  ON processing_runs.id = model_requests.processing_run_id
                 WHERE model_responses.id = ?
                 """,
                 (str(result.model_response_id),),
@@ -3210,9 +3800,13 @@ class SQLiteValidationRepository(_SQLiteRepository):
                 raise LifecycleInvariantError(
                     "Validation requires a SUCCEEDED model request."
                 )
-            if result.created_at < parse_utc_timestamp(str(row["response_created_at"])):
+            if ProcessingRunStatus(str(row["run_status"])) in TERMINAL_PROCESSING_RUN_STATUSES:
                 raise LifecycleInvariantError(
-                    "Validation result cannot precede its model response."
+                    "A terminal run cannot receive a validation result."
+                )
+            if result.created_at != parse_utc_timestamp(str(row["response_created_at"])):
+                raise LifecycleInvariantError(
+                    "Validation and response must share one candidate timestamp."
                 )
             self._connection.execute(
                 """
@@ -3227,6 +3821,10 @@ class SQLiteValidationRepository(_SQLiteRepository):
                     encoded_evidence,
                     format_utc_timestamp(result.created_at),
                 ),
+            )
+            _register_request_artifact_validation(
+                self._connection,
+                DomainId(str(row["model_request_id"])),
             )
 
     def get(self, validation_result_id: DomainId) -> ValidationResult | None:
@@ -3312,6 +3910,10 @@ class SQLiteClarificationRepository(_SQLiteRepository):
                     _encode_json(clarification.details),
                     format_utc_timestamp(clarification.created_at),
                 ),
+            )
+            _register_run_terminal_validation(
+                self._connection,
+                clarification.processing_run_id,
             )
 
     def get_for_run(

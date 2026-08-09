@@ -307,6 +307,7 @@ def test_processing_run_transitions_match_contract_and_terminal_states_are_final
                 ProcessingRunStatus.NEEDS_CLARIFICATION,
                 ProcessingRunStatus.CONTROLLED_FAILURE,
                 ProcessingRunStatus.FAILED,
+                ProcessingRunStatus.CANCELLED,
             },
             ProcessingRunStatus.CONTEXT_READY: {
                 ProcessingRunStatus.GENERATING,

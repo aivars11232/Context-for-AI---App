@@ -97,11 +97,18 @@ def test_system_and_deterministic_bundles_cover_required_ports() -> None:
         "response_validator",
         "correction_controller",
     }
+    assert {field.name for field in fields(ApplicationDependencies)} == {
+        "repositories",
+        "system",
+        "deterministic",
+        "context_packet_stage",
+    }
 
 
 def test_composed_application_exposes_only_required_use_cases() -> None:
     assert {field.name for field in fields(ApplicationUseCases)} == {
         "process_user_message",
+        "recover_processing_run",
         "inspect_context",
         "select_project",
         "apply_conversation_state_transition",

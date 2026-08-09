@@ -21,6 +21,7 @@ from context_for_ai.application.conversation_state import (
     ArchiveProjectService,
     SelectProjectService,
     TransitionTaskStatusService,
+    calculate_prepared_state_transition,
 )
 from context_for_ai.domain.entities import (
     Conversation,
@@ -325,6 +326,44 @@ def test_prepared_transition_selects_owned_topic_and_starts_task_atomically() ->
     assert result.selected_task is not None
     assert result.selected_task.status is TaskStatus.IN_PROGRESS
     assert tasks.get(new_task.id) == result.selected_task
+
+
+def test_prepared_transition_calculation_is_pure_and_reusable() -> None:
+    stored_conversation = conversation()
+    selected_topic = Topic(
+        identifier(3),
+        stored_conversation.id,
+        "Topic",
+        "topic",
+        NOW,
+        NOW,
+    )
+    selected_task = task(4, stored_conversation.id, topic_id=selected_topic.id)
+    original_state = state(stored_conversation.id)
+    request = ApplyConversationStateTransitionInput(
+        conversation_id=stored_conversation.id,
+        expected_state_version=0,
+        topic=PreparedTopicTransition(selected_topic.id, HIGH),
+        task=PreparedTaskTransition(selected_task.id, HIGH),
+        output=PreparedOutputTransition(IntentType.PLAN, OutputType.TEXT_PLAN, HIGH),
+    )
+
+    result = calculate_prepared_state_transition(
+        current=original_state,
+        request=request,
+        stored_topic=selected_topic,
+        stored_task=selected_task,
+        updated_at=LATER,
+    )
+
+    assert original_state.version == 0
+    assert selected_task.status is TaskStatus.OPEN
+    assert result.state.version == 1
+    assert result.state.active_topic_id == selected_topic.id
+    assert result.state.active_task_id == selected_task.id
+    assert result.state.expected_output_type is OutputType.TEXT_PLAN
+    assert result.selected_task is not None
+    assert result.selected_task.status is TaskStatus.IN_PROGRESS
 
 
 def test_task_completion_clears_active_state_and_reopen_does_not_activate() -> None:

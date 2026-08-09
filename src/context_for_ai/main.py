@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 import sys
 
@@ -12,6 +13,8 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
+from context_for_ai.domain.enums import PipelineStage
+from context_for_ai.domain.ports.system import TraceEvent
 from context_for_ai.infrastructure.configuration import (
     ApplicationConfiguration,
     ConfigurationError,
@@ -50,7 +53,15 @@ def bootstrap_application(
     database_path = apply_migrations(
         configuration.app.data_directory / "database" / "context_for_ai.sqlite3"
     )
-    trace_logger.event("startup_initialized")
+    trace_logger.emit(
+        TraceEvent(
+            timestamp=datetime.now(UTC),
+            level="INFO",
+            event_name="startup_initialized",
+            stage=PipelineStage.ACCEPTANCE,
+            configuration_fingerprint=configuration.configuration_fingerprint,
+        )
+    )
     return StartupResources(configuration, trace_logger, database_path)
 
 

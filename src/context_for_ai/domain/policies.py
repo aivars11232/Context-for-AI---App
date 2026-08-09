@@ -130,6 +130,7 @@ _PROCESSING_RUN_TRANSITIONS = {
             ProcessingRunStatus.NEEDS_CLARIFICATION,
             ProcessingRunStatus.CONTROLLED_FAILURE,
             ProcessingRunStatus.FAILED,
+            ProcessingRunStatus.CANCELLED,
         }
     ),
     ProcessingRunStatus.CONTEXT_READY: frozenset(

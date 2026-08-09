@@ -30,22 +30,25 @@ from context_for_ai.domain.entities import (
     Topic,
 )
 from context_for_ai.domain.enums import (
+    FailureCode,
     IntentType,
     MessageRole,
     OutputType,
+    PipelineStage,
     ProcessingRunStatus,
     ProjectStatus,
     TaskStatus,
 )
 from context_for_ai.domain.errors import LifecycleInvariantError
-from context_for_ai.domain.lifecycle import ProcessingRun
+from context_for_ai.domain.lifecycle import ProcessingRun, SafeFailure
 from context_for_ai.domain.ports.errors import PersistenceError
 from context_for_ai.domain.state_transitions import initial_conversation_state
-from context_for_ai.domain.value_objects import DomainId, UnitScore
+from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, UnitScore
 from context_for_ai.infrastructure.database import (
     SQLiteConversationRepository,
     SQLiteConversationStateRepository,
     SQLiteMessageRepository,
+    SQLiteModelCallRepository,
     SQLiteProcessingRunRepository,
     SQLiteProjectRepository,
     SQLiteTaskRepository,
@@ -82,6 +85,7 @@ def repositories(connection: sqlite3.Connection) -> SimpleNamespace:
         tasks=SQLiteTaskRepository(connection),
         states=SQLiteConversationStateRepository(connection),
         messages=SQLiteMessageRepository(connection),
+        model_calls=SQLiteModelCallRepository(connection),
         runs=SQLiteProcessingRunRepository(connection),
     )
 
@@ -239,14 +243,28 @@ def test_at_003_state_lifecycle_through_public_use_cases_survives_restart(
     with bundle.transactions.transaction():
         bundle.messages.add(user_message)
         bundle.runs.add(run)
-        run = replace(run, status=ProcessingRunStatus.CONTEXT_READY)
-        bundle.runs.update(run)
-        run = replace(run, status=ProcessingRunStatus.GENERATING)
-        bundle.runs.update(run)
+        terminal_time = stamp(22)
+        bundle.model_calls.add_failure(
+            SafeFailure(
+                identifier(80),
+                run.id,
+                PipelineStage.TERMINALIZATION,
+                FailureCode.PERSISTENCE_ERROR,
+                "Processing could not be saved safely.",
+                FrozenJsonObject(
+                    {
+                        "failed_stage": PipelineStage.CONTEXT.value,
+                        "prior_run_status": ProcessingRunStatus.PERSISTED.value,
+                    }
+                ),
+                True,
+                terminal_time,
+            )
+        )
         run = replace(
             run,
-            status=ProcessingRunStatus.SUCCEEDED,
-            completed_at=stamp(22),
+            status=ProcessingRunStatus.FAILED,
+            completed_at=terminal_time,
         )
         bundle.runs.update(run)
 

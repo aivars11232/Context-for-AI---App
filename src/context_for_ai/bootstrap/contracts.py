@@ -9,12 +9,14 @@ from context_for_ai.application import (
     ApplyConversationStateTransition,
     ArchiveProject,
     CreateMemory,
+    ContextPacketStage,
     EditMemory,
     GetMemory,
     InspectContext,
     InspectValidation,
     ListMemories,
     ProcessUserMessage,
+    RecoverProcessingRun,
     RegisterNamedItem,
     RegisterProject,
     RegisterTask,
@@ -119,6 +121,7 @@ class ApplicationDependencies:
     repositories: RepositoryPorts
     system: SystemPorts
     deterministic: DeterministicComponents
+    context_packet_stage: ContextPacketStage
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +129,7 @@ class ApplicationUseCases:
     """All presentation-facing use cases returned by composition."""
 
     process_user_message: ProcessUserMessage
+    recover_processing_run: RecoverProcessingRun
     inspect_context: InspectContext
     select_project: SelectProject
     apply_conversation_state_transition: ApplyConversationStateTransition

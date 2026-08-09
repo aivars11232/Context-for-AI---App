@@ -98,6 +98,7 @@ from context_for_ai.domain.lifecycle import (
 )
 from context_for_ai.domain.policies import memory_revision_metadata
 from context_for_ai.domain.ports import (
+    AdmissionRaceError,
     ClarificationRepository,
     CorrectionExhausted,
     ConstraintRepository,
@@ -427,8 +428,9 @@ def add_empty_packet(
 
 
 def initial_request(core: CoreRecords, packet: ContextPacket) -> ModelRequest:
+    request_id = identifier(40)
     return ModelRequest(
-        identifier(40),
+        request_id,
         core.run.id,
         packet.id,
         ModelRequestPurpose.INITIAL,
@@ -437,11 +439,82 @@ def initial_request(core: CoreRecords, packet: ContextPacket) -> ModelRequest:
         "fixture-model",
         ModelRequestStatus.PENDING,
         "Rendered prompt\nwith Unicode ☕",
-        FrozenJsonObject({"options": {"temperature": 0}, "stream": False}),
+        model_request_projection(
+            request_id=request_id,
+            processing_run_id=core.run.id,
+            context_packet_id=packet.id,
+            attempt_number=0,
+            render_kind="INITIAL",
+        ),
         None,
         None,
         None,
         None,
+    )
+
+
+def model_request_projection(
+    *,
+    request_id: DomainId,
+    processing_run_id: DomainId,
+    context_packet_id: DomainId,
+    attempt_number: int,
+    render_kind: str,
+) -> FrozenJsonObject:
+    return FrozenJsonObject(
+        {
+            "schema_version": "mvp-model-request-v1",
+            "correlation": {
+                "processing_run_id": str(processing_run_id),
+                "context_packet_id": str(context_packet_id),
+                "model_request_id": str(request_id),
+                "attempt_number": attempt_number,
+            },
+            "generation_settings": {
+                "context_window_tokens": 4096,
+                "request_timeout_seconds": 60,
+                "temperature_decimal": "0",
+            },
+            "rendering": {
+                "render_kind": render_kind,
+                "prompt_policy_version": "mvp-prompt-policy-v1",
+                "estimated_prompt_tokens": 64,
+                "effective_prompt_budget": 3584,
+                "included_sections": (),
+                "omitted_sections": (),
+            },
+        }
+    )
+
+
+def completed_response_projection(
+    request: ModelRequest,
+    response_id: DomainId,
+    *,
+    provider_metadata: FrozenJsonObject | None = None,
+) -> FrozenJsonObject:
+    return FrozenJsonObject(
+        {
+            "schema_version": "mvp-completed-generation-v1",
+            "correlation": {
+                "processing_run_id": str(request.processing_run_id),
+                "context_packet_id": str(request.context_packet_id),
+                "model_request_id": str(request.id),
+                "model_response_id": str(response_id),
+                "attempt_number": request.attempt_number,
+            },
+            "elapsed_microseconds": 125000,
+            "token_usage": {
+                "prompt_tokens": 12,
+                "generated_tokens": 8,
+                "total_tokens": 20,
+            },
+            "provider_metadata": (
+                FrozenJsonObject({"fixture": "sqlite"})
+                if provider_metadata is None
+                else provider_metadata
+            ),
+        }
     )
 
 
@@ -825,7 +898,19 @@ def test_core_entity_state_message_and_archive_repositories(
     failed_run = replace(
         core.run, status=ProcessingRunStatus.FAILED, completed_at=stamp(28)
     )
-    bundle.runs.update(failed_run)
+    terminal_failure = SafeFailure(
+        identifier(99),
+        core.run.id,
+        PipelineStage.TERMINALIZATION,
+        FailureCode.PERSISTENCE_ERROR,
+        "The processing run ended safely.",
+        FrozenJsonObject({"test_fixture": True}),
+        True,
+        stamp(28),
+    )
+    with bundle.transactions.transaction():
+        bundle.runs.update(failed_run)
+        bundle.models.add_failure(terminal_failure)
     archived_project = replace(
         core.project, status=ProjectStatus.ARCHIVED, updated_at=stamp(29)
     )
@@ -1155,18 +1240,41 @@ def test_model_success_lineage_settings_evaluation_and_restart_persistence(
         in_flight, status=ModelRequestStatus.SUCCEEDED, completed_at=stamp(21)
     )
     bundle.models.update_request(in_flight)
-    bundle.models.update_request(succeeded_request)
+    response_id = identifier(41)
     response = ModelResponse(
-        identifier(41),
+        response_id,
         succeeded_request.id,
         "Complete buffered response — café",
-        FrozenJsonObject({"tokens": {"input": 12, "output": 8}}),
+        completed_response_projection(succeeded_request, response_id),
         None,
         stamp(21),
     )
-    bundle.models.add_response(response)
-    validation = validate_response(packet_record.packet, response)
-    bundle.validations.add(validation)
+    validation = replace(
+        validate_response(packet_record.packet, response),
+        created_at=response.created_at,
+    )
+    with bundle.transactions.transaction():
+        bundle.models.update_request(succeeded_request)
+        bundle.models.add_response(response)
+        bundle.validations.add(validation)
+    mismatched_assistant = Message(
+        identifier(49),
+        core.conversation.id,
+        MessageRole.ASSISTANT,
+        f"{response.response_text} ",
+        stamp(22),
+        1,
+    )
+    with pytest.raises(LifecycleInvariantError, match="bytes must exactly equal"):
+        with bundle.transactions.transaction():
+            bundle.messages.add(mismatched_assistant)
+            bundle.models.link_assistant_message(
+                model_response_id=response.id,
+                assistant_message_id=mismatched_assistant.id,
+            )
+    assert bundle.messages.get(mismatched_assistant.id) is None
+    assert bundle.models.get_response(response.id).assistant_message_id is None
+
     assistant = Message(
         identifier(43),
         core.conversation.id,
@@ -1303,19 +1411,24 @@ def test_model_correction_lifecycle_rejects_invalid_candidates_and_duplicates(
         in_flight, status=ModelRequestStatus.SUCCEEDED, completed_at=stamp(21)
     )
     bundle.models.update_request(in_flight)
-    bundle.models.update_request(succeeded_request)
+    response_id = identifier(41)
     response = ModelResponse(
-        identifier(41),
+        response_id,
         succeeded_request.id,
         "TOOL_CALL:",
-        FrozenJsonObject({"complete": True}),
+        completed_response_projection(succeeded_request, response_id),
         None,
         stamp(21),
     )
-    bundle.models.add_response(response)
-    failed_validation = validate_response(packet_record.packet, response)
+    failed_validation = replace(
+        validate_response(packet_record.packet, response),
+        created_at=response.created_at,
+    )
     assert failed_validation.status is ValidationStatus.FAILED
-    bundle.validations.add(failed_validation)
+    with bundle.transactions.transaction():
+        bundle.models.update_request(succeeded_request)
+        bundle.models.add_response(response)
+        bundle.validations.add(failed_validation)
 
     assistant = Message(
         identifier(43),
@@ -1335,8 +1448,9 @@ def test_model_correction_lifecycle_rejects_invalid_candidates_and_duplicates(
 
     revising = replace(generating, status=ProcessingRunStatus.REVISING)
     bundle.runs.update(revising)
+    revision_request_id = identifier(44)
     revision_request = ModelRequest(
-        identifier(44),
+        revision_request_id,
         core.run.id,
         packet_record.packet.id,
         ModelRequestPurpose.REVISION,
@@ -1345,7 +1459,13 @@ def test_model_correction_lifecycle_rejects_invalid_candidates_and_duplicates(
         "fixture-model",
         ModelRequestStatus.PENDING,
         "Revision prompt",
-        FrozenJsonObject({"attempt": 1}),
+        model_request_projection(
+            request_id=revision_request_id,
+            processing_run_id=core.run.id,
+            context_packet_id=packet_record.packet.id,
+            attempt_number=1,
+            render_kind="CORRECTION",
+        ),
         None,
         None,
         None,
@@ -1438,16 +1558,23 @@ def test_validation_json_and_every_reachable_score_round_trip_exactly(
         completed_at=stamp(21),
     )
     bundle.models.update_request(in_flight)
-    bundle.models.update_request(succeeded)
+    response_id = identifier(41)
     response = ModelResponse(
-        identifier(41),
+        response_id,
         succeeded.id,
         "Buffered candidate",
-        FrozenJsonObject({"complete": True}),
+        completed_response_projection(succeeded, response_id),
         None,
         stamp(21),
     )
-    bundle.models.add_response(response)
+    first_report = replace(
+        repetition_score_report(identifier(42), response.id, 0),
+        created_at=response.created_at,
+    )
+    with bundle.transactions.transaction():
+        bundle.models.update_request(succeeded)
+        bundle.models.add_response(response)
+        bundle.validations.add(first_report)
 
     for repetition_count in range(21):
         report = repetition_score_report(
@@ -1455,13 +1582,15 @@ def test_validation_json_and_every_reachable_score_round_trip_exactly(
             response.id,
             repetition_count,
         )
+        report = replace(report, created_at=response.created_at)
         expected_score = max(
             Decimal("0.00"),
             Decimal("1.00") - Decimal("0.05") * repetition_count,
         )
         assert report.score.value == expected_score
 
-        bundle.validations.add(report)
+        if repetition_count > 0:
+            bundle.validations.add(report)
 
         assert bundle.validations.get(report.id) == report
         row = connection.execute(
@@ -1516,18 +1645,23 @@ def test_preconstructed_validation_exhaustion_projection_has_no_candidate_link(
         completed_at=stamp(21),
     )
     bundle.models.update_request(in_flight)
-    bundle.models.update_request(succeeded)
+    response_id = identifier(41)
     response = ModelResponse(
-        identifier(41),
+        response_id,
         succeeded.id,
         "TOOL_CALL:",
-        FrozenJsonObject({"complete": True}),
+        completed_response_projection(succeeded, response_id),
         None,
         stamp(21),
     )
-    bundle.models.add_response(response)
-    report = validate_response(packet_record.packet, response)
-    bundle.validations.add(report)
+    report = replace(
+        validate_response(packet_record.packet, response),
+        created_at=response.created_at,
+    )
+    with bundle.transactions.transaction():
+        bundle.models.update_request(succeeded)
+        bundle.models.add_response(response)
+        bundle.validations.add(report)
     exhausted = CorrectionExhausted(
         core.run.id,
         packet_record.packet.id,
@@ -1648,7 +1782,7 @@ def test_context_construction_failure_round_trips_without_unrelated_rows(
         pass
 
     rolled_back_failure = replace(failure, id=identifier(91), created_at=stamp(6))
-    with pytest.raises(RollbackMarker):
+    with pytest.raises(PersistenceError, match="different terminal failure"):
         with bundle.transactions.transaction():
             bundle.models.add_failure(rolled_back_failure)
             raise RollbackMarker
@@ -1759,11 +1893,9 @@ def test_transactions_idempotency_foreign_keys_and_typed_failures(
     with bundle.transactions.transaction():
         bundle.runs.update(failed_run)
         bundle.models.add_failure(first_failure)
-    bundle.models.add_failure(second_failure)
-    assert bundle.models.list_failures_for_run(competing_run.id) == (
-        first_failure,
-        second_failure,
-    )
+    with pytest.raises(PersistenceError, match="different terminal failure"):
+        bundle.models.add_failure(second_failure)
+    assert bundle.models.list_failures_for_run(competing_run.id) == (first_failure,)
     assert bundle.runs.get_non_terminal() is None
 
     committed_project = Project(
@@ -1827,6 +1959,92 @@ def test_transactions_idempotency_foreign_keys_and_typed_failures(
         "SELECT count(*) FROM memory_sources WHERE id = ?",
         (str(atomic_source.id),),
     ).fetchone()[0] == 0
+
+
+def test_caught_joined_failure_marks_outer_transaction_rollback_only(
+    connection: sqlite3.Connection,
+) -> None:
+    bundle = repositories(connection)
+    project = Project(
+        identifier(90),
+        "Rollback only",
+        None,
+        ProjectStatus.ACTIVE,
+        stamp(20),
+        stamp(20),
+    )
+
+    with pytest.raises(PersistenceError, match="joined operation failed"):
+        with bundle.transactions.transaction():
+            bundle.projects.add(project)
+            try:
+                with bundle.transactions.transaction():
+                    raise RuntimeError("caught nested failure")
+            except RuntimeError:
+                pass
+
+    assert bundle.projects.get(project.id) is None
+    assert connection.in_transaction is False
+
+
+def test_caught_repository_failure_marks_outer_transaction_rollback_only(
+    connection: sqlite3.Connection,
+) -> None:
+    bundle = repositories(connection)
+    project = Project(
+        identifier(91),
+        "First value",
+        None,
+        ProjectStatus.ACTIVE,
+        stamp(21),
+        stamp(21),
+    )
+    conflicting = replace(project, name="Conflicting value")
+
+    with pytest.raises(PersistenceError, match="joined operation failed"):
+        with bundle.transactions.transaction():
+            bundle.projects.add(project)
+            try:
+                bundle.projects.add(conflicting)
+            except PersistenceError:
+                pass
+
+    assert bundle.projects.get(project.id) is None
+
+
+def test_admission_insert_captures_conflicting_run_before_loser_rollback(
+    connection: sqlite3.Connection,
+) -> None:
+    bundle = repositories(connection)
+    core = seed_core(bundle)
+    loser_message = Message(
+        identifier(92),
+        core.conversation.id,
+        MessageRole.USER,
+        "losing admission",
+        stamp(22),
+        1,
+    )
+    loser_run = ProcessingRun(
+        identifier(93),
+        core.conversation.id,
+        loser_message.id,
+        str(identifier(94)),
+        ProcessingRunStatus.PERSISTED,
+        core.state.version,
+        core.run.configuration_fingerprint,
+        stamp(22),
+        None,
+    )
+
+    with pytest.raises(AdmissionRaceError) as captured:
+        with bundle.transactions.transaction():
+            bundle.messages.add(loser_message)
+            bundle.runs.add_with_admission_race_capture(loser_run)
+
+    assert captured.value.conflicting_run == core.run
+    assert bundle.messages.get(loser_message.id) is None
+    assert bundle.runs.get(loser_run.id) is None
 
 
 def test_invalid_stored_rows_are_never_exposed_as_sqlite_rows(

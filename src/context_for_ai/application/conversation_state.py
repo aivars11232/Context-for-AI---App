@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import datetime
 from typing import TypeVar
 
 from context_for_ai.application.contracts import (
@@ -132,6 +133,67 @@ def _required_task(repository: TaskRepository, task_id: DomainId) -> Conversatio
     return task
 
 
+def calculate_prepared_state_transition(
+    *,
+    current: ConversationState,
+    request: ApplyConversationStateTransitionInput,
+    stored_topic: Topic | None,
+    stored_task: ConversationTask | None,
+    updated_at: datetime,
+) -> ApplyConversationStateTransitionOutput:
+    """Purely calculate the canonical prepared transition and selected task update."""
+
+    if current.conversation_id != request.conversation_id:
+        raise LifecycleInvariantError(
+            "A prepared transition must use its state conversation."
+        )
+    topic = request.topic
+    if topic is not None and confidence_band(topic.confidence) is ConfidenceBand.HIGH:
+        if (
+            stored_topic is None
+            or stored_topic.id != topic.topic_id
+            or stored_topic.conversation_id != request.conversation_id
+        ):
+            raise LifecycleInvariantError(
+                "A selected topic must belong to the state conversation."
+            )
+
+    selected_task: ConversationTask | None = None
+    task = request.task
+    if task is not None and confidence_band(task.confidence) is ConfidenceBand.HIGH:
+        if stored_task is None or stored_task.id != task.task_id:
+            raise PersistenceError("Conversation task does not exist.")
+        if stored_task.conversation_id != request.conversation_id:
+            raise LifecycleInvariantError(
+                "A selected task must belong to the state conversation."
+            )
+        if is_terminal_task(stored_task.status):
+            raise LifecycleInvariantError("An active task cannot be terminal.")
+        selected_task = (
+            replace(
+                stored_task,
+                status=TaskStatus.IN_PROGRESS,
+                updated_at=updated_at,
+            )
+            if stored_task.status is TaskStatus.OPEN
+            else stored_task
+        )
+
+    output = request.output
+    next_state = transition_conversation_state(
+        current,
+        topic_id=None if topic is None else topic.topic_id,
+        topic_confidence=None if topic is None else topic.confidence,
+        task_id=None if task is None else task.task_id,
+        task_confidence=None if task is None else task.confidence,
+        intent=None if output is None else output.intent,
+        expected_output_type=None if output is None else output.expected_output_type,
+        output_confidence=None if output is None else output.confidence,
+        updated_at=updated_at,
+    )
+    return ApplyConversationStateTransitionOutput(next_state, selected_task)
+
+
 class SelectProjectService:
     """Atomically update the sole project association and touch state once."""
 
@@ -216,63 +278,35 @@ class ApplyConversationStateTransitionService:
         ) -> tuple[ConversationState, ConversationTask | None, _Persist]:
             now = self._clock.now()
             topic = request.topic
-            if (
-                topic is not None
+            stored_topic = (
+                self._topics.get(topic.topic_id)
+                if topic is not None
                 and confidence_band(topic.confidence) is ConfidenceBand.HIGH
-            ):
-                stored_topic = self._topics.get(topic.topic_id)
-                if (
-                    stored_topic is None
-                    or stored_topic.conversation_id != request.conversation_id
-                ):
-                    raise LifecycleInvariantError(
-                        "A selected topic must belong to the state conversation."
-                    )
-
-            selected_task: ConversationTask | None = None
-            stored_task: ConversationTask | None = None
+                else None
+            )
             task = request.task
-            if (
-                task is not None
+            stored_task = (
+                self._tasks.get(task.task_id)
+                if task is not None
                 and confidence_band(task.confidence) is ConfidenceBand.HIGH
-            ):
-                stored_task = _required_task(self._tasks, task.task_id)
-                if stored_task.conversation_id != request.conversation_id:
-                    raise LifecycleInvariantError(
-                        "A selected task must belong to the state conversation."
-                    )
-                if is_terminal_task(stored_task.status):
-                    raise LifecycleInvariantError("An active task cannot be terminal.")
-                selected_task = (
-                    replace(
-                        stored_task,
-                        status=TaskStatus.IN_PROGRESS,
-                        updated_at=now,
-                    )
-                    if stored_task.status is TaskStatus.OPEN
-                    else stored_task
-                )
-
-            output = request.output
-            next_state = transition_conversation_state(
-                current,
-                topic_id=None if topic is None else topic.topic_id,
-                topic_confidence=None if topic is None else topic.confidence,
-                task_id=None if task is None else task.task_id,
-                task_confidence=None if task is None else task.confidence,
-                intent=None if output is None else output.intent,
-                expected_output_type=(
-                    None if output is None else output.expected_output_type
-                ),
-                output_confidence=None if output is None else output.confidence,
+                else None
+            )
+            calculation = calculate_prepared_state_transition(
+                current=current,
+                request=request,
+                stored_topic=stored_topic,
+                stored_task=stored_task,
                 updated_at=now,
             )
 
             def persist() -> None:
-                if selected_task is not None and selected_task != stored_task:
-                    self._tasks.update(selected_task)
+                if (
+                    calculation.selected_task is not None
+                    and calculation.selected_task != stored_task
+                ):
+                    self._tasks.update(calculation.selected_task)
 
-            return next_state, selected_task, persist
+            return calculation.state, calculation.selected_task, persist
 
         state, selected_task = _execute_versioned(
             conversation_id=request.conversation_id,
@@ -397,4 +431,5 @@ __all__ = [
     "ArchiveProjectService",
     "SelectProjectService",
     "TransitionTaskStatusService",
+    "calculate_prepared_state_transition",
 ]

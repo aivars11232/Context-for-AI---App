@@ -8,6 +8,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from context_for_ai.domain.enums import PipelineStage
+from context_for_ai.domain.ports.system import TraceEvent
 from context_for_ai.infrastructure.configuration.loader import LoggingSettings
 
 
@@ -31,8 +33,13 @@ class RedactedJsonFormatter(logging.Formatter):
     """Render only the documented safe trace metadata, never a log message."""
 
     def format(self, record: logging.LogRecord) -> str:
+        event_timestamp = getattr(record, "trace_timestamp", None)
         payload: dict[str, Any] = {
-            "timestamp": datetime.fromtimestamp(record.created, UTC)
+            "timestamp": (
+                datetime.fromtimestamp(record.created, UTC)
+                if event_timestamp is None
+                else event_timestamp
+            )
             .isoformat()
             .replace("+00:00", "Z"),
             "level": record.levelname,
@@ -55,23 +62,38 @@ class TraceLogger:
         self._logger = logger
         self._configuration_fingerprint = configuration_fingerprint
 
-    def event(
-        self,
-        event_name: str,
-        *,
-        stage: str = "ACCEPTANCE",
-        level: int = logging.INFO,
-        **fields: Any,
-    ) -> None:
-        """Record a safe event while silently excluding arbitrary content fields."""
+    def emit(self, event: TraceEvent) -> None:
+        """Record exactly one typed, pre-redacted trace event."""
 
+        if event.configuration_fingerprint != self._configuration_fingerprint:
+            raise ValueError(
+                "Trace event configuration fingerprint does not match this logger."
+            )
         extra = {
-            "event_name": event_name,
-            "stage": stage,
-            "configuration_fingerprint": self._configuration_fingerprint,
+            "trace_timestamp": event.timestamp,
+            "event_name": event.event_name,
+            "stage": event.stage.value,
+            "configuration_fingerprint": event.configuration_fingerprint,
         }
-        extra.update({field: fields.get(field) for field in _CORRELATION_FIELDS})
-        self._logger.log(level, "structured event", extra=extra)
+        extra.update(
+            {
+                field: (
+                    None
+                    if (value := getattr(event, field)) is None
+                    else value.value
+                    if field == "error_type"
+                    else value
+                    if field == "correction_attempt_number"
+                    else str(value)
+                )
+                for field in _CORRELATION_FIELDS
+            }
+        )
+        self._logger.log(
+            logging.getLevelNamesMapping()[event.level],
+            "structured event",
+            extra=extra,
+        )
 
 
 def bootstrap_logging(
@@ -96,5 +118,13 @@ def bootstrap_logging(
     logger.addHandler(handler)
 
     trace_logger = TraceLogger(logger, configuration_fingerprint)
-    trace_logger.event("logging_initialized")
+    trace_logger.emit(
+        TraceEvent(
+            timestamp=datetime.now(UTC),
+            level="INFO",
+            event_name="logging_initialized",
+            stage=PipelineStage.ACCEPTANCE,
+            configuration_fingerprint=configuration_fingerprint,
+        )
+    )
     return trace_logger

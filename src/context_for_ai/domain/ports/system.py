@@ -40,7 +40,7 @@ class TraceEvent:
     memory_id: DomainId | None = None
     memory_revision_id: DomainId | None = None
     correction_attempt_number: int | None = None
-    error_type: FailureCode | str | None = None
+    error_type: FailureCode | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "timestamp", ensure_utc(self.timestamp))
@@ -57,9 +57,9 @@ class TraceEvent:
             "TraceEvent.correction_attempt_number",
             self.correction_attempt_number,
         )
-        if isinstance(self.error_type, str) and not self.error_type.strip():
+        if self.error_type is not None and not isinstance(self.error_type, FailureCode):
             raise LifecycleInvariantError(
-                "TraceEvent.error_type must be non-empty or null."
+                "TraceEvent.error_type must be a canonical failure code or null."
             )
 
 
