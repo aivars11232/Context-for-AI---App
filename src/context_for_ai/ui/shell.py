@@ -1,9 +1,9 @@
-"""One GUI-owned QML facade with finite foreground and inspection workers."""
+"""One GUI-owned QML facade with three finite worker ownership roles."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtCore import (
     QAbstractListModel,
@@ -26,6 +26,7 @@ from context_for_ai.application import (
     DomainId,
     IdempotencyKeyFactory,
     InspectContextRequest,
+    InitialUiPreferences,
     PersistenceFailureResult,
     ProcessUserMessageRequest,
     RecoverProcessingRunRequest,
@@ -34,8 +35,10 @@ from context_for_ai.application import (
     ShellApplicationScopeFactory,
     ShellReadyResult,
     SucceededResult,
+    UiTheme,
     ValidationExhaustedResult,
 )
+from context_for_ai.ui.manual_operations import ManualOperationsController
 from context_for_ai.ui.presentation import (
     ContextInspectionPageState,
     ContextInspectionPresentationView,
@@ -48,9 +51,13 @@ from context_for_ai.ui.presentation import (
     InspectionScalarPresentation,
     InspectionTerminalEnvelope,
     MonotonicCancellationToken,
+    MemoryPageState,
+    ProjectsPageState,
     Route,
+    SettingsPageState,
     ShellState,
     TerminalPresentationView,
+    ValidationHistoryPageState,
     contained_foreground_result,
     contained_inspection_result,
     inspection_result_presentation,
@@ -458,11 +465,16 @@ class _InspectionController:
         self._conversation_id = conversation_id
 
     def navigate_to_chat(self) -> bool:
+        return self.navigate_away(Route.CHAT)
+
+    def navigate_away(self, route: Route) -> bool:
         if self._disposed or self._conversation_id is None or self._state is ContextInspectionPageState.SHUTDOWN:
             return False
-        if self._route is Route.CHAT:
+        if not isinstance(route, Route) or route is Route.CONTEXT_INSPECTION:
+            return False
+        if self._route is route:
             return True
-        self._route = Route.CHAT
+        self._route = route
         self._generation += 1
         self._refresh_required = False
         self._state = ContextInspectionPageState.INACTIVE
@@ -1028,14 +1040,24 @@ class ShellFacade(QObject):
 
     changed = Signal()
     shutdownReady = Signal()
+    memoryAnnouncement = Signal(str, int)
+    projectsAnnouncement = Signal(str, int)
+    validationHistoryAnnouncement = Signal(str, int)
+    settingsAnnouncement = Signal(str, int)
 
     def __init__(
         self,
         scope_factory: ShellApplicationScopeFactory,
         idempotency_keys: IdempotencyKeyFactory,
         parent: QObject | None = None,
+        *,
+        initial_preferences: InitialUiPreferences | None = None,
+        theme_applier: Callable[[UiTheme], None] | None = None,
     ) -> None:
         super().__init__(parent)
+        preferences = initial_preferences or InitialUiPreferences(UiTheme.SYSTEM, True)
+        if not isinstance(preferences, InitialUiPreferences):
+            raise TypeError("Shell facade requires closed initial UI preferences.")
         self._controller = _ForegroundRunController(
             owner=self,
             scope_factory=scope_factory,
@@ -1044,6 +1066,16 @@ class ShellFacade(QObject):
         self._inspection = _InspectionController(
             owner=self,
             scope_factory=scope_factory,
+        )
+        self._manual = ManualOperationsController(
+            owner=self,
+            scope_factory=scope_factory,
+            theme_applier=theme_applier or (lambda _theme: None),
+        )
+        self._context_panel_visible = preferences.context_panel_visible
+        self._manual.set_initial_preferences(
+            theme=preferences.theme,
+            context_panel_visible=preferences.context_panel_visible,
         )
         self._shutdown_requested = False
         self._shutdown_ready_emitted = False
@@ -1055,6 +1087,10 @@ class ShellFacade(QObject):
     @Property(str, notify=changed)
     def route(self) -> str:
         return self._inspection.route.value
+
+    @Property(bool, notify=changed)
+    def context_navigation_visible(self) -> bool:
+        return self._context_panel_visible
 
     @Property(str, notify=changed)
     def inspection_page_state(self) -> str:
@@ -1085,6 +1121,190 @@ class ShellFacade(QObject):
         return self._inspection.announcement_revision
 
     @Property(str, notify=changed)
+    def memory_page_state(self) -> str:
+        return self._manual.memory_state.value
+
+    @Property(str, notify=changed)
+    def memory_status_text(self) -> str:
+        return self._manual.memory_status
+
+    @Property(str, notify=changed)
+    def memory_announcement_text(self) -> str:
+        return self._manual.memory_announcement
+
+    @Property(int, notify=changed)
+    def memory_announcement_revision(self) -> int:
+        return self._manual.memory_announcement_revision
+
+    @Property(str, notify=changed)
+    def memory_filter(self) -> str:
+        return self._manual.memory_filter
+
+    @Property(int, notify=changed)
+    def selected_memory_index(self) -> int:
+        return self._manual.selected_memory_index
+
+    @Property(str, notify=changed)
+    def memory_editor_mode(self) -> str:
+        return self._manual.memory_editor_mode
+
+    @Property(QObject, notify=changed)
+    def memory_items(self) -> QObject:
+        return self._manual.memory_items
+
+    @Property(QObject, notify=changed)
+    def memory_details(self) -> QObject:
+        return self._manual.memory_details
+
+    @Property(QObject, notify=changed)
+    def memory_sources(self) -> QObject:
+        return self._manual.memory_sources
+
+    @Property(QObject, notify=changed)
+    def memory_revisions(self) -> QObject:
+        return self._manual.memory_revisions
+
+    @Property(QObject, notify=changed)
+    def memory_duplicates(self) -> QObject:
+        return self._manual.memory_duplicates
+
+    @Property(QObject, notify=changed)
+    def memory_errors(self) -> QObject:
+        return self._manual.memory_errors
+
+    @Property(str, notify=changed)
+    def memory_editor_type(self) -> str:
+        return self._manual.memory_editor_type
+
+    @Property(str, notify=changed)
+    def memory_editor_scope(self) -> str:
+        return self._manual.memory_editor_scope
+
+    @Property(str, notify=changed)
+    def memory_editor_content(self) -> str:
+        return self._manual.memory_editor_content
+
+    @Property(str, notify=changed)
+    def memory_editor_keywords(self) -> str:
+        return self._manual.memory_editor_keywords
+
+    @Property(str, notify=changed)
+    def memory_editor_topics(self) -> str:
+        return self._manual.memory_editor_topics
+
+    @Property(str, notify=changed)
+    def memory_editor_importance(self) -> str:
+        return self._manual.memory_editor_importance
+
+    @Property(str, notify=changed)
+    def memory_editor_confidence(self) -> str:
+        return self._manual.memory_editor_confidence
+
+    @Property(str, notify=changed)
+    def memory_editor_expiry(self) -> str:
+        return self._manual.memory_editor_expiry
+
+    @Property(str, notify=changed)
+    def projects_page_state(self) -> str:
+        return self._manual.projects_state.value
+
+    @Property(str, notify=changed)
+    def projects_status_text(self) -> str:
+        return self._manual.projects_status
+
+    @Property(str, notify=changed)
+    def projects_announcement_text(self) -> str:
+        return self._manual.projects_announcement
+
+    @Property(int, notify=changed)
+    def projects_announcement_revision(self) -> int:
+        return self._manual.projects_announcement_revision
+
+    @Property(QObject, notify=changed)
+    def active_projects(self) -> QObject:
+        return self._manual.active_projects
+
+    @Property(QObject, notify=changed)
+    def archived_projects(self) -> QObject:
+        return self._manual.archived_projects
+
+    @Property(str, notify=changed)
+    def validation_history_page_state(self) -> str:
+        return self._manual.validation_state.value
+
+    @Property(str, notify=changed)
+    def validation_history_status_text(self) -> str:
+        return self._manual.validation_status
+
+    @Property(str, notify=changed)
+    def validation_history_announcement_text(self) -> str:
+        return self._manual.validation_announcement
+
+    @Property(int, notify=changed)
+    def validation_history_announcement_revision(self) -> int:
+        return self._manual.validation_announcement_revision
+
+    @Property(QObject, notify=changed)
+    def validation_history_attempts(self) -> QObject:
+        return self._manual.validation_attempts
+
+    @Property(QObject, notify=changed)
+    def validation_history_summary(self) -> QObject:
+        return self._manual.validation_summary
+
+    @Property(QObject, notify=changed)
+    def validation_history_corrections(self) -> QObject:
+        return self._manual.validation_corrections
+
+    @Property(str, notify=changed)
+    def settings_page_state(self) -> str:
+        return self._manual.settings_state.value
+
+    @Property(str, notify=changed)
+    def settings_status_text(self) -> str:
+        return self._manual.settings_status
+
+    @Property(str, notify=changed)
+    def settings_announcement_text(self) -> str:
+        return self._manual.settings_announcement
+
+    @Property(int, notify=changed)
+    def settings_announcement_revision(self) -> int:
+        return self._manual.settings_announcement_revision
+
+    @Property(str, notify=changed)
+    def settings_theme(self) -> str:
+        return self._manual.theme
+
+    @Property(str, notify=changed)
+    def settings_pending_theme(self) -> str:
+        return self._manual.pending_theme
+
+    @Property(bool, notify=changed)
+    def settings_context_panel_visible(self) -> bool:
+        return self._manual.context_panel_visible
+
+    @Property(bool, notify=changed)
+    def settings_pending_context_panel_visible(self) -> bool:
+        return self._manual.pending_context_panel_visible
+
+    @Property(bool, notify=changed)
+    def settings_save_enabled(self) -> bool:
+        return self._manual.settings_save_enabled
+
+    @Property(QObject, notify=changed)
+    def settings_configuration(self) -> QObject:
+        return self._manual.configuration_fields
+
+    @Property(QObject, notify=changed)
+    def settings_errors(self) -> QObject:
+        return self._manual.settings_errors
+
+    @Property(str, notify=changed)
+    def settings_configuration_fingerprint(self) -> str:
+        return self._manual.configuration_fingerprint
+
+    @Property(str, notify=changed)
     def state(self) -> str:
         return self._controller.state.value
 
@@ -1110,6 +1330,7 @@ class ShellFacade(QObject):
             return bool(
                 self._controller.active_execution_id is not None
                 or self._inspection.active_generation is not None
+                or self._manual.active_operation_id is not None
             )
         return self._controller.progress_visible
 
@@ -1143,22 +1364,191 @@ class ShellFacade(QObject):
         if not isinstance(result, (ShellReadyResult, RecoveryRequiredResult)):
             raise TypeError("Shell facade requires one successful preparation result.")
         self._inspection.set_initial_conversation(result.conversation_id)
+        self._manual.set_initial_conversation(result.conversation_id)
         self._controller.apply_preparation(result)
 
     @Slot(result=bool)
     def navigate_to_chat(self) -> bool:
         self._assert_gui_thread()
-        return self._inspection.navigate_to_chat()
+        previous = self._inspection.route
+        accepted = self._inspection.navigate_to_chat()
+        if accepted and previous is not Route.CHAT:
+            self._manual.navigate_away(Route.CHAT)
+        return accepted
 
     @Slot(result=bool)
     def navigate_to_context_inspection(self) -> bool:
         self._assert_gui_thread()
-        return self._inspection.navigate_to_context_inspection()
+        if not self._context_panel_visible:
+            return False
+        previous = self._inspection.route
+        accepted = self._inspection.navigate_to_context_inspection()
+        if accepted and previous is not Route.CONTEXT_INSPECTION:
+            self._manual.navigate_away(Route.CONTEXT_INSPECTION)
+        return accepted
 
     @Slot(result=bool)
     def refresh_context_inspection(self) -> bool:
         self._assert_gui_thread()
         return self._inspection.refresh()
+
+    def _navigate_to_manual(self, route: Route) -> bool:
+        if not self._inspection.navigate_away(route):
+            return False
+        if not self._manual.navigate(route):
+            raise RuntimeError("Shell route owners became inconsistent.")
+        return True
+
+    @Slot(result=bool)
+    def navigate_to_memory(self) -> bool:
+        self._assert_gui_thread()
+        return self._navigate_to_manual(Route.MEMORY)
+
+    @Slot(result=bool)
+    def refresh_memories(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.refresh(Route.MEMORY)
+
+    @Slot(str, result=bool)
+    def set_memory_filter(self, value: str) -> bool:
+        self._assert_gui_thread()
+        return self._manual.set_memory_filter(value)
+
+    @Slot(int, result=bool)
+    def select_memory(self, row: int) -> bool:
+        self._assert_gui_thread()
+        return self._manual.select_memory(row)
+
+    @Slot(result=bool)
+    def begin_create_memory(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.begin_create_memory()
+
+    @Slot(result=bool)
+    def begin_edit_memory(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.begin_edit_memory()
+
+    @Slot(str, str, str, str, str, str, str, str, str, result=bool)
+    def submit_memory_editor(
+        self,
+        memory_type: str,
+        scope: str,
+        content: str,
+        keywords_text: str,
+        topics_text: str,
+        importance: str,
+        confidence: str,
+        expiry: str,
+        source_description: str,
+    ) -> bool:
+        self._assert_gui_thread()
+        return self._manual.submit_memory_editor(
+            memory_type,
+            scope,
+            content,
+            keywords_text,
+            topics_text,
+            importance,
+            confidence,
+            expiry,
+            source_description,
+        )
+
+    @Slot(result=bool)
+    def return_from_duplicate_guidance(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.return_from_duplicate_guidance()
+
+    @Slot(result=bool)
+    def proceed_with_duplicate_create(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.proceed_with_duplicate_create()
+
+    @Slot(result=bool)
+    def request_memory_soft_delete(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.request_memory_soft_delete()
+
+    @Slot(result=bool)
+    def cancel_memory_soft_delete(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.cancel_memory_soft_delete()
+
+    @Slot(str, result=bool)
+    def confirm_memory_soft_delete(self, source_description: str) -> bool:
+        self._assert_gui_thread()
+        return self._manual.confirm_memory_soft_delete(source_description)
+
+    @Slot(result=bool)
+    def navigate_to_projects(self) -> bool:
+        self._assert_gui_thread()
+        return self._navigate_to_manual(Route.PROJECTS)
+
+    @Slot(result=bool)
+    def refresh_projects(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.refresh(Route.PROJECTS)
+
+    @Slot(int, result=bool)
+    def select_active_project(self, row: int) -> bool:
+        self._assert_gui_thread()
+        return self._manual.select_active_project(row)
+
+    @Slot(result=bool)
+    def clear_project_selection(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.clear_project_selection()
+
+    @Slot(int, result=bool)
+    def request_project_archive(self, row: int) -> bool:
+        self._assert_gui_thread()
+        return self._manual.request_project_archive(row)
+
+    @Slot(result=bool)
+    def cancel_project_archive(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.cancel_project_archive()
+
+    @Slot(result=bool)
+    def confirm_project_archive(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.confirm_project_archive()
+
+    @Slot(result=bool)
+    def navigate_to_validation_history(self) -> bool:
+        self._assert_gui_thread()
+        return self._navigate_to_manual(Route.VALIDATION_HISTORY)
+
+    @Slot(result=bool)
+    def refresh_validation_history(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.refresh(Route.VALIDATION_HISTORY)
+
+    @Slot(result=bool)
+    def navigate_to_settings(self) -> bool:
+        self._assert_gui_thread()
+        return self._navigate_to_manual(Route.SETTINGS)
+
+    @Slot(result=bool)
+    def refresh_settings(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.refresh(Route.SETTINGS)
+
+    @Slot(str, result=bool)
+    def set_pending_theme(self, value: str) -> bool:
+        self._assert_gui_thread()
+        return self._manual.set_pending_theme(value)
+
+    @Slot(bool, result=bool)
+    def set_pending_context_panel_visible(self, value: bool) -> bool:
+        self._assert_gui_thread()
+        return self._manual.set_pending_context_panel_visible(value)
+
+    @Slot(result=bool)
+    def save_settings(self) -> bool:
+        self._assert_gui_thread()
+        return self._manual.save_settings()
 
     @Slot(str, result=bool)
     def submit_exact(self, user_text: str) -> bool:
@@ -1178,6 +1568,7 @@ class ShellFacade(QObject):
         self._shutdown_requested = True
         self._controller.request_shutdown()
         self._inspection.request_shutdown()
+        self._manual.request_shutdown()
         self._maybe_emit_shutdown_ready()
 
     @Slot(object)
@@ -1200,9 +1591,29 @@ class ShellFacade(QObject):
         self._assert_gui_thread()
         self._inspection.receive_thread_finished(self.sender())
 
+    @Slot(object)
+    def _manual_terminal_received(self, envelope: object) -> None:
+        self._assert_gui_thread()
+        self._manual.receive_terminal(envelope)
+
+    @Slot()
+    def _manual_thread_finished(self) -> None:
+        self._assert_gui_thread()
+        self._manual.receive_thread_finished(self.sender())
+
     def _owned_worker_released(self) -> None:
         self._assert_gui_thread()
         self._maybe_emit_shutdown_ready()
+
+    def _manual_announcement(self, route: Route, text: str, revision: int) -> None:
+        self._assert_gui_thread()
+        signal = {
+            Route.MEMORY: self.memoryAnnouncement,
+            Route.PROJECTS: self.projectsAnnouncement,
+            Route.VALIDATION_HISTORY: self.validationHistoryAnnouncement,
+            Route.SETTINGS: self.settingsAnnouncement,
+        }[route]
+        signal.emit(text, revision)
 
     def _maybe_emit_shutdown_ready(self) -> None:
         if (
@@ -1210,8 +1621,13 @@ class ShellFacade(QObject):
             or self._shutdown_ready_emitted
             or self._controller.state is not ShellState.SHUTDOWN
             or self._inspection.state is not ContextInspectionPageState.SHUTDOWN
+            or self._manual.memory_state is not MemoryPageState.SHUTDOWN
+            or self._manual.projects_state is not ProjectsPageState.SHUTDOWN
+            or self._manual.validation_state is not ValidationHistoryPageState.SHUTDOWN
+            or self._manual.settings_state is not SettingsPageState.SHUTDOWN
             or self._controller.active_execution_id is not None
             or self._inspection.active_generation is not None
+            or self._manual.active_operation_id is not None
         ):
             return
         self._shutdown_ready_emitted = True
@@ -1221,6 +1637,7 @@ class ShellFacade(QObject):
         conversation_id = self._controller._conversation_id
         if isinstance(conversation_id, DomainId):
             self._inspection.current_conversation_terminal(conversation_id)
+            self._manual.current_conversation_terminal(conversation_id)
 
     def _current_conversation_changed(self, conversation_id: DomainId) -> bool:
         self._assert_gui_thread()
@@ -1229,16 +1646,29 @@ class ShellFacade(QObject):
         changed = self._inspection.current_conversation_changed(conversation_id)
         if not changed:
             raise RuntimeError("Shell conversation owners became inconsistent.")
+        self._manual.current_conversation_changed(conversation_id)
         return True
 
     def _current_project_changed(self) -> bool:
         self._assert_gui_thread()
         return self._inspection.current_project_changed()
 
+    def _apply_context_panel_visible(self, value: bool) -> None:
+        self._assert_gui_thread()
+        if not isinstance(value, bool):
+            raise TypeError("Context-panel visibility must be boolean.")
+        self._context_panel_visible = value
+        if not value and self._inspection.route is Route.CONTEXT_INSPECTION:
+            if not self._inspection.navigate_to_chat():
+                raise RuntimeError("Context inspection could not navigate away safely.")
+            self._manual.navigate_away(Route.CHAT)
+        self.changed.emit()
+
     def dispose(self) -> None:
         self._assert_gui_thread()
         self._controller.dispose()
         self._inspection.dispose()
+        self._manual.dispose()
 
 
 __all__ = ["ShellFacade"]

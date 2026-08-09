@@ -89,13 +89,13 @@ def test_task_0015_at_001_real_startup_creates_one_chat_shell(
             )
         )
         assert "CONTEXT_INSPECTION" in qml_text
-        for deferred_route in (
-            "Memory",
-            "Projects",
-            "Validation History",
-            "Settings",
+        for implemented_route in (
+            "MEMORY",
+            "PROJECTS",
+            "VALIDATION_HISTORY",
+            "SETTINGS",
         ):
-            assert deferred_route not in qml_text
+            assert implemented_route in qml_text
     finally:
         facade.request_shutdown()
         dispose(qt_application, facade, engine)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum, unique
 from pathlib import Path
 from typing import Literal, Protocol
 import unicodedata
@@ -19,6 +20,31 @@ type OutputShape = Literal[
     "NON_EMPTY_TEXT", "NUMBERED_LIST", "FENCED_CODE", "COMPARISON_LIST"
 ]
 type UnsupportedRequestCategory = Literal["IMAGE_GENERATION", "EXTERNAL_ACTION"]
+
+
+@unique
+class ConfigurationOrigin(StrEnum):
+    """Closed provenance for one normalized configuration scalar."""
+
+    PROCESS_OVERRIDE = "PROCESS_OVERRIDE"
+    LOCAL_YAML = "LOCAL_YAML"
+    DOCUMENTED_DEFAULT = "DOCUMENTED_DEFAULT"
+    FIXED_MVP = "FIXED_MVP"
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationScalarOrigin:
+    """Immutable internal origin metadata for one normalized scalar path."""
+
+    field_path: str
+    origin: ConfigurationOrigin
+
+    def __post_init__(self) -> None:
+        _required_text("ConfigurationScalarOrigin.field_path", self.field_path)
+        if not isinstance(self.origin, ConfigurationOrigin):
+            raise LifecycleInvariantError(
+                "ConfigurationScalarOrigin.origin must be canonical."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +277,20 @@ class ConfigurationSnapshot:
     logging: LoggingSettings
     configuration_directory: Path
     configuration_fingerprint: str
+    scalar_origins: tuple[ConfigurationScalarOrigin, ...] = ()
+
+    def __post_init__(self) -> None:
+        origins = tuple(self.scalar_origins)
+        if any(not isinstance(item, ConfigurationScalarOrigin) for item in origins):
+            raise LifecycleInvariantError(
+                "ConfigurationSnapshot.scalar_origins must be canonical."
+            )
+        field_paths = tuple(item.field_path for item in origins)
+        if len(field_paths) != len(set(field_paths)):
+            raise LifecycleInvariantError(
+                "ConfigurationSnapshot.scalar_origins must have unique paths."
+            )
+        object.__setattr__(self, "scalar_origins", origins)
 
 
 class ConfigurationLoader(Protocol):

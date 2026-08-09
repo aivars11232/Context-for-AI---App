@@ -25,7 +25,7 @@ Column {
               + collectionRoot.collectionDisplayText
         textFormat: Text.PlainText
         wrapMode: Text.Wrap
-        color: "#64748b"
+        color: palette.placeholderText
         font.pixelSize: 13
         Accessible.role: Accessible.StaticText
         Accessible.name: text
@@ -55,7 +55,7 @@ Column {
                 text: itemRoot.accessibleName
                 textFormat: Text.PlainText
                 wrapMode: Text.Wrap
-                color: "#1e293b"
+                color: palette.text
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
                 Accessible.ignored: true
@@ -95,7 +95,7 @@ Column {
                               + nestedCollection.displayText
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
-                        color: "#64748b"
+                        color: palette.placeholderText
                         font.pixelSize: 13
                         Accessible.role: Accessible.StaticText
                         Accessible.name: text
@@ -124,7 +124,7 @@ Column {
                                 text: nestedItem.accessibleName
                                 textFormat: Text.PlainText
                                 wrapMode: Text.Wrap
-                                color: "#334155"
+                                color: palette.text
                                 font.pixelSize: 13
                                 font.weight: Font.DemiBold
                                 Accessible.ignored: true

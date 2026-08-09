@@ -13,10 +13,12 @@ from PySide6.QtWidgets import QApplication
 
 import context_for_ai.main as main_module
 from context_for_ai.application import (
+    InitialUiPreferences,
     RecoveryRequiredResult,
     ShellPreparationFailureKind,
     ShellPreparationFailureResult,
     ShellReadyResult,
+    UiTheme,
 )
 from context_for_ai.domain.value_objects import DomainId
 from context_for_ai.infrastructure.configuration import (
@@ -83,6 +85,17 @@ class PreparationService:
         return self.result
 
 
+class PreferenceService:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.calls = 0
+
+    def execute(self) -> InitialUiPreferences:
+        self.calls += 1
+        self.events.append("load_preferences")
+        return InitialUiPreferences(UiTheme.SYSTEM, True)
+
+
 class StartupScope:
     def __init__(
         self,
@@ -92,6 +105,7 @@ class StartupScope:
         fail_close: bool = False,
     ) -> None:
         self.prepare_application_shell = PreparationService(result, events)
+        self.load_initial_ui_preferences = PreferenceService(events)
         self.events = events
         self.fail_close = fail_close
         self.close_calls = 0
@@ -395,7 +409,12 @@ def test_preparation_success_closes_before_returning() -> None:
     factory = ScopeFactory(ready, events)
 
     assert prepare_application_shell(factory) is ready
-    assert events == ["open_startup_scope", "prepare", "close_startup_scope"]
+    assert events == [
+        "open_startup_scope",
+        "prepare",
+        "load_preferences",
+        "close_startup_scope",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -511,6 +530,15 @@ class FakeApplication:
     def quit(self) -> None:
         self.events.append("quit")
 
+    def styleHints(self) -> object:
+        return self
+
+    def unsetColorScheme(self) -> None:
+        self.events.append("unset_color_scheme")
+
+    def setColorScheme(self, _: object) -> None:
+        self.events.append("set_color_scheme")
+
     def exec(self) -> int:
         self.events.append("exec")
         return 0
@@ -519,10 +547,12 @@ class FakeApplication:
 class FakeFacade:
     instances: list[FakeFacade] = []
 
-    def __init__(self, *_: object) -> None:
+    def __init__(self, *_: object, **kwargs: object) -> None:
         self.shutdownReady = FakeSignal()
         self.applied: list[object] = []
         self.disposed = 0
+        self.initial_preferences = kwargs.get("initial_preferences")
+        self.theme_applier = kwargs.get("theme_applier")
         type(self).instances.append(self)
 
     def apply_preparation(self, value: object) -> None:
@@ -572,6 +602,11 @@ def test_qml_failure_disposes_facade_and_never_publishes_recovery(
         )
     ]
     assert FakeFacade.instances[0].applied == []
+    assert FakeFacade.instances[0].initial_preferences == InitialUiPreferences(
+        UiTheme.SYSTEM,
+        True,
+    )
+    assert callable(FakeFacade.instances[0].theme_applier)
     assert FakeFacade.instances[0].disposed == 1
     assert factory.foreground_calls == 0
     assert factory.startup_scopes[0].close_calls == 1

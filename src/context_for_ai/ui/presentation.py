@@ -30,12 +30,75 @@ from context_for_ai.application import (
     SucceededResult,
     ValidationExhaustedResult,
 )
+from context_for_ai.application.contracts import (
+    InspectManualSettingsResult,
+    InspectMemoriesResult,
+    InspectProjectsResult,
+    InspectValidationHistoryResult,
+    MemoryMutationResult,
+    ProjectMutationResult,
+    UpdateManualSettingsResult,
+)
 
 
 @unique
 class Route(StrEnum):
     CHAT = "CHAT"
     CONTEXT_INSPECTION = "CONTEXT_INSPECTION"
+    MEMORY = "MEMORY"
+    PROJECTS = "PROJECTS"
+    VALIDATION_HISTORY = "VALIDATION_HISTORY"
+    SETTINGS = "SETTINGS"
+
+
+@unique
+class MemoryPageState(StrEnum):
+    INACTIVE = "INACTIVE"
+    LOADING = "LOADING"
+    READY = "READY"
+    EMPTY = "EMPTY"
+    EDITING = "EDITING"
+    DUPLICATE_GUIDANCE = "DUPLICATE_GUIDANCE"
+    DELETE_CONFIRMATION = "DELETE_CONFIRMATION"
+    SAVING = "SAVING"
+    LOAD_ERROR = "LOAD_ERROR"
+    MUTATION_ERROR = "MUTATION_ERROR"
+    SHUTDOWN = "SHUTDOWN"
+
+
+@unique
+class ProjectsPageState(StrEnum):
+    INACTIVE = "INACTIVE"
+    LOADING = "LOADING"
+    READY = "READY"
+    EMPTY = "EMPTY"
+    ARCHIVE_CONFIRMATION = "ARCHIVE_CONFIRMATION"
+    SAVING = "SAVING"
+    LOAD_ERROR = "LOAD_ERROR"
+    MUTATION_ERROR = "MUTATION_ERROR"
+    SHUTDOWN = "SHUTDOWN"
+
+
+@unique
+class ValidationHistoryPageState(StrEnum):
+    INACTIVE = "INACTIVE"
+    LOADING = "LOADING"
+    READY = "READY"
+    EMPTY = "EMPTY"
+    LOAD_ERROR = "LOAD_ERROR"
+    SHUTDOWN = "SHUTDOWN"
+
+
+@unique
+class SettingsPageState(StrEnum):
+    INACTIVE = "INACTIVE"
+    LOADING = "LOADING"
+    READY = "READY"
+    SAVING = "SAVING"
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+    LOAD_ERROR = "LOAD_ERROR"
+    MUTATION_ERROR = "MUTATION_ERROR"
+    SHUTDOWN = "SHUTDOWN"
 
 
 @unique
@@ -165,6 +228,165 @@ class InspectionTerminalEnvelope:
             ),
         ):
             raise ValueError("Inspection envelope requires a closed safe result.")
+
+
+@unique
+class ManualOperationKind(StrEnum):
+    INSPECT_MEMORIES = "INSPECT_MEMORIES"
+    CREATE_MEMORY = "CREATE_MEMORY"
+    EDIT_MEMORY = "EDIT_MEMORY"
+    SOFT_DELETE_MEMORY = "SOFT_DELETE_MEMORY"
+    INSPECT_PROJECTS = "INSPECT_PROJECTS"
+    SELECT_PROJECT = "SELECT_PROJECT"
+    ARCHIVE_PROJECT = "ARCHIVE_PROJECT"
+    INSPECT_VALIDATION_HISTORY = "INSPECT_VALIDATION_HISTORY"
+    INSPECT_MANUAL_SETTINGS = "INSPECT_MANUAL_SETTINGS"
+    UPDATE_MANUAL_SETTINGS = "UPDATE_MANUAL_SETTINGS"
+
+
+_MANUAL_EXECUTION_FAILURE_MESSAGES = {
+    ManualOperationKind.INSPECT_MEMORIES: "Memories could not be loaded safely.",
+    ManualOperationKind.CREATE_MEMORY: "Memory could not be created safely.",
+    ManualOperationKind.EDIT_MEMORY: "Memory could not be updated safely.",
+    ManualOperationKind.SOFT_DELETE_MEMORY: (
+        "Memory could not be soft-deleted safely."
+    ),
+    ManualOperationKind.INSPECT_PROJECTS: "Projects could not be loaded safely.",
+    ManualOperationKind.SELECT_PROJECT: (
+        "Project selection could not be changed safely."
+    ),
+    ManualOperationKind.ARCHIVE_PROJECT: (
+        "The project could not be archived safely."
+    ),
+    ManualOperationKind.INSPECT_VALIDATION_HISTORY: (
+        "Validation history could not be loaded safely."
+    ),
+    ManualOperationKind.INSPECT_MANUAL_SETTINGS: (
+        "Settings could not be loaded safely."
+    ),
+    ManualOperationKind.UPDATE_MANUAL_SETTINGS: (
+        "Settings could not be saved safely."
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ManualOperationsExecutionFailureView:
+    operation_kind: ManualOperationKind
+    result_kind: Literal["MANUAL_OPERATIONS_EXECUTION_FAILURE"] = field(
+        init=False,
+        default="MANUAL_OPERATIONS_EXECUTION_FAILURE",
+    )
+    code: Literal["MANUAL_OPERATION_EXECUTION_FAILED"] = field(
+        init=False,
+        default="MANUAL_OPERATION_EXECUTION_FAILED",
+    )
+    safe_message: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.operation_kind, ManualOperationKind):
+            raise ValueError("Manual execution failure kind must be closed.")
+        object.__setattr__(
+            self,
+            "safe_message",
+            _MANUAL_EXECUTION_FAILURE_MESSAGES[self.operation_kind],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SettingsApplyFailureView:
+    """Contain an unexpected GUI apply defect after settings were committed."""
+
+    result_kind: Literal["SETTINGS_APPLY_FAILURE"] = field(
+        init=False,
+        default="SETTINGS_APPLY_FAILURE",
+    )
+    code: Literal["SETTINGS_APPLY_FAILED"] = field(
+        init=False,
+        default="SETTINGS_APPLY_FAILED",
+    )
+    safe_message: Literal[
+        "Settings were saved but could not be applied completely. Restart the application to apply them."
+    ] = field(
+        init=False,
+        default=(
+            "Settings were saved but could not be applied completely. "
+            "Restart the application to apply them."
+        ),
+    )
+    persisted: Literal[True] = field(init=False, default=True)
+    restart_required: Literal[True] = field(init=False, default=True)
+
+
+type ManualOperationsResult = (
+    InspectMemoriesResult
+    | MemoryMutationResult
+    | InspectProjectsResult
+    | ProjectMutationResult
+    | InspectValidationHistoryResult
+    | InspectManualSettingsResult
+    | UpdateManualSettingsResult
+    | ManualOperationsExecutionFailureView
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ManualOperationsTerminalEnvelope:
+    operation_id: int
+    generation: int
+    route: Route
+    conversation_id: DomainId
+    operation_kind: ManualOperationKind
+    result: ManualOperationsResult
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.operation_id, int)
+            or isinstance(self.operation_id, bool)
+            or self.operation_id < 1
+            or not isinstance(self.generation, int)
+            or isinstance(self.generation, bool)
+            or self.generation < 1
+        ):
+            raise ValueError("Manual operation identifiers must be positive integers.")
+        if self.route not in {
+            Route.MEMORY,
+            Route.PROJECTS,
+            Route.VALIDATION_HISTORY,
+            Route.SETTINGS,
+        }:
+            raise ValueError("Manual operation route must be TASK-0017 owned.")
+        if not isinstance(self.conversation_id, DomainId) or not isinstance(
+            self.operation_kind, ManualOperationKind
+        ):
+            raise ValueError("Manual operation envelope ownership is invalid.")
+
+
+def contained_manual_operations_result(
+    operation_kind: ManualOperationKind,
+    result: object,
+) -> ManualOperationsResult:
+    """Contain one manual worker result to the operation's closed result family."""
+
+    expected = {
+        ManualOperationKind.INSPECT_MEMORIES: InspectMemoriesResult,
+        ManualOperationKind.CREATE_MEMORY: MemoryMutationResult,
+        ManualOperationKind.EDIT_MEMORY: MemoryMutationResult,
+        ManualOperationKind.SOFT_DELETE_MEMORY: MemoryMutationResult,
+        ManualOperationKind.INSPECT_PROJECTS: InspectProjectsResult,
+        ManualOperationKind.SELECT_PROJECT: ProjectMutationResult,
+        ManualOperationKind.ARCHIVE_PROJECT: ProjectMutationResult,
+        ManualOperationKind.INSPECT_VALIDATION_HISTORY: InspectValidationHistoryResult,
+        ManualOperationKind.INSPECT_MANUAL_SETTINGS: InspectManualSettingsResult,
+        ManualOperationKind.UPDATE_MANUAL_SETTINGS: UpdateManualSettingsResult,
+    }[operation_kind]
+    if isinstance(result, expected.__value__.__args__):
+        return result
+    if isinstance(result, ManualOperationsExecutionFailureView) and (
+        result.operation_kind is operation_kind
+    ):
+        return result
+    return ManualOperationsExecutionFailureView(operation_kind)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1131,12 +1353,22 @@ __all__ = [
     "InspectionScalarPresentation",
     "InspectionSectionPresentation",
     "InspectionTerminalEnvelope",
+    "ManualOperationKind",
+    "ManualOperationsExecutionFailureView",
+    "ManualOperationsResult",
+    "ManualOperationsTerminalEnvelope",
+    "MemoryPageState",
     "MonotonicCancellationToken",
+    "ProjectsPageState",
     "Route",
+    "SettingsPageState",
+    "SettingsApplyFailureView",
     "ShellState",
     "TerminalPresentationView",
+    "ValidationHistoryPageState",
     "contained_foreground_result",
     "contained_inspection_result",
+    "contained_manual_operations_result",
     "context_inspection_presentation_view",
     "inspection_result_presentation",
     "terminal_presentation_view",

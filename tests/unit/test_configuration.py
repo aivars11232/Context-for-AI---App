@@ -11,7 +11,7 @@ import pytest
 
 from conftest import read_yaml, write_yaml
 from context_for_ai.domain.enums import ProviderKind
-from context_for_ai.domain.ports.configuration import ModelSettings
+from context_for_ai.domain.ports.configuration import ConfigurationOrigin, ModelSettings
 from context_for_ai.infrastructure.configuration import (
     ConfigurationError,
     load_configuration,
@@ -128,6 +128,46 @@ def test_scalar_process_overrides_are_coerced_and_path_resolved(
     assert configuration.validation.max_revisions == 1
     assert configuration.logging.directory == fixture_application_root / "config" / "override-logs"
     assert configuration.logging.retention_days == 14
+
+
+def test_scalar_origins_preserve_precedence_without_changing_fingerprint(
+    fixture_application_root: Path,
+) -> None:
+    validation_path = fixture_application_root / "config" / "validation.yaml"
+    document = read_yaml(validation_path)
+    del document["validation"]["max_revisions"]
+    write_yaml(validation_path, document)
+
+    default_configuration = load_configuration(
+        application_root=fixture_application_root,
+        environ={},
+    )
+    override_configuration = load_configuration(
+        application_root=fixture_application_root,
+        environ={"CONTEXT_FOR_AI__VALIDATION__MAX_REVISIONS": "2"},
+    )
+    default_origins = {
+        item.field_path: item.origin for item in default_configuration.scalar_origins
+    }
+    override_origins = {
+        item.field_path: item.origin for item in override_configuration.scalar_origins
+    }
+
+    assert default_origins["app.data_directory"] is ConfigurationOrigin.LOCAL_YAML
+    assert (
+        default_origins["validation.max_revisions"]
+        is ConfigurationOrigin.DOCUMENTED_DEFAULT
+    )
+    assert (
+        override_origins["validation.max_revisions"]
+        is ConfigurationOrigin.PROCESS_OVERRIDE
+    )
+    assert default_configuration.validation.max_revisions == 2
+    assert override_configuration.validation.max_revisions == 2
+    assert (
+        default_configuration.configuration_fingerprint
+        == override_configuration.configuration_fingerprint
+    )
 
 
 @pytest.mark.parametrize(

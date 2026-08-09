@@ -70,10 +70,6 @@ def test_task_0016_qml_boundary_contains_only_presentation_owned_inputs() -> Non
         "packet_json",
         "SELECT ",
         "Timer {",
-        "MEMORY",
-        "PROJECTS",
-        "VALIDATION_HISTORY",
-        "SETTINGS",
     ):
         assert prohibited not in source
     assert "shellFacade.navigate_to_chat()" in source

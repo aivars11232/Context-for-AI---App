@@ -17,9 +17,9 @@ Frame {
     Accessible.description: ""
 
     background: Rectangle {
-        color: "#ffffff"
+        color: sectionRoot.palette.base
         radius: 10
-        border.color: "#dbe2ea"
+        border.color: sectionRoot.palette.mid
         border.width: 1
     }
 
@@ -32,7 +32,7 @@ Frame {
             text: sectionRoot.sectionAccessibleName
             textFormat: Text.PlainText
             wrapMode: Text.Wrap
-            color: "#172033"
+            color: palette.text
             font.pixelSize: 16
             font.weight: Font.DemiBold
             Accessible.ignored: true

@@ -123,6 +123,10 @@ def test_route_and_inspection_page_state_are_exact_closed_vocabularies() -> None
     assert tuple(value.value for value in Route) == (
         "CHAT",
         "CONTEXT_INSPECTION",
+        "MEMORY",
+        "PROJECTS",
+        "VALIDATION_HISTORY",
+        "SETTINGS",
     )
     assert tuple(value.value for value in ContextInspectionPageState) == (
         "INACTIVE",

@@ -50,6 +50,7 @@ from context_for_ai.domain.ports.context import (
     ContextPacketBuildRequest,
     ContextPacketBuildResult,
 )
+from context_for_ai.domain.ports.configuration import ConfigurationOrigin
 from context_for_ai.domain.ports.model_gateway import CancellationToken
 from context_for_ai.domain.ports.records import (
     EvaluationCase,
@@ -1882,6 +1883,1367 @@ class RunEvaluationOutput:
         object.__setattr__(self, "runs", tuple(self.runs))
 
 
+@unique
+class UiTheme(StrEnum):
+    """Closed Qt color-scheme preference stored by the presentation shell."""
+
+    SYSTEM = "SYSTEM"
+    LIGHT = "LIGHT"
+    DARK = "DARK"
+
+
+@unique
+class ManualSettingKey(StrEnum):
+    """The only settings keys editable by TASK-0017."""
+
+    UI_THEME = "ui.theme"
+    UI_CONTEXT_PANEL_VISIBLE = "ui.context_panel_visible"
+
+
+@unique
+class SettingsField(StrEnum):
+    """Closed settings form fields used by safe validation errors."""
+
+    THEME = "THEME"
+    CONTEXT_PANEL_VISIBLE = "CONTEXT_PANEL_VISIBLE"
+    LAST_SELECTED_CONVERSATION = "LAST_SELECTED_CONVERSATION"
+    UNKNOWN = "UNKNOWN"
+
+
+@unique
+class ConfigurationCategoryName(StrEnum):
+    """Exact ordered safe configuration category names."""
+
+    APPLICATION = "Application"
+    MODEL = "Model"
+    STORAGE = "Storage"
+    MEMORY = "Memory"
+    VALIDATION = "Validation"
+    LOGGING = "Logging"
+    SECURITY = "Security"
+
+
+_CONFIGURATION_ORIGIN_LABELS = {
+    ConfigurationOrigin.PROCESS_OVERRIDE: "Process override",
+    ConfigurationOrigin.LOCAL_YAML: "Local YAML",
+    ConfigurationOrigin.DOCUMENTED_DEFAULT: "Documented default",
+    ConfigurationOrigin.FIXED_MVP: "Fixed MVP rule",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class InitialUiPreferences:
+    """Validated preferences applied before QML is created."""
+
+    theme: UiTheme
+    context_panel_visible: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.theme, UiTheme):
+            raise LifecycleInvariantError("InitialUiPreferences.theme must be canonical.")
+        if not isinstance(self.context_panel_visible, bool):
+            raise LifecycleInvariantError(
+                "InitialUiPreferences.context_panel_visible must be boolean."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationOriginView:
+    """One closed origin value and its exact application-owned label."""
+
+    origin: ConfigurationOrigin
+    display_label: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.origin, ConfigurationOrigin):
+            raise LifecycleInvariantError(
+                "ConfigurationOriginView.origin must be canonical."
+            )
+        if self.display_label != _CONFIGURATION_ORIGIN_LABELS[self.origin]:
+            raise LifecycleInvariantError(
+                "ConfigurationOriginView.display_label must match its origin."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationFieldView:
+    """One allowlisted configuration field safe for presentation."""
+
+    ordinal: int
+    label: str
+    value_text: str
+    origin: ConfigurationOriginView
+
+    def __post_init__(self) -> None:
+        _positive_integer("ConfigurationFieldView.ordinal", self.ordinal)
+        _required_text("ConfigurationFieldView.label", self.label)
+        _required_text("ConfigurationFieldView.value_text", self.value_text)
+        if not isinstance(self.origin, ConfigurationOriginView):
+            raise LifecycleInvariantError(
+                "ConfigurationFieldView.origin must be a closed safe view."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationCategoryView:
+    """One ordered safe configuration category."""
+
+    ordinal: int
+    name: ConfigurationCategoryName
+    fields: tuple[ConfigurationFieldView, ...]
+
+    def __post_init__(self) -> None:
+        _positive_integer("ConfigurationCategoryView.ordinal", self.ordinal)
+        if not isinstance(self.name, ConfigurationCategoryName):
+            raise LifecycleInvariantError(
+                "ConfigurationCategoryView.name must be canonical."
+            )
+        fields = tuple(self.fields)
+        if not fields or any(
+            item.ordinal != index
+            for index, item in enumerate(fields, start=1)
+        ):
+            raise LifecycleInvariantError(
+                "ConfigurationCategoryView.fields must have consecutive ordinals."
+            )
+        object.__setattr__(self, "fields", fields)
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationInspectionView:
+    """The complete closed configuration projection for the settings page."""
+
+    categories: tuple[ConfigurationCategoryView, ...]
+    fingerprint: str
+    fingerprint_label: Literal["Configuration fingerprint"] = field(
+        init=False,
+        default="Configuration fingerprint",
+    )
+
+    def __post_init__(self) -> None:
+        categories = tuple(self.categories)
+        expected_names = tuple(ConfigurationCategoryName)
+        if (
+            tuple(item.name for item in categories) != expected_names
+            or any(
+                item.ordinal != index
+                for index, item in enumerate(categories, start=1)
+            )
+        ):
+            raise LifecycleInvariantError(
+                "ConfigurationInspectionView.categories must use exact canonical order."
+            )
+        if len(self.fingerprint) != 64 or any(
+            character not in "0123456789abcdef" for character in self.fingerprint
+        ):
+            raise LifecycleInvariantError(
+                "ConfigurationInspectionView.fingerprint must be 64 lowercase hex characters."
+            )
+        object.__setattr__(self, "categories", categories)
+
+
+@dataclass(frozen=True, slots=True)
+class ManualSettingsView:
+    """The two effective presentation preferences and safe configuration view."""
+
+    theme: UiTheme
+    context_panel_visible: bool
+    configuration: ConfigurationInspectionView
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.theme, UiTheme):
+            raise LifecycleInvariantError("ManualSettingsView.theme must be canonical.")
+        if not isinstance(self.context_panel_visible, bool):
+            raise LifecycleInvariantError(
+                "ManualSettingsView.context_panel_visible must be boolean."
+            )
+        if not isinstance(self.configuration, ConfigurationInspectionView):
+            raise LifecycleInvariantError(
+                "ManualSettingsView.configuration must be a closed safe view."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class InspectManualSettingsRequest:
+    """Request the closed settings and immutable configuration projection."""
+
+
+@dataclass(frozen=True, slots=True)
+class ManualSettingsReadyResult:
+    view: ManualSettingsView
+    result_kind: Literal["MANUAL_SETTINGS_READY"] = field(
+        init=False,
+        default="MANUAL_SETTINGS_READY",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ManualSettingsLoadFailureResult:
+    result_kind: Literal["MANUAL_SETTINGS_LOAD_FAILURE"] = field(
+        init=False,
+        default="MANUAL_SETTINGS_LOAD_FAILURE",
+    )
+    code: Literal["SETTINGS_LOAD_FAILED"] = field(
+        init=False,
+        default="SETTINGS_LOAD_FAILED",
+    )
+    safe_message: Literal["Settings could not be loaded safely."] = field(
+        init=False,
+        default="Settings could not be loaded safely.",
+    )
+
+
+type InspectManualSettingsResult = (
+    ManualSettingsReadyResult | ManualSettingsLoadFailureResult
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SettingUpdate:
+    """One requested setting value; application validation owns its key and type."""
+
+    key: str
+    value: object
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str):
+            raise LifecycleInvariantError("SettingUpdate.key must be exact text.")
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateManualSettingsRequest:
+    """A complete ordered set of changed editable settings."""
+
+    values: tuple[SettingUpdate, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", tuple(self.values))
+
+
+@dataclass(frozen=True, slots=True)
+class SettingsFieldError:
+    field: SettingsField
+    safe_message: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.field, SettingsField):
+            raise LifecycleInvariantError("SettingsFieldError.field must be canonical.")
+        expected = {
+            SettingsField.THEME: "Theme must be System, Light, or Dark.",
+            SettingsField.CONTEXT_PANEL_VISIBLE: (
+                "Show context inspection must be true or false."
+            ),
+            SettingsField.LAST_SELECTED_CONVERSATION: (
+                "This setting is not editable here."
+            ),
+            SettingsField.UNKNOWN: (
+                "Only permitted presentation settings can be changed."
+            ),
+        }[self.field]
+        if self.safe_message != expected:
+            raise LifecycleInvariantError(
+                "SettingsFieldError.safe_message must match its field."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ManualSettingsUpdateSucceededResult:
+    effective_theme: UiTheme
+    effective_context_panel_visible: bool
+    changed_keys: tuple[ManualSettingKey, ...]
+    result_kind: Literal["MANUAL_SETTINGS_UPDATE_SUCCEEDED"] = field(
+        init=False,
+        default="MANUAL_SETTINGS_UPDATE_SUCCEEDED",
+    )
+    safe_message: Literal["Settings saved and applied."] = field(
+        init=False,
+        default="Settings saved and applied.",
+    )
+    restart_required: Literal[False] = field(init=False, default=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.effective_theme, UiTheme):
+            raise LifecycleInvariantError(
+                "ManualSettingsUpdateSucceededResult theme must be canonical."
+            )
+        if not isinstance(self.effective_context_panel_visible, bool):
+            raise LifecycleInvariantError(
+                "ManualSettingsUpdateSucceededResult visibility must be boolean."
+            )
+        changed_keys = tuple(self.changed_keys)
+        expected = tuple(
+            key for key in ManualSettingKey if key in set(changed_keys)
+        )
+        if not changed_keys or changed_keys != expected:
+            raise LifecycleInvariantError(
+                "ManualSettingsUpdateSucceededResult keys must be unique and ordered."
+            )
+        object.__setattr__(self, "changed_keys", changed_keys)
+
+
+@dataclass(frozen=True, slots=True)
+class ManualSettingsValidationFailureResult:
+    code: Literal[
+        "SETTING_VALUE_INVALID",
+        "SETTING_KEY_NOT_EDITABLE",
+        "SETTING_KEY_UNKNOWN",
+    ]
+    errors: tuple[SettingsFieldError, ...]
+    result_kind: Literal["MANUAL_SETTINGS_VALIDATION_FAILURE"] = field(
+        init=False,
+        default="MANUAL_SETTINGS_VALIDATION_FAILURE",
+    )
+    safe_message: Literal["Review the highlighted settings."] = field(
+        init=False,
+        default="Review the highlighted settings.",
+    )
+
+    def __post_init__(self) -> None:
+        if self.code not in {
+            "SETTING_VALUE_INVALID",
+            "SETTING_KEY_NOT_EDITABLE",
+            "SETTING_KEY_UNKNOWN",
+        }:
+            raise LifecycleInvariantError(
+                "ManualSettingsValidationFailureResult.code must be closed."
+            )
+        errors = tuple(self.errors)
+        if not errors:
+            raise LifecycleInvariantError(
+                "ManualSettingsValidationFailureResult requires errors."
+            )
+        object.__setattr__(self, "errors", errors)
+
+
+@dataclass(frozen=True, slots=True)
+class ManualSettingsMutationFailureResult:
+    result_kind: Literal["MANUAL_SETTINGS_MUTATION_FAILURE"] = field(
+        init=False,
+        default="MANUAL_SETTINGS_MUTATION_FAILURE",
+    )
+    code: Literal["SETTINGS_UPDATE_FAILED"] = field(
+        init=False,
+        default="SETTINGS_UPDATE_FAILED",
+    )
+    safe_message: Literal["Settings could not be saved safely."] = field(
+        init=False,
+        default="Settings could not be saved safely.",
+    )
+
+
+type UpdateManualSettingsResult = (
+    ManualSettingsUpdateSucceededResult
+    | ManualSettingsValidationFailureResult
+    | ManualSettingsMutationFailureResult
+)
+
+
+@unique
+class MemoryOwnerKind(StrEnum):
+    CONVERSATION = "CONVERSATION"
+    PROJECT = "PROJECT"
+    GLOBAL = "GLOBAL"
+
+
+@unique
+class MemoryMutationOperation(StrEnum):
+    CREATE = "CREATE"
+    EDIT = "EDIT"
+    SOFT_DELETE = "SOFT_DELETE"
+
+
+@unique
+class MemoryDuplicateDecision(StrEnum):
+    CHECK = "CHECK"
+    PROCEED = "PROCEED"
+
+
+@unique
+class MemoryField(StrEnum):
+    TYPE = "TYPE"
+    SCOPE = "SCOPE"
+    OWNER = "OWNER"
+    IMPORTANCE = "IMPORTANCE"
+    CONFIDENCE = "CONFIDENCE"
+    EXPIRY = "EXPIRY"
+    SOURCE_DESCRIPTION = "SOURCE_DESCRIPTION"
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryOwnerView:
+    kind: MemoryOwnerKind
+    display_text: str
+    project_status: CanonicalLabelView | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, MemoryOwnerKind):
+            raise LifecycleInvariantError("MemoryOwnerView.kind must be canonical.")
+        _required_text("MemoryOwnerView.display_text", self.display_text)
+        if (self.kind is MemoryOwnerKind.PROJECT) != (
+            self.project_status is not None
+        ):
+            raise LifecycleInvariantError(
+                "Only a project memory owner carries project status."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class MemorySummaryView:
+    content: str
+    type: CanonicalLabelView
+    scope: CanonicalLabelView
+    owner: MemoryOwnerView
+    stored_status: CanonicalLabelView
+    effective_status: CanonicalLabelView
+    updated_at_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemorySourceView:
+    ordinal: int
+    kind: CanonicalLabelView
+    description: str
+    source_message: str
+    created_at_text: str
+    display_identity: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _positive_integer("MemorySourceView.ordinal", self.ordinal)
+        object.__setattr__(self, "display_identity", f"Source {self.ordinal}")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryRevisionView:
+    revision_number: int
+    operation: CanonicalLabelView
+    source_ordinal: int
+    content_snapshot: str
+    keywords: tuple[str, ...]
+    topic_terms: tuple[str, ...]
+    importance: InspectionScoreView
+    confidence: InspectionScoreView
+    expires_at_text: str
+    stored_status: CanonicalLabelView
+    updated_at_text: str
+    deleted_at_text: str
+    performed_by: CanonicalLabelView
+    performed_at_text: str
+    display_identity: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _positive_integer(
+            "MemoryRevisionView.revision_number", self.revision_number
+        )
+        _positive_integer("MemoryRevisionView.source_ordinal", self.source_ordinal)
+        object.__setattr__(self, "keywords", tuple(self.keywords))
+        object.__setattr__(self, "topic_terms", tuple(self.topic_terms))
+        object.__setattr__(
+            self,
+            "display_identity",
+            f"Revision {self.revision_number}",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryDetailsView:
+    content: str
+    keywords: tuple[str, ...]
+    topic_terms: tuple[str, ...]
+    importance: InspectionScoreView
+    confidence: InspectionScoreView
+    expires_at_text: str
+    created_at_text: str
+    updated_at_text: str
+    deleted_at_text: str
+    stored_status: CanonicalLabelView
+    effective_status: CanonicalLabelView
+    evaluated_at_text: str
+    sources: tuple[MemorySourceView, ...]
+    revisions: tuple[MemoryRevisionView, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "keywords", tuple(self.keywords))
+        object.__setattr__(self, "topic_terms", tuple(self.topic_terms))
+        sources = tuple(self.sources)
+        revisions = tuple(self.revisions)
+        if any(item.ordinal != index for index, item in enumerate(sources, 1)):
+            raise LifecycleInvariantError(
+                "MemoryDetailsView.sources must have consecutive ordinals."
+            )
+        if tuple(item.revision_number for item in revisions) != tuple(
+            range(1, len(revisions) + 1)
+        ):
+            raise LifecycleInvariantError(
+                "MemoryDetailsView.revisions must be consecutive."
+            )
+        object.__setattr__(self, "sources", sources)
+        object.__setattr__(self, "revisions", revisions)
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryInspectionItemView:
+    ordinal: int
+    summary: MemorySummaryView
+    details: MemoryDetailsView
+    private_memory_id: DomainId | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    display_identity: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _positive_integer("MemoryInspectionItemView.ordinal", self.ordinal)
+        object.__setattr__(self, "display_identity", f"Memory {self.ordinal}")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryInspectionCollectionView:
+    stored_status_filter: MemoryStatus
+    evaluated_at_text: str
+    items: tuple[MemoryInspectionItemView, ...]
+    selected_ordinal: int | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.stored_status_filter, MemoryStatus):
+            raise LifecycleInvariantError(
+                "MemoryInspectionCollectionView filter must be canonical."
+            )
+        items = tuple(self.items)
+        if not items or any(item.ordinal != index for index, item in enumerate(items, 1)):
+            raise LifecycleInvariantError(
+                "MemoryInspectionCollectionView requires ordered items."
+            )
+        if self.selected_ordinal is not None and self.selected_ordinal not in range(
+            1, len(items) + 1
+        ):
+            raise LifecycleInvariantError(
+                "MemoryInspectionCollectionView selection must identify an item."
+            )
+        object.__setattr__(self, "items", items)
+
+
+@dataclass(frozen=True, slots=True)
+class InspectMemoriesRequest:
+    stored_status: MemoryStatus
+    selected_memory_id: DomainId | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryInspectionReadyResult:
+    view: MemoryInspectionCollectionView
+    result_kind: Literal["MEMORY_INSPECTION_READY"] = field(
+        init=False, default="MEMORY_INSPECTION_READY"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryInspectionEmptyResult:
+    stored_status: MemoryStatus
+    evaluated_at_text: str
+    result_kind: Literal["MEMORY_INSPECTION_EMPTY"] = field(
+        init=False, default="MEMORY_INSPECTION_EMPTY"
+    )
+    safe_message: Literal["No memories match the selected filter."] = field(
+        init=False, default="No memories match the selected filter."
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryInspectionLoadFailureResult:
+    result_kind: Literal["MEMORY_INSPECTION_LOAD_FAILURE"] = field(
+        init=False, default="MEMORY_INSPECTION_LOAD_FAILURE"
+    )
+    code: Literal["MEMORY_INSPECTION_LOAD_FAILED"] = field(
+        init=False, default="MEMORY_INSPECTION_LOAD_FAILED"
+    )
+    safe_message: Literal["Memories could not be loaded safely."] = field(
+        init=False, default="Memories could not be loaded safely."
+    )
+
+
+type InspectMemoriesResult = (
+    MemoryInspectionReadyResult
+    | MemoryInspectionEmptyResult
+    | MemoryInspectionLoadFailureResult
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CreateMemoryPresentationRequest:
+    conversation_id: DomainId
+    memory_type: MemoryType
+    scope: MemoryScope
+    content: str
+    keywords: tuple[str, ...]
+    topic_terms: tuple[str, ...]
+    importance: Decimal
+    confidence: Decimal
+    expires_at: datetime | None
+    source_description: str
+    duplicate_decision: MemoryDuplicateDecision
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "keywords", tuple(self.keywords))
+        object.__setattr__(self, "topic_terms", tuple(self.topic_terms))
+
+
+@dataclass(frozen=True, slots=True)
+class EditMemoryPresentationRequest:
+    memory_id: DomainId
+    expected_revision_number: int
+    content: str
+    keywords: tuple[str, ...]
+    topic_terms: tuple[str, ...]
+    importance: Decimal
+    confidence: Decimal
+    expires_at: datetime | None
+    source_description: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "keywords", tuple(self.keywords))
+        object.__setattr__(self, "topic_terms", tuple(self.topic_terms))
+
+
+@dataclass(frozen=True, slots=True)
+class SoftDeleteMemoryPresentationRequest:
+    memory_id: DomainId
+    expected_revision_number: int
+    source_description: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryFieldError:
+    field: MemoryField
+    safe_message: str
+
+    def __post_init__(self) -> None:
+        expected = {
+            MemoryField.TYPE: "Choose a valid memory type.",
+            MemoryField.SCOPE: "Choose a valid memory scope.",
+            MemoryField.OWNER: "An active project is required for project memory.",
+            MemoryField.IMPORTANCE: "Importance must be between 0 and 1.",
+            MemoryField.CONFIDENCE: "Confidence must be between 0 and 1.",
+            MemoryField.EXPIRY: "Expiry must be a valid UTC date and time or empty.",
+            MemoryField.SOURCE_DESCRIPTION: (
+                "Describe why this memory is being changed."
+            ),
+        }
+        if not isinstance(self.field, MemoryField) or self.safe_message != expected[
+            self.field
+        ]:
+            raise LifecycleInvariantError(
+                "MemoryFieldError must use its exact closed message."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryDuplicateCandidateView:
+    ordinal: int
+    content: str
+    scope: CanonicalLabelView
+    owner_display_text: str
+    effective_status: CanonicalLabelView
+    updated_at_text: str
+    display_identity: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _positive_integer("MemoryDuplicateCandidateView.ordinal", self.ordinal)
+        object.__setattr__(self, "display_identity", f"Memory {self.ordinal}")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryMutationSucceededResult:
+    operation: MemoryMutationOperation
+    affected: MemoryInspectionItemView
+    revision_number: int
+    result_kind: Literal["MEMORY_MUTATION_SUCCEEDED"] = field(
+        init=False, default="MEMORY_MUTATION_SUCCEEDED"
+    )
+    safe_message: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _positive_integer(
+            "MemoryMutationSucceededResult.revision_number",
+            self.revision_number,
+        )
+        object.__setattr__(
+            self,
+            "safe_message",
+            {
+                MemoryMutationOperation.CREATE: "Memory created.",
+                MemoryMutationOperation.EDIT: "Memory updated.",
+                MemoryMutationOperation.SOFT_DELETE: "Memory soft-deleted.",
+            }[self.operation],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryDuplicateGuidanceResult:
+    candidates: tuple[MemoryDuplicateCandidateView, ...]
+    result_kind: Literal["MEMORY_DUPLICATE_GUIDANCE"] = field(
+        init=False, default="MEMORY_DUPLICATE_GUIDANCE"
+    )
+    safe_message: Literal["Possible duplicate memories were found."] = field(
+        init=False, default="Possible duplicate memories were found."
+    )
+
+    def __post_init__(self) -> None:
+        candidates = tuple(self.candidates)
+        if not candidates or any(
+            item.ordinal != index for index, item in enumerate(candidates, 1)
+        ):
+            raise LifecycleInvariantError(
+                "MemoryDuplicateGuidanceResult requires ordered candidates."
+            )
+        object.__setattr__(self, "candidates", candidates)
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryMutationValidationFailureResult:
+    errors: tuple[MemoryFieldError, ...]
+    result_kind: Literal["MEMORY_MUTATION_VALIDATION_FAILURE"] = field(
+        init=False, default="MEMORY_MUTATION_VALIDATION_FAILURE"
+    )
+    code: Literal["MEMORY_INPUT_INVALID"] = field(
+        init=False, default="MEMORY_INPUT_INVALID"
+    )
+    safe_message: Literal["Review the highlighted memory fields."] = field(
+        init=False, default="Review the highlighted memory fields."
+    )
+
+    def __post_init__(self) -> None:
+        errors = tuple(self.errors)
+        if not errors:
+            raise LifecycleInvariantError(
+                "Memory validation failure requires at least one field error."
+            )
+        object.__setattr__(self, "errors", errors)
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryMutationStaleResult:
+    result_kind: Literal["MEMORY_MUTATION_STALE"] = field(
+        init=False, default="MEMORY_MUTATION_STALE"
+    )
+    code: Literal["MEMORY_REVISION_CONFLICT"] = field(
+        init=False, default="MEMORY_REVISION_CONFLICT"
+    )
+    safe_message: Literal[
+        "This memory changed. Review the latest version before trying again."
+    ] = field(
+        init=False,
+        default="This memory changed. Review the latest version before trying again.",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryMutationRejectedResult:
+    code: Literal[
+        "MEMORY_NOT_FOUND", "MEMORY_DELETED", "MEMORY_SCOPE_UNAVAILABLE"
+    ]
+    safe_message: str = field(init=False)
+    result_kind: Literal["MEMORY_MUTATION_REJECTED"] = field(
+        init=False, default="MEMORY_MUTATION_REJECTED"
+    )
+
+    def __post_init__(self) -> None:
+        messages = {
+            "MEMORY_NOT_FOUND": "The memory is no longer available.",
+            "MEMORY_DELETED": (
+                "Deleted memories cannot be changed or deleted again."
+            ),
+            "MEMORY_SCOPE_UNAVAILABLE": (
+                "An active project is required for project memory."
+            ),
+        }
+        if self.code not in messages:
+            raise LifecycleInvariantError(
+                "MemoryMutationRejectedResult.code must be closed."
+            )
+        object.__setattr__(self, "safe_message", messages[self.code])
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryMutationFailureResult:
+    safe_message: Literal[
+        "Memory could not be created safely.",
+        "Memory could not be updated safely.",
+        "Memory could not be soft-deleted safely.",
+    ]
+    result_kind: Literal["MEMORY_MUTATION_FAILURE"] = field(
+        init=False, default="MEMORY_MUTATION_FAILURE"
+    )
+    code: Literal["MEMORY_MUTATION_FAILED"] = field(
+        init=False, default="MEMORY_MUTATION_FAILED"
+    )
+
+    def __post_init__(self) -> None:
+        if self.safe_message not in {
+            "Memory could not be created safely.",
+            "Memory could not be updated safely.",
+            "Memory could not be soft-deleted safely.",
+        }:
+            raise LifecycleInvariantError(
+                "MemoryMutationFailureResult.safe_message must be closed."
+            )
+
+
+type MemoryMutationResult = (
+    MemoryMutationSucceededResult
+    | MemoryDuplicateGuidanceResult
+    | MemoryMutationValidationFailureResult
+    | MemoryMutationStaleResult
+    | MemoryMutationRejectedResult
+    | MemoryMutationFailureResult
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectAssociationView:
+    name: str
+    status: CanonicalLabelView
+    display_text: str
+
+    def __post_init__(self) -> None:
+        _required_text("ProjectAssociationView.name", self.name)
+        expected = (
+            self.name
+            if self.status.code == "ACTIVE"
+            else f"{self.name} — Archived (current association)"
+        )
+        if self.display_text != expected:
+            raise LifecycleInvariantError(
+                "ProjectAssociationView.display_text must match project status."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectItemView:
+    ordinal: int
+    name: str
+    description: str
+    status: CanonicalLabelView
+    created_at_text: str
+    updated_at_text: str
+    is_current_association: bool
+    archive_eligible: bool
+    archive_ineligible_text: str
+    private_project_id: DomainId | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    display_identity: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _positive_integer("ProjectItemView.ordinal", self.ordinal)
+        _required_text("ProjectItemView.name", self.name)
+        if not isinstance(self.is_current_association, bool) or not isinstance(
+            self.archive_eligible, bool
+        ):
+            raise LifecycleInvariantError(
+                "ProjectItemView flags must be boolean."
+            )
+        expected_ineligible = (
+            ""
+            if self.archive_eligible
+            else "This project cannot be archived while it has an active request."
+            if self.status.code == "ACTIVE"
+            else ""
+        )
+        if self.archive_ineligible_text != expected_ineligible:
+            raise LifecycleInvariantError(
+                "ProjectItemView archive text must match eligibility."
+            )
+        object.__setattr__(self, "display_identity", f"Project {self.ordinal}")
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectInspectionView:
+    active_projects: tuple[ProjectItemView, ...]
+    archived_projects: tuple[ProjectItemView, ...]
+    current_association: ProjectAssociationView | None
+    conversation_state_version: int
+
+    def __post_init__(self) -> None:
+        active = tuple(self.active_projects)
+        archived = tuple(self.archived_projects)
+        if any(item.ordinal != index for index, item in enumerate(active, 1)) or any(
+            item.ordinal != index for index, item in enumerate(archived, 1)
+        ):
+            raise LifecycleInvariantError(
+                "ProjectInspectionView project ordinals must be consecutive per list."
+            )
+        _non_negative_integer(
+            "ProjectInspectionView.conversation_state_version",
+            self.conversation_state_version,
+        )
+        object.__setattr__(self, "active_projects", active)
+        object.__setattr__(self, "archived_projects", archived)
+
+
+@dataclass(frozen=True, slots=True)
+class InspectProjectsRequest:
+    conversation_id: DomainId
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectInspectionReadyResult:
+    view: ProjectInspectionView
+    result_kind: Literal["PROJECT_INSPECTION_READY"] = field(
+        init=False, default="PROJECT_INSPECTION_READY"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectInspectionEmptyResult:
+    result_kind: Literal["PROJECT_INSPECTION_EMPTY"] = field(
+        init=False, default="PROJECT_INSPECTION_EMPTY"
+    )
+    safe_message: Literal["No projects are available."] = field(
+        init=False, default="No projects are available."
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectInspectionLoadFailureResult:
+    result_kind: Literal["PROJECT_INSPECTION_LOAD_FAILURE"] = field(
+        init=False, default="PROJECT_INSPECTION_LOAD_FAILURE"
+    )
+    code: Literal["PROJECT_INSPECTION_LOAD_FAILED"] = field(
+        init=False, default="PROJECT_INSPECTION_LOAD_FAILED"
+    )
+    safe_message: Literal["Projects could not be loaded safely."] = field(
+        init=False, default="Projects could not be loaded safely."
+    )
+
+
+type InspectProjectsResult = (
+    ProjectInspectionReadyResult
+    | ProjectInspectionEmptyResult
+    | ProjectInspectionLoadFailureResult
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SelectProjectPresentationRequest:
+    conversation_id: DomainId
+    project_id: DomainId | None
+    expected_state_version: int
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveProjectPresentationRequest:
+    project_id: DomainId
+    is_current_association: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectSelectionChangedResult:
+    current_association: ProjectAssociationView | None
+    conversation_state_version: int
+    result_kind: Literal["PROJECT_SELECTION_CHANGED"] = field(
+        init=False, default="PROJECT_SELECTION_CHANGED"
+    )
+    safe_message: Literal["Project selection changed."] = field(
+        init=False, default="Project selection changed."
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectSelectionUnchangedResult:
+    current_association: ProjectAssociationView | None
+    conversation_state_version: int
+    result_kind: Literal["PROJECT_SELECTION_UNCHANGED"] = field(
+        init=False, default="PROJECT_SELECTION_UNCHANGED"
+    )
+    safe_message: Literal["Project selection is unchanged."] = field(
+        init=False, default="Project selection is unchanged."
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectArchiveSucceededResult:
+    archived_project: ProjectItemView
+    result_kind: Literal["PROJECT_ARCHIVE_SUCCEEDED"] = field(
+        init=False, default="PROJECT_ARCHIVE_SUCCEEDED"
+    )
+    safe_message: Literal["Project archived."] = field(
+        init=False, default="Project archived."
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectArchiveBlockedResult:
+    result_kind: Literal["PROJECT_ARCHIVE_BLOCKED"] = field(
+        init=False, default="PROJECT_ARCHIVE_BLOCKED"
+    )
+    code: Literal["PROJECT_HAS_ACTIVE_REQUEST"] = field(
+        init=False, default="PROJECT_HAS_ACTIVE_REQUEST"
+    )
+    safe_message: Literal[
+        "This project cannot be archived while it has an active request."
+    ] = field(
+        init=False,
+        default="This project cannot be archived while it has an active request.",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectMutationStaleResult:
+    result_kind: Literal["PROJECT_MUTATION_STALE"] = field(
+        init=False, default="PROJECT_MUTATION_STALE"
+    )
+    code: Literal["PROJECT_STATE_CONFLICT"] = field(
+        init=False, default="PROJECT_STATE_CONFLICT"
+    )
+    safe_message: Literal[
+        "The project selection changed. Refresh projects before trying again."
+    ] = field(
+        init=False,
+        default="The project selection changed. Refresh projects before trying again.",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectMutationRejectedResult:
+    code: Literal["ARCHIVED_PROJECT_NOT_SELECTABLE", "PROJECT_NOT_ARCHIVABLE"]
+    safe_message: str = field(init=False)
+    result_kind: Literal["PROJECT_MUTATION_REJECTED"] = field(
+        init=False, default="PROJECT_MUTATION_REJECTED"
+    )
+
+    def __post_init__(self) -> None:
+        messages = {
+            "ARCHIVED_PROJECT_NOT_SELECTABLE": (
+                "Archived projects cannot be selected."
+            ),
+            "PROJECT_NOT_ARCHIVABLE": (
+                "The project is no longer available for archiving."
+            ),
+        }
+        if self.code not in messages:
+            raise LifecycleInvariantError(
+                "ProjectMutationRejectedResult.code must be closed."
+            )
+        object.__setattr__(self, "safe_message", messages[self.code])
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectMutationFailureResult:
+    code: Literal["PROJECT_SELECTION_FAILED", "PROJECT_ARCHIVE_FAILED"]
+    safe_message: str = field(init=False)
+    result_kind: Literal["PROJECT_MUTATION_FAILURE"] = field(
+        init=False, default="PROJECT_MUTATION_FAILURE"
+    )
+
+    def __post_init__(self) -> None:
+        messages = {
+            "PROJECT_SELECTION_FAILED": (
+                "Project selection could not be changed safely."
+            ),
+            "PROJECT_ARCHIVE_FAILED": "The project could not be archived safely.",
+        }
+        if self.code not in messages:
+            raise LifecycleInvariantError(
+                "ProjectMutationFailureResult.code must be closed."
+            )
+        object.__setattr__(self, "safe_message", messages[self.code])
+
+
+type ProjectMutationResult = (
+    ProjectSelectionChangedResult
+    | ProjectSelectionUnchangedResult
+    | ProjectArchiveSucceededResult
+    | ProjectArchiveBlockedResult
+    | ProjectMutationStaleResult
+    | ProjectMutationRejectedResult
+    | ProjectMutationFailureResult
+)
+
+
+class InspectProjects(Protocol):
+    def execute(self, request: InspectProjectsRequest) -> InspectProjectsResult: ...
+
+
+class SelectProjectForPresentation(Protocol):
+    def execute(
+        self, request: SelectProjectPresentationRequest
+    ) -> ProjectMutationResult: ...
+
+
+class ArchiveProjectForPresentation(Protocol):
+    def execute(
+        self, request: ArchiveProjectPresentationRequest
+    ) -> ProjectMutationResult: ...
+
+
+@unique
+class ValidationAttemptOutcome(StrEnum):
+    WAITING = "WAITING"
+    IN_PROGRESS = "IN_PROGRESS"
+    VALIDATED = "VALIDATED"
+    TRANSPORT_FAILURE = "TRANSPORT_FAILURE"
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationHistoryCollection[T]:
+    items: tuple[T, ...]
+    display_text: str
+
+    def __post_init__(self) -> None:
+        items = tuple(self.items)
+        expected = "" if items else "Validation has not started for this request."
+        if self.display_text != expected:
+            raise LifecycleInvariantError(
+                "ValidationHistoryCollection requires its exact empty text."
+            )
+        object.__setattr__(self, "items", items)
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationAttemptReportView:
+    status: CanonicalLabelView
+    score: InspectionScoreView
+    violations: tuple[SafeValidationViolationView, ...]
+    evidence: tuple[SafeValidationEvidenceView, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "violations", tuple(self.violations))
+        object.__setattr__(self, "evidence", tuple(self.evidence))
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationAttemptFailureView:
+    stage: CanonicalLabelView
+    code: CanonicalLabelView
+    safe_message: str
+
+    def __post_init__(self) -> None:
+        _required_text("ValidationAttemptFailureView.safe_message", self.safe_message)
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationHistoryAttemptView:
+    attempt_number: int
+    purpose: CanonicalLabelView
+    outcome: CanonicalLabelView
+    validation: ValidationAttemptReportView | None
+    validation_display_text: str
+    safe_transport_failure: ValidationAttemptFailureView | None
+    correction_from_previous: int | None
+    display_identity: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _positive_integer(
+            "ValidationHistoryAttemptView.attempt_number", self.attempt_number
+        )
+        if self.correction_from_previous is not None:
+            _positive_integer(
+                "ValidationHistoryAttemptView.correction_from_previous",
+                self.correction_from_previous,
+            )
+        outcome = self.outcome.code
+        if outcome == ValidationAttemptOutcome.VALIDATED.value:
+            valid = (
+                self.validation is not None
+                and self.safe_transport_failure is None
+                and self.validation_display_text == ""
+            )
+        elif outcome in {
+            ValidationAttemptOutcome.WAITING.value,
+            ValidationAttemptOutcome.IN_PROGRESS.value,
+        }:
+            valid = (
+                self.validation is None
+                and self.safe_transport_failure is None
+                and self.validation_display_text
+                == "Validation has not completed for this attempt."
+            )
+        elif outcome == ValidationAttemptOutcome.TRANSPORT_FAILURE.value:
+            valid = (
+                self.validation is None
+                and self.safe_transport_failure is not None
+                and self.validation_display_text
+                == "Validation was not applicable to this attempt."
+            )
+        else:
+            valid = False
+        if not valid:
+            raise LifecycleInvariantError(
+                "ValidationHistoryAttemptView outcome fields are inconsistent."
+            )
+        object.__setattr__(
+            self,
+            "display_identity",
+            f"Attempt {self.attempt_number}",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectionHistoryView:
+    correction_number: int
+    from_attempt_number: int
+    to_attempt_number: int
+    display_identity: str = field(init=False)
+    display_text: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _positive_integer(
+            "CorrectionHistoryView.correction_number", self.correction_number
+        )
+        if (
+            self.from_attempt_number != self.correction_number
+            or self.to_attempt_number != self.correction_number + 1
+        ):
+            raise LifecycleInvariantError(
+                "CorrectionHistoryView must link adjacent display attempts."
+            )
+        object.__setattr__(
+            self,
+            "display_identity",
+            f"Correction {self.correction_number}",
+        )
+        object.__setattr__(
+            self,
+            "display_text",
+            (
+                f"Correction {self.correction_number}: attempt "
+                f"{self.from_attempt_number} to attempt {self.to_attempt_number}."
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationHistoryView:
+    target: InspectionTargetView
+    attempts: ValidationHistoryCollection[ValidationHistoryAttemptView]
+    corrections: tuple[CorrectionHistoryView, ...]
+    correction_count: int
+    terminal_status: SafeTerminalStatusView | None
+
+    def __post_init__(self) -> None:
+        corrections = tuple(self.corrections)
+        if self.correction_count != len(corrections) or self.correction_count not in range(
+            3
+        ):
+            raise LifecycleInvariantError(
+                "ValidationHistoryView correction count must match its rows."
+            )
+        object.__setattr__(self, "corrections", corrections)
+
+
+@dataclass(frozen=True, slots=True)
+class InspectValidationHistoryRequest:
+    conversation_id: DomainId
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationHistoryReadyResult:
+    view: ValidationHistoryView
+    result_kind: Literal["VALIDATION_HISTORY_READY"] = field(
+        init=False, default="VALIDATION_HISTORY_READY"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationHistoryEmptyResult:
+    result_kind: Literal["VALIDATION_HISTORY_EMPTY"] = field(
+        init=False, default="VALIDATION_HISTORY_EMPTY"
+    )
+    safe_message: Literal[
+        "No validation history is available for this conversation."
+    ] = field(
+        init=False,
+        default="No validation history is available for this conversation.",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationHistoryLoadFailureResult:
+    result_kind: Literal["VALIDATION_HISTORY_LOAD_FAILURE"] = field(
+        init=False, default="VALIDATION_HISTORY_LOAD_FAILURE"
+    )
+    code: Literal["VALIDATION_HISTORY_LOAD_FAILED"] = field(
+        init=False, default="VALIDATION_HISTORY_LOAD_FAILED"
+    )
+    safe_message: Literal["Validation history could not be loaded safely."] = field(
+        init=False, default="Validation history could not be loaded safely."
+    )
+
+
+type InspectValidationHistoryResult = (
+    ValidationHistoryReadyResult
+    | ValidationHistoryEmptyResult
+    | ValidationHistoryLoadFailureResult
+)
+
+
+class InspectValidationHistory(Protocol):
+    def execute(
+        self, request: InspectValidationHistoryRequest
+    ) -> InspectValidationHistoryResult: ...
+
+
+class InspectMemories(Protocol):
+    def execute(self, request: InspectMemoriesRequest) -> InspectMemoriesResult: ...
+
+
+class CreateMemoryPresentation(Protocol):
+    def execute(
+        self, request: CreateMemoryPresentationRequest
+    ) -> MemoryMutationResult: ...
+
+
+class EditMemoryPresentation(Protocol):
+    def execute(
+        self, request: EditMemoryPresentationRequest
+    ) -> MemoryMutationResult: ...
+
+
+class SoftDeleteMemoryPresentation(Protocol):
+    def execute(
+        self, request: SoftDeleteMemoryPresentationRequest
+    ) -> MemoryMutationResult: ...
+
+
+class CreateMemoryWithGuidance(CreateMemoryPresentation, Protocol):
+    """Exact TASK-0017 create-and-duplicate-guidance inward surface."""
+
+
+class EditMemoryForPresentation(EditMemoryPresentation, Protocol):
+    """Exact TASK-0017 guarded edit inward surface."""
+
+
+class SoftDeleteMemoryForPresentation(SoftDeleteMemoryPresentation, Protocol):
+    """Exact TASK-0017 guarded soft-delete inward surface."""
+
+
+class LoadInitialUiPreferences(Protocol):
+    """Load and validate the bounded pre-QML presentation preferences."""
+
+    def execute(self) -> InitialUiPreferences: ...
+
+
+class InspectManualSettings(Protocol):
+    """Return the closed settings and safe configuration projection."""
+
+    def execute(
+        self,
+        request: InspectManualSettingsRequest,
+    ) -> InspectManualSettingsResult: ...
+
+
+class UpdateManualSettings(Protocol):
+    """Atomically update only changed TASK-0017 presentation settings."""
+
+    def execute(
+        self,
+        request: UpdateManualSettingsRequest,
+    ) -> UpdateManualSettingsResult: ...
+
+
 class ProcessUserMessage(Protocol):
     """Coordinate one idempotent foreground message submission."""
 
@@ -1918,9 +3280,10 @@ class InspectContext(Protocol):
 
 
 class StartupApplicationScope(Protocol):
-    """Own the startup connection and its sole preparation use case."""
+    """Own startup preparation and one bounded preference read."""
 
     prepare_application_shell: PrepareApplicationShell
+    load_initial_ui_preferences: LoadInitialUiPreferences
 
     def close(self) -> None: ...
 
@@ -1942,6 +3305,23 @@ class InspectionApplicationScope(Protocol):
     def close(self) -> None: ...
 
 
+class ManualOperationsApplicationScope(Protocol):
+    """Own exactly the ten TASK-0017 use cases on one finite worker connection."""
+
+    inspect_memories: InspectMemories
+    create_memory_with_guidance: CreateMemoryWithGuidance
+    edit_memory_for_presentation: EditMemoryForPresentation
+    soft_delete_memory_for_presentation: SoftDeleteMemoryForPresentation
+    inspect_projects: InspectProjects
+    select_project_for_presentation: SelectProjectForPresentation
+    archive_project_for_presentation: ArchiveProjectForPresentation
+    inspect_validation_history: InspectValidationHistory
+    inspect_manual_settings: InspectManualSettings
+    update_manual_settings: UpdateManualSettings
+
+    def close(self) -> None: ...
+
+
 class ShellApplicationScopeFactory(Protocol):
     """Create fresh calling-thread-owned finite shell application scopes."""
 
@@ -1950,6 +3330,8 @@ class ShellApplicationScopeFactory(Protocol):
     def open_foreground_scope(self) -> ForegroundApplicationScope: ...
 
     def open_inspection_scope(self) -> InspectionApplicationScope: ...
+
+    def open_manual_operations_scope(self) -> ManualOperationsApplicationScope: ...
 
 
 class IdempotencyKeyFactory(Protocol):

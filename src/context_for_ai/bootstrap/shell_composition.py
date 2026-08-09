@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -11,11 +12,28 @@ import sqlite3
 import threading
 
 from context_for_ai.application import (
+    ArchiveProjectForPresentationService,
+    ArchiveProjectService,
     ContextPacketStageService,
+    CreateMemoryPresentationService,
+    CreateMemoryService,
+    EditMemoryPresentationService,
+    EditMemoryService,
     InspectContextService,
+    InspectManualSettingsService,
+    InspectMemoriesService,
+    InspectProjectsService,
+    InspectValidationHistoryService,
+    ListMemoriesService,
+    LoadInitialUiPreferencesService,
     PrepareApplicationShellService,
     ProcessUserMessageService,
     RecoverProcessingRunService,
+    SelectProjectForPresentationService,
+    SelectProjectService,
+    SoftDeleteMemoryPresentationService,
+    SoftDeleteMemoryService,
+    UpdateManualSettingsService,
 )
 from context_for_ai.bootstrap.contracts import (
     DeterministicComponents,
@@ -166,6 +184,7 @@ def configuration_snapshot_from(
         ),
         configuration_directory=loaded.configuration_directory,
         configuration_fingerprint=loaded.configuration_fingerprint,
+        scalar_origins=loaded.scalar_origins,
     )
 
 
@@ -219,16 +238,26 @@ class _OwnedSQLiteScope:
         self._closed = True
 
 
+class _OuterOwnedTransactionBoundary:
+    """Join a manual adapter's already-open connection-local transaction."""
+
+    @contextmanager
+    def transaction(self):  # type: ignore[no-untyped-def]
+        yield
+
+
 class _StartupScope(_OwnedSQLiteScope):
-    __slots__ = ("prepare_application_shell",)
+    __slots__ = ("load_initial_ui_preferences", "prepare_application_shell")
 
     def __init__(
         self,
         connection: sqlite3.Connection,
         prepare_application_shell: PrepareApplicationShellService,
+        load_initial_ui_preferences: LoadInitialUiPreferencesService,
     ) -> None:
         super().__init__(connection)
         self.prepare_application_shell = prepare_application_shell
+        self.load_initial_ui_preferences = load_initial_ui_preferences
 
 
 class _ForegroundScope(_OwnedSQLiteScope):
@@ -255,6 +284,48 @@ class _InspectionScope(_OwnedSQLiteScope):
     ) -> None:
         super().__init__(connection)
         self.inspect_context = inspect_context
+
+
+class _ManualOperationsScope(_OwnedSQLiteScope):
+    __slots__ = (
+        "archive_project_for_presentation",
+        "create_memory_with_guidance",
+        "edit_memory_for_presentation",
+        "inspect_manual_settings",
+        "inspect_memories",
+        "inspect_projects",
+        "inspect_validation_history",
+        "select_project_for_presentation",
+        "soft_delete_memory_for_presentation",
+        "update_manual_settings",
+    )
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        inspect_memories: InspectMemoriesService,
+        create_memory_with_guidance: CreateMemoryPresentationService,
+        edit_memory_for_presentation: EditMemoryPresentationService,
+        soft_delete_memory_for_presentation: SoftDeleteMemoryPresentationService,
+        inspect_projects: InspectProjectsService,
+        select_project_for_presentation: SelectProjectForPresentationService,
+        archive_project_for_presentation: ArchiveProjectForPresentationService,
+        inspect_validation_history: InspectValidationHistoryService,
+        inspect_manual_settings: InspectManualSettingsService,
+        update_manual_settings: UpdateManualSettingsService,
+    ) -> None:
+        super().__init__(connection)
+        self.inspect_memories = inspect_memories
+        self.create_memory_with_guidance = create_memory_with_guidance
+        self.edit_memory_for_presentation = edit_memory_for_presentation
+        self.soft_delete_memory_for_presentation = soft_delete_memory_for_presentation
+        self.inspect_projects = inspect_projects
+        self.select_project_for_presentation = select_project_for_presentation
+        self.archive_project_for_presentation = archive_project_for_presentation
+        self.inspect_validation_history = inspect_validation_history
+        self.inspect_manual_settings = inspect_manual_settings
+        self.update_manual_settings = update_manual_settings
 
 
 class ProductionShellScopeFactory:
@@ -336,17 +407,23 @@ class ProductionShellScopeFactory:
         connection = self._connection_factory(self._database_path)
         try:
             transactions = SQLiteTransactionBoundary(connection)
+            settings = SQLiteSettingsRepository(connection)
+            snapshots = SQLiteInspectionSnapshotBoundary(connection)
             service = PrepareApplicationShellService(
                 projects=SQLiteProjectRepository(connection),
                 conversations=SQLiteConversationRepository(connection),
                 conversation_states=SQLiteConversationStateRepository(connection),
                 processing_runs=SQLiteProcessingRunRepository(connection),
-                settings=SQLiteSettingsRepository(connection),
+                settings=settings,
                 transactions=transactions,
                 clock=self._clock,
                 id_generator=self._id_generator,
             )
-            return _StartupScope(connection, service)
+            preferences = LoadInitialUiPreferencesService(
+                settings=settings,
+                snapshots=snapshots,
+            )
+            return _StartupScope(connection, service, preferences)
         except BaseException:
             connection.close()
             raise
@@ -398,6 +475,127 @@ class ProductionShellScopeFactory:
                 snapshots=SQLiteInspectionSnapshotBoundary(connection),
             )
             return _InspectionScope(connection, service)
+        except BaseException:
+            connection.close()
+            raise
+
+    def open_manual_operations_scope(self) -> _ManualOperationsScope:
+        connection = self._connection_factory(self._database_path)
+        try:
+            repositories = self._repositories(connection)
+            transactions = SQLiteTransactionBoundary(connection)
+            joined_manual_transaction = _OuterOwnedTransactionBoundary()
+            snapshots = SQLiteInspectionSnapshotBoundary(connection)
+            list_memories = ListMemoriesService(
+                memories=repositories.memories,
+                clock=self._clock,
+            )
+            create_memory = CreateMemoryService(
+                memories=repositories.memories,
+                clock=self._clock,
+                id_generator=self._id_generator,
+                transactions=transactions,
+            )
+            edit_memory = EditMemoryService(
+                memories=repositories.memories,
+                clock=self._clock,
+                id_generator=self._id_generator,
+                transactions=transactions,
+            )
+            soft_delete_memory = SoftDeleteMemoryService(
+                memories=repositories.memories,
+                clock=self._clock,
+                id_generator=self._id_generator,
+                transactions=transactions,
+            )
+            memory_support = {
+                "memories": repositories.memories,
+                "conversations": repositories.conversations,
+                "projects": repositories.projects,
+                "transactions": transactions,
+                "trace_logger": self._trace_logger,
+                "configuration": self._configuration,
+            }
+            inspect_memories = InspectMemoriesService(
+                list_memories=list_memories,
+                conversations=repositories.conversations,
+                projects=repositories.projects,
+                snapshots=snapshots,
+            )
+            create_for_presentation = CreateMemoryPresentationService(
+                create_memory=create_memory,
+                clock=self._clock,
+                **memory_support,
+            )
+            edit_for_presentation = EditMemoryPresentationService(
+                edit_memory=edit_memory,
+                **memory_support,
+            )
+            delete_for_presentation = SoftDeleteMemoryPresentationService(
+                soft_delete_memory=soft_delete_memory,
+                **memory_support,
+            )
+            select_project = SelectProjectService(
+                projects=repositories.projects,
+                conversations=repositories.conversations,
+                states=repositories.conversation_states,
+                clock=self._clock,
+                transactions=joined_manual_transaction,
+            )
+            archive_project = ArchiveProjectService(
+                projects=repositories.projects,
+                conversations=repositories.conversations,
+                processing_runs=repositories.processing_runs,
+                clock=self._clock,
+                transactions=joined_manual_transaction,
+            )
+            inspect_projects = InspectProjectsService(
+                projects=repositories.projects,
+                conversations=repositories.conversations,
+                states=repositories.conversation_states,
+                processing_runs=repositories.processing_runs,
+                snapshots=snapshots,
+            )
+            select_for_presentation = SelectProjectForPresentationService(
+                select_project=select_project,
+                projects=repositories.projects,
+                conversations=repositories.conversations,
+                transactions=transactions,
+            )
+            archive_for_presentation = ArchiveProjectForPresentationService(
+                archive_project=archive_project,
+                projects=repositories.projects,
+                conversations=repositories.conversations,
+                processing_runs=repositories.processing_runs,
+                transactions=transactions,
+            )
+            inspect_history = InspectValidationHistoryService(
+                repositories=repositories,
+                snapshots=snapshots,
+            )
+            inspect_settings = InspectManualSettingsService(
+                settings=repositories.settings,
+                snapshots=snapshots,
+                configuration=self._configuration,
+            )
+            update_settings = UpdateManualSettingsService(
+                settings=repositories.settings,
+                transactions=transactions,
+                clock=self._clock,
+            )
+            return _ManualOperationsScope(
+                connection,
+                inspect_memories=inspect_memories,
+                create_memory_with_guidance=create_for_presentation,
+                edit_memory_for_presentation=edit_for_presentation,
+                soft_delete_memory_for_presentation=delete_for_presentation,
+                inspect_projects=inspect_projects,
+                select_project_for_presentation=select_for_presentation,
+                archive_project_for_presentation=archive_for_presentation,
+                inspect_validation_history=inspect_history,
+                inspect_manual_settings=inspect_settings,
+                update_manual_settings=update_settings,
+            )
         except BaseException:
             connection.close()
             raise

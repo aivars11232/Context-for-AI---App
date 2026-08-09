@@ -19,6 +19,11 @@ EXPECTED_QML = {
     "context_for_ai/ui/qml/components/InspectionCollection.qml",
     "context_for_ai/ui/qml/components/InspectionScalarList.qml",
     "context_for_ai/ui/qml/components/InspectionSection.qml",
+    "context_for_ai/ui/qml/components/ManualPageStatus.qml",
+    "context_for_ai/ui/qml/components/MemoryPage.qml",
+    "context_for_ai/ui/qml/components/ProjectsPage.qml",
+    "context_for_ai/ui/qml/components/SettingsPage.qml",
+    "context_for_ai/ui/qml/components/ValidationHistoryPage.qml",
 }
 
 

@@ -147,6 +147,7 @@ def test_inspection_scope_exposes_only_query_close_and_additive_factory_open() -
     ] == [
         "open_foreground_scope",
         "open_inspection_scope",
+        "open_manual_operations_scope",
         "open_startup_scope",
     ]
     assert get_type_hints(

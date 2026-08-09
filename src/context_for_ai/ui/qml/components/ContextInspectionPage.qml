@@ -52,7 +52,7 @@ Pane {
 
                 Label {
                     text: "Context inspection"
-                    color: "#172033"
+                    color: palette.windowText
                     font.pixelSize: 26
                     font.weight: Font.DemiBold
                     Accessible.ignored: true
@@ -60,7 +60,7 @@ Pane {
 
                 Label {
                     text: "Durable evidence for the latest accepted request"
-                    color: "#64748b"
+                    color: palette.placeholderText
                     font.pixelSize: 13
                     Accessible.ignored: true
                 }
@@ -102,9 +102,7 @@ Pane {
                 text: page.facade.inspection_status_text
                 textFormat: Text.PlainText
                 wrapMode: Text.Wrap
-                color: page.facade.inspection_page_state === "LOAD_ERROR"
-                       || page.facade.inspection_page_state === "CONTROLLED_FAILURE"
-                       ? "#9f1239" : "#475569"
+                color: palette.text
                 font.pixelSize: 14
                 Accessible.ignored: true
             }

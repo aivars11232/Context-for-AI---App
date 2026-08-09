@@ -41,6 +41,7 @@ from context_for_ai.application import (
     InspectValidationOutput,
     ListMemories,
     ListMemoriesInput,
+    LoadInitialUiPreferences,
     MemoryListOutput,
     MemoryOutput,
     ExistingRunResult,
@@ -82,6 +83,7 @@ from context_for_ai.application import (
     ValidationExhaustedResult,
 )
 from context_for_ai.application.contracts import (
+    ManualOperationsApplicationScope,
     RegisterNamedItem,
     RegisterNamedItemInput,
     RegisterNamedItemOutput,
@@ -458,6 +460,7 @@ def test_shell_preparation_result_algebra_has_exact_closed_fields_and_messages()
 def test_shell_scope_and_idempotency_factory_protocols_are_exact() -> None:
     assert get_type_hints(StartupApplicationScope) == {
         "prepare_application_shell": PrepareApplicationShell,
+        "load_initial_ui_preferences": LoadInitialUiPreferences,
     }
     assert get_type_hints(ForegroundApplicationScope) == {
         "process_user_message": ProcessUserMessage,
@@ -469,6 +472,9 @@ def test_shell_scope_and_idempotency_factory_protocols_are_exact() -> None:
     assert get_type_hints(ShellApplicationScopeFactory.open_foreground_scope) == {
         "return": ForegroundApplicationScope,
     }
+    assert get_type_hints(
+        ShellApplicationScopeFactory.open_manual_operations_scope
+    ) == {"return": ManualOperationsApplicationScope}
     assert get_type_hints(IdempotencyKeyFactory.new_key) == {"return": DomainId}
 
 

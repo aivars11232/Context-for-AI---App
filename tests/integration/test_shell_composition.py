@@ -16,6 +16,8 @@ from context_for_ai.application import (
     ContextInspectionEmptyResult,
     InspectContextRequest,
     InspectContextService,
+    InspectManualSettingsRequest,
+    ManualSettingsReadyResult,
     PrepareApplicationShellRequest,
     ProcessUserMessageService,
     RecoverProcessingRunService,
@@ -162,8 +164,11 @@ def test_fresh_scopes_expose_only_owned_use_cases_and_share_durable_state(
     first_result = first_scope.prepare_application_shell.execute(
         PrepareApplicationShellRequest()
     )
+    initial_preferences = first_scope.load_initial_ui_preferences.execute()
     assert isinstance(first_result, ShellReadyResult)
     assert first_result.initial_conversation_created is True
+    assert initial_preferences.theme.value == "SYSTEM"
+    assert initial_preferences.context_panel_visible is True
     assert not hasattr(first_scope, "process_user_message")
     first_scope.close()
     first_scope.close()
@@ -265,6 +270,68 @@ def test_inspection_scope_opens_queries_and_closes_on_its_worker_thread(
     assert inspection_connection.opened_thread_id == worker_thread_id
     assert inspection_connection.closed_thread_id == worker_thread_id
     assert inspection_connection.close_calls == 1
+
+
+def test_manual_scope_exposes_exact_use_cases_on_fresh_worker_connection(
+    fixture_application_root: Path,
+    tmp_path: Path,
+) -> None:
+    connections = TrackingConnectionFactory()
+    factory = production_factory(fixture_application_root, tmp_path, connections)
+    startup = factory.open_startup_scope()
+    startup.prepare_application_shell.execute(PrepareApplicationShellRequest())
+    startup.close()
+    observations: queue.SimpleQueue[tuple[int, set[str], object]] = queue.SimpleQueue()
+
+    def use_scope() -> None:
+        scope = factory.open_manual_operations_scope()
+        use_cases = {
+            name
+            for name in (
+                "inspect_memories",
+                "create_memory_with_guidance",
+                "edit_memory_for_presentation",
+                "soft_delete_memory_for_presentation",
+                "inspect_projects",
+                "select_project_for_presentation",
+                "archive_project_for_presentation",
+                "inspect_validation_history",
+                "inspect_manual_settings",
+                "update_manual_settings",
+            )
+            if hasattr(scope, name)
+        }
+        result = scope.inspect_manual_settings.execute(
+            InspectManualSettingsRequest()
+        )
+        observations.put((threading.get_ident(), use_cases, result))
+        scope.close()
+
+    worker = threading.Thread(target=use_scope)
+    worker.start()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    worker_thread_id, use_cases, result = observations.get()
+
+    assert use_cases == {
+        "inspect_memories",
+        "create_memory_with_guidance",
+        "edit_memory_for_presentation",
+        "soft_delete_memory_for_presentation",
+        "inspect_projects",
+        "select_project_for_presentation",
+        "archive_project_for_presentation",
+        "inspect_validation_history",
+        "inspect_manual_settings",
+        "update_manual_settings",
+    }
+    assert isinstance(result, ManualSettingsReadyResult)
+    assert worker_thread_id != threading.get_ident()
+    assert len(connections.connections) == 2
+    manual_connection = connections.connections[1]
+    assert manual_connection.opened_thread_id == worker_thread_id
+    assert manual_connection.closed_thread_id == worker_thread_id
+    assert manual_connection.close_calls == 1
 
 
 def test_scope_rejects_cross_thread_close_then_owner_can_close(

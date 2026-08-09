@@ -21,7 +21,7 @@ Column {
             text: label + ": " + displayText
             textFormat: Text.PlainText
             wrapMode: Text.Wrap
-            color: "#334155"
+            color: palette.text
             font.pixelSize: 13
             Accessible.role: Accessible.StaticText
             Accessible.name: accessibleName

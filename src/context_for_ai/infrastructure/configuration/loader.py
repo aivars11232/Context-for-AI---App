@@ -18,7 +18,11 @@ import unicodedata
 import yaml
 
 from context_for_ai.domain.enums import ProviderKind
-from context_for_ai.domain.ports.configuration import ModelSettings
+from context_for_ai.domain.ports.configuration import (
+    ConfigurationOrigin,
+    ConfigurationScalarOrigin,
+    ModelSettings,
+)
 
 from .errors import ConfigurationError
 from .ollama_model import (
@@ -207,6 +211,7 @@ class ApplicationConfiguration:
     logging: LoggingSettings
     configuration_directory: Path
     configuration_fingerprint: str
+    scalar_origins: tuple[ConfigurationScalarOrigin, ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -337,7 +342,12 @@ def load_configuration(
     )
     raw_sections = _load_yaml_sections(config_directory)
     _apply_process_overrides(raw_sections, environment)
-    configuration = _validate_configuration(raw_sections, config_directory)
+    scalar_origins = _configuration_scalar_origins(raw_sections, environment)
+    configuration = _validate_configuration(
+        raw_sections,
+        config_directory,
+        scalar_origins=scalar_origins,
+    )
 
     expected_environment = _environment_or_bootstrap(
         environment, bootstrap_values, "CONTEXT_FOR_AI_ENV"
@@ -524,8 +534,75 @@ def _coerce_override(value: Any, scalar_type: str, env_key: str) -> Any:
     return raw
 
 
+_DOCUMENTED_DEFAULT_PATHS = frozenset(
+    {
+        "app.environment",
+        "model.request_timeout_seconds",
+        "model.temperature",
+        "context.reserved_response_tokens",
+        "context.recent_message_limit",
+        "context.retrieved_memory_limit",
+        "context.minimum_relevance_score",
+        "validation.max_revisions",
+        "logging.level",
+        "logging.retention_days",
+    }
+)
+
+
+def _configuration_scalar_origins(
+    sections: Mapping[str, Mapping[str, Any]],
+    environment: Mapping[str, str],
+) -> tuple[ConfigurationScalarOrigin, ...]:
+    """Capture immutable scalar provenance without changing normalized values."""
+
+    origins = {
+        field_path: ConfigurationOrigin.LOCAL_YAML
+        for section_name, section in sections.items()
+        for field_path in _scalar_field_paths(section, section_name)
+    }
+    for field_path in _DOCUMENTED_DEFAULT_PATHS:
+        section_name, field_name = field_path.split(".", maxsplit=1)
+        if field_name not in sections[section_name]:
+            origins[field_path] = ConfigurationOrigin.DOCUMENTED_DEFAULT
+    for env_key in sorted(environment):
+        if not env_key.startswith("CONTEXT_FOR_AI__"):
+            continue
+        parts = env_key.split("__")
+        if len(parts) != 3:
+            continue
+        specification = _OVERRIDE_SPECS.get((parts[1], parts[2]))
+        if specification is not None:
+            origins[f"{specification.section}.{specification.field}"] = (
+                ConfigurationOrigin.PROCESS_OVERRIDE
+            )
+    return tuple(
+        ConfigurationScalarOrigin(field_path=field_path, origin=origins[field_path])
+        for field_path in sorted(origins)
+    )
+
+
+def _scalar_field_paths(value: Any, prefix: str) -> tuple[str, ...]:
+    if isinstance(value, Mapping):
+        return tuple(
+            path
+            for key in sorted(value, key=str)
+            for path in _scalar_field_paths(value[key], f"{prefix}.{key}")
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(
+            path
+            for index, item in enumerate(value)
+            for path in _scalar_field_paths(item, f"{prefix}[{index}]")
+        )
+    return (prefix,)
+
+
 def _validate_configuration(
-    sections: Mapping[str, Mapping[str, Any]], configuration_directory: Path
+    sections: Mapping[str, Mapping[str, Any]],
+    configuration_directory: Path,
+    *,
+    scalar_origins: tuple[ConfigurationScalarOrigin, ...] = (),
 ) -> ApplicationConfiguration:
     app_values = _section_values(
         "app.yaml",
@@ -859,6 +936,7 @@ def _validate_configuration(
         logging=logging_settings,
         configuration_directory=configuration_directory,
         configuration_fingerprint="",
+        scalar_origins=scalar_origins,
     )
     fingerprint = _configuration_fingerprint(provisional)
     return ApplicationConfiguration(
@@ -870,6 +948,7 @@ def _validate_configuration(
         logging=logging_settings,
         configuration_directory=configuration_directory,
         configuration_fingerprint=fingerprint,
+        scalar_origins=scalar_origins,
     )
 
 

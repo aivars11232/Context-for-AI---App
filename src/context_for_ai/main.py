@@ -18,11 +18,13 @@ from PySide6.QtWidgets import QApplication
 
 from context_for_ai.application import (
     IdempotencyKeyFactory,
+    InitialUiPreferences,
     PrepareApplicationShellRequest,
     RecoveryRequiredResult,
     ShellApplicationScopeFactory,
     ShellPreparationFailureResult,
     ShellReadyResult,
+    UiTheme,
 )
 from context_for_ai.bootstrap import (
     ProductionShellScopeFactory,
@@ -139,16 +141,28 @@ def bootstrap_application(
 def prepare_application_shell(
     scope_factory: ShellApplicationScopeFactory,
 ) -> ShellReadyResult | RecoveryRequiredResult:
-    """Open, invoke, and close the sole synchronous pre-QML startup scope."""
+    """Prepare the shell while also validating startup preferences."""
+
+    preparation, _ = prepare_application_shell_with_preferences(scope_factory)
+    return preparation
+
+
+def prepare_application_shell_with_preferences(
+    scope_factory: ShellApplicationScopeFactory,
+) -> tuple[ShellReadyResult | RecoveryRequiredResult, InitialUiPreferences]:
+    """Prepare and load preferences in one synchronous pre-QML startup scope."""
 
     scope = None
     result: object | None = None
+    preferences: object | None = None
     failed = False
     try:
         scope = scope_factory.open_startup_scope()
         result = scope.prepare_application_shell.execute(
             PrepareApplicationShellRequest()
         )
+        if isinstance(result, (ShellReadyResult, RecoveryRequiredResult)):
+            preferences = scope.load_initial_ui_preferences.execute()
     except Exception:
         failed = True
     finally:
@@ -164,7 +178,23 @@ def prepare_application_shell(
         _raise_startup(startup_failure_for_preparation(result))
     if not isinstance(result, (ShellReadyResult, RecoveryRequiredResult)):
         _raise_startup(StartupFailureView(StartupFailureKind.COMPOSITION))
-    return result
+    if not isinstance(preferences, InitialUiPreferences):
+        _raise_startup(StartupFailureView(StartupFailureKind.COMPOSITION))
+    return result, preferences
+
+
+def apply_ui_theme(application: QApplication, theme: UiTheme) -> None:
+    """Apply only the contracted Qt application color-scheme preference."""
+
+    if not isinstance(application, QApplication) or not isinstance(theme, UiTheme):
+        raise TypeError("Qt theme application requires closed application values.")
+    style_hints = application.styleHints()
+    if theme is UiTheme.SYSTEM:
+        style_hints.unsetColorScheme()
+    elif theme is UiTheme.LIGHT:
+        style_hints.setColorScheme(Qt.ColorScheme.Light)
+    else:
+        style_hints.setColorScheme(Qt.ColorScheme.Dark)
 
 
 def _qml_resource_context(
@@ -281,7 +311,9 @@ def main(
         return 0
 
     try:
-        preparation = prepare_application_shell(startup.scope_factory)
+        preparation, initial_preferences = prepare_application_shell_with_preferences(
+            startup.scope_factory
+        )
     except StartupError as error:
         _present_once(presenter, error.failure, mode)
         return 2
@@ -292,7 +324,13 @@ def main(
         application = QApplication.instance() or QApplication([sys.argv[0]])
         if not isinstance(application, QApplication):
             _raise_startup(StartupFailureView(StartupFailureKind.COMPOSITION))
-        facade = ShellFacade(startup.scope_factory, startup.idempotency_keys)
+        apply_ui_theme(application, initial_preferences.theme)
+        facade = ShellFacade(
+            startup.scope_factory,
+            startup.idempotency_keys,
+            initial_preferences=initial_preferences,
+            theme_applier=lambda theme: apply_ui_theme(application, theme),
+        )
         facade.shutdownReady.connect(
             application.quit,
             Qt.ConnectionType.QueuedConnection,

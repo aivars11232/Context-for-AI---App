@@ -12,7 +12,7 @@ ApplicationWindow {
     minimumWidth: 720
     minimumHeight: 520
     title: "Context for AI"
-    color: "#f4f6f8"
+    color: palette.window
 
     property bool shutdownAccepted: false
 
@@ -39,7 +39,7 @@ ApplicationWindow {
         Rectangle {
             Layout.preferredWidth: 210
             Layout.fillHeight: true
-            color: "#172033"
+            color: rootWindow.palette.alternateBase
 
             ColumnLayout {
                 anchors.fill: parent
@@ -48,7 +48,7 @@ ApplicationWindow {
 
                 Label {
                     text: "Context for AI"
-                    color: "#ffffff"
+                    color: rootWindow.palette.windowText
                     font.pixelSize: 20
                     font.weight: Font.DemiBold
                 }
@@ -68,12 +68,57 @@ ApplicationWindow {
                     objectName: "contextInspectionNavigation"
                     Layout.fillWidth: true
                     text: "Context inspection"
+                    visible: shellFacade.context_navigation_visible
                     highlighted: shellFacade.route === "CONTEXT_INSPECTION"
                     onClicked: shellFacade.navigate_to_context_inspection()
                     Accessible.id: "contextInspectionNavigation"
                     Accessible.role: Accessible.Button
                     Accessible.name: "Context inspection"
                     Accessible.description: ""
+                }
+
+                ItemDelegate {
+                    objectName: "memoryNavigation"
+                    Layout.fillWidth: true
+                    text: "Memory"
+                    highlighted: shellFacade.route === "MEMORY"
+                    onClicked: shellFacade.navigate_to_memory()
+                    Accessible.id: "memoryNavigation"
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Memory"
+                }
+
+                ItemDelegate {
+                    objectName: "projectsNavigation"
+                    Layout.fillWidth: true
+                    text: "Projects"
+                    highlighted: shellFacade.route === "PROJECTS"
+                    onClicked: shellFacade.navigate_to_projects()
+                    Accessible.id: "projectsNavigation"
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Projects"
+                }
+
+                ItemDelegate {
+                    objectName: "validationHistoryNavigation"
+                    Layout.fillWidth: true
+                    text: "Validation history"
+                    highlighted: shellFacade.route === "VALIDATION_HISTORY"
+                    onClicked: shellFacade.navigate_to_validation_history()
+                    Accessible.id: "validationHistoryNavigation"
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Validation history"
+                }
+
+                ItemDelegate {
+                    objectName: "settingsNavigation"
+                    Layout.fillWidth: true
+                    text: "Settings"
+                    highlighted: shellFacade.route === "SETTINGS"
+                    onClicked: shellFacade.navigate_to_settings()
+                    Accessible.id: "settingsNavigation"
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Settings"
                 }
 
                 Item {
@@ -83,7 +128,7 @@ ApplicationWindow {
                 Label {
                     Layout.fillWidth: true
                     text: "Local desktop assistant"
-                    color: "#aeb9cb"
+                    color: rootWindow.palette.placeholderText
                     wrapMode: Text.WordWrap
                     font.pixelSize: 12
                 }
@@ -93,7 +138,11 @@ ApplicationWindow {
         StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            currentIndex: shellFacade.route === "CONTEXT_INSPECTION" ? 1 : 0
+            currentIndex: shellFacade.route === "CONTEXT_INSPECTION" ? 1
+                          : shellFacade.route === "MEMORY" ? 2
+                          : shellFacade.route === "PROJECTS" ? 3
+                          : shellFacade.route === "VALIDATION_HISTORY" ? 4
+                          : shellFacade.route === "SETTINGS" ? 5 : 0
 
             ChatPanel {
                 objectName: "chatPanel"
@@ -102,6 +151,26 @@ ApplicationWindow {
 
             ContextInspectionPage {
                 objectName: "contextInspectionPage"
+                facade: shellFacade
+            }
+
+            MemoryPage {
+                objectName: "memoryPage"
+                facade: shellFacade
+            }
+
+            ProjectsPage {
+                objectName: "projectsPage"
+                facade: shellFacade
+            }
+
+            ValidationHistoryPage {
+                objectName: "validationHistoryPage"
+                facade: shellFacade
+            }
+
+            SettingsPage {
+                objectName: "settingsPage"
                 facade: shellFacade
             }
         }

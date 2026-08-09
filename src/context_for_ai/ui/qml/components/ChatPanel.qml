@@ -30,14 +30,14 @@ Item {
 
                 Label {
                     text: "Chat"
-                    color: "#172033"
+                    color: palette.windowText
                     font.pixelSize: 26
                     font.weight: Font.DemiBold
                 }
 
                 Label {
                     text: "One focused request at a time"
-                    color: "#64748b"
+                    color: palette.placeholderText
                     font.pixelSize: 13
                 }
             }
@@ -45,20 +45,21 @@ Item {
             Label {
                 objectName: "shellStateLabel"
                 text: facade.state
-                color: "#475569"
+                color: palette.windowText
                 font.pixelSize: 12
                 Accessible.name: "Application status"
             }
         }
 
         Frame {
+            id: outputFrame
             Layout.fillWidth: true
             Layout.fillHeight: true
             padding: 20
             background: Rectangle {
-                color: "#ffffff"
+                color: outputFrame.palette.base
                 radius: 12
-                border.color: "#dbe2ea"
+                border.color: outputFrame.palette.mid
                 border.width: 1
             }
 
@@ -77,7 +78,7 @@ Item {
                         text: facade.assistant_text
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
-                        color: "#172033"
+                        color: palette.text
                         font.pixelSize: 15
                         Accessible.name: "Assistant response"
                     }
@@ -89,7 +90,7 @@ Item {
                         text: facade.clarification_text
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
-                        color: "#7c3aed"
+                        color: palette.link
                         font.pixelSize: 15
                         Accessible.name: "Clarification request"
                     }
@@ -101,7 +102,7 @@ Item {
                         text: facade.status_message
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
-                        color: "#9f1239"
+                        color: palette.text
                         font.pixelSize: 14
                         Accessible.name: "Processing message"
                     }
@@ -113,7 +114,7 @@ Item {
                                  && safeStatusMessage.text.length === 0
                                  && !facade.progress_visible
                         text: "Enter a request below to begin."
-                        color: "#94a3b8"
+                        color: palette.placeholderText
                         font.pixelSize: 14
                     }
                 }
@@ -136,18 +137,21 @@ Item {
             Label {
                 objectName: "progressLabel"
                 text: facade.progress_label
-                color: "#475569"
+                color: palette.windowText
                 font.pixelSize: 13
             }
         }
 
         Frame {
+            id: composerFrame
             Layout.fillWidth: true
             padding: 12
             background: Rectangle {
-                color: "#ffffff"
+                color: composerFrame.palette.base
                 radius: 10
-                border.color: composer.activeFocus ? "#5267df" : "#cbd5e1"
+                border.color: composer.activeFocus
+                              ? composerFrame.palette.highlight
+                              : composerFrame.palette.mid
                 border.width: composer.activeFocus ? 2 : 1
             }
 
@@ -176,7 +180,7 @@ Item {
                         text: composer.text.length === 0
                               ? "Enter at least one character"
                               : "Text is sent exactly as entered"
-                        color: "#94a3b8"
+                        color: palette.placeholderText
                         font.pixelSize: 11
                     }
 

@@ -71,6 +71,11 @@ def test_qml_package_data_covers_root_and_arbitrary_nested_assets() -> None:
         "components/InspectionCollection.qml",
         "components/InspectionScalarList.qml",
         "components/InspectionSection.qml",
+        "components/ManualPageStatus.qml",
+        "components/MemoryPage.qml",
+        "components/ProjectsPage.qml",
+        "components/SettingsPage.qml",
+        "components/ValidationHistoryPage.qml",
     }
 
 
