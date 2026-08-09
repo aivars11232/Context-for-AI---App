@@ -32,8 +32,10 @@ from context_for_ai.application import (
     ContextPacketStage,
     EditMemory,
     EditMemoryInput,
+    ForegroundApplicationScope,
     GetMemory,
     GetMemoryInput,
+    IdempotencyKeyFactory,
     InspectContext,
     InspectContextInput,
     InspectContextOutput,
@@ -48,6 +50,9 @@ from context_for_ai.application import (
     NoRecoveryRequiredResult,
     PersistenceErrorValue,
     PersistenceFailureResult,
+    PrepareApplicationShell,
+    PrepareApplicationShellRequest,
+    PrepareApplicationShellResult,
     ProcessUserMessage,
     ProcessUserMessageRequest,
     ProcessUserMessageResult,
@@ -60,16 +65,22 @@ from context_for_ai.application import (
     RecoverProcessingRun,
     RecoverProcessingRunRequest,
     RecoveryCompletedResult,
+    RecoveryRequiredResult,
     RecoveryResult,
     SelectProject,
     SelectProjectInput,
     SelectProjectOutput,
+    ShellApplicationScopeFactory,
+    ShellPreparationFailureKind,
+    ShellPreparationFailureResult,
+    ShellReadyResult,
     SoftDeleteMemory,
     SoftDeleteMemoryInput,
     TransitionTaskStatus,
     TransitionTaskStatusInput,
     TransitionTaskStatusOutput,
     SucceededResult,
+    StartupApplicationScope,
     ValidationExhaustedErrorValue,
     ValidationExhaustedResult,
 )
@@ -153,6 +164,13 @@ PROCESS_RESULT_TYPES = {
     PersistenceFailureResult,
     ConcurrencyConflictResult,
     ControlledFailureResult,
+}
+
+
+PREPARATION_RESULT_TYPES = {
+    ShellReadyResult,
+    RecoveryRequiredResult,
+    ShellPreparationFailureResult,
 }
 
 
@@ -353,6 +371,18 @@ def test_processing_use_cases_require_one_caller_owned_cancellation_token() -> N
     }
 
 
+def test_shell_preparation_has_one_closed_typed_execute_contract() -> None:
+    assert issubclass(PrepareApplicationShell, Protocol)
+    assert PrepareApplicationShell._is_protocol is True
+    assert get_type_hints(PrepareApplicationShell.execute) == {
+        "request": PrepareApplicationShellRequest,
+        "return": PrepareApplicationShellResult,
+    }
+    assert set(PrepareApplicationShellResult.__value__.__args__) == (
+        PREPARATION_RESULT_TYPES
+    )
+
+
 def test_context_packet_stage_uses_the_domain_build_contract_directly() -> None:
     assert issubclass(ContextPacketStage, Protocol)
     assert ContextPacketStage._is_protocol is True
@@ -377,6 +407,8 @@ def test_use_case_inputs_and_outputs_are_frozen_slotted_dataclasses() -> None:
             RecoverProcessingRunRequest,
             NoRecoveryRequiredResult,
             RecoveryCompletedResult,
+            PrepareApplicationShellRequest,
+            *PREPARATION_RESULT_TYPES,
             BusyErrorValue,
             ConfigurationErrorValue,
             PersistenceErrorValue,
@@ -390,6 +422,58 @@ def test_use_case_inputs_and_outputs_are_frozen_slotted_dataclasses() -> None:
         assert is_dataclass(dto_type)
         assert dto_type.__dataclass_params__.frozen is True
         assert "__slots__" in vars(dto_type)
+
+
+def test_shell_preparation_result_algebra_has_exact_closed_fields_and_messages() -> None:
+    assert {item.name for item in fields(ShellReadyResult)} == {
+        "result_kind",
+        "conversation_id",
+        "initial_conversation_created",
+    }
+    assert {item.name for item in fields(RecoveryRequiredResult)} == {
+        "result_kind",
+        "processing_run_id",
+        "conversation_id",
+    }
+    assert {item.name for item in fields(ShellPreparationFailureResult)} == {
+        "result_kind",
+        "failure_kind",
+        "code",
+        "safe_message",
+    }
+
+    recovery_failure = ShellPreparationFailureResult(
+        ShellPreparationFailureKind.RECOVERY_PREFLIGHT_FAILED
+    )
+    setup_failure = ShellPreparationFailureResult(
+        ShellPreparationFailureKind.CONVERSATION_SETUP_FAILED
+    )
+
+    assert recovery_failure.result_kind == "SHELL_PREPARATION_FAILURE"
+    assert recovery_failure.code is FailureCode.PERSISTENCE_ERROR
+    assert recovery_failure.safe_message == (
+        "Previous processing state could not be inspected safely."
+    )
+    assert setup_failure.safe_message == "A conversation could not be opened safely."
+    with pytest.raises(LifecycleInvariantError, match="closed failure kind"):
+        ShellPreparationFailureResult("RECOVERY_PREFLIGHT_FAILED")  # type: ignore[arg-type]
+
+
+def test_shell_scope_and_idempotency_factory_protocols_are_exact() -> None:
+    assert get_type_hints(StartupApplicationScope) == {
+        "prepare_application_shell": PrepareApplicationShell,
+    }
+    assert get_type_hints(ForegroundApplicationScope) == {
+        "process_user_message": ProcessUserMessage,
+        "recover_processing_run": RecoverProcessingRun,
+    }
+    assert get_type_hints(ShellApplicationScopeFactory.open_startup_scope) == {
+        "return": StartupApplicationScope,
+    }
+    assert get_type_hints(ShellApplicationScopeFactory.open_foreground_scope) == {
+        "return": ForegroundApplicationScope,
+    }
+    assert get_type_hints(IdempotencyKeyFactory.new_key) == {"return": DomainId}
 
 
 def test_public_process_result_algebra_has_exact_closed_variant_fields() -> None:

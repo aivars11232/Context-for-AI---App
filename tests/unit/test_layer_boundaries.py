@@ -308,13 +308,17 @@ def test_context_engine_has_no_model_gateway_dependency() -> None:
     assert violations == []
 
 
-def test_ui_project_imports_reach_only_the_application_layer() -> None:
+def test_ui_project_imports_reach_only_ui_or_the_application_layer() -> None:
     violations: list[str] = []
     for path in sorted((SOURCE_ROOT / "ui").rglob("*.py")):
         for reference in imported_references(path):
             imported_name = reference.qualified_name
-            if imported_name.startswith("context_for_ai") and not _matches_prefix(
-                imported_name, "context_for_ai.application"
+            if imported_name.startswith("context_for_ai") and not any(
+                _matches_prefix(imported_name, allowed)
+                for allowed in (
+                    "context_for_ai.application",
+                    "context_for_ai.ui",
+                )
             ):
                 violations.append(
                     f"{path.relative_to(SOURCE_ROOT)} imports {imported_name}"

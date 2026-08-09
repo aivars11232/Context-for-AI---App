@@ -33,4 +33,4 @@ where = ["src"]
 include = ["context_for_ai*"]
 
 [tool.setuptools.package-data]
-context_for_ai = ["ui/qml/*.qml"]
+context_for_ai = ["ui/qml/*.qml", "ui/qml/**/*.qml"]

@@ -8,6 +8,13 @@ from context_for_ai.bootstrap.contracts import (
     RepositoryPorts,
     SystemPorts,
 )
+from context_for_ai.bootstrap.shell_composition import (
+    ProductionShellScopeFactory,
+    UtcSystemClock,
+    UuidDomainIdGenerator,
+    UuidIdempotencyKeyFactory,
+    configuration_snapshot_from,
+)
 
 
 __all__ = [
@@ -15,6 +22,11 @@ __all__ = [
     "ApplicationUseCases",
     "CompositionRoot",
     "DeterministicComponents",
+    "ProductionShellScopeFactory",
     "RepositoryPorts",
     "SystemPorts",
+    "UtcSystemClock",
+    "UuidDomainIdGenerator",
+    "UuidIdempotencyKeyFactory",
+    "configuration_snapshot_from",
 ]

@@ -51,6 +51,25 @@ def test_default_pytest_selection_centrally_excludes_live_ollama() -> None:
     assert addopts[addopts.index("-m") + 1] == "not ollama"
 
 
+def test_qml_package_data_covers_root_and_arbitrary_nested_assets() -> None:
+    configuration = tomllib.loads(
+        (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    patterns = configuration["tool"]["setuptools"]["package-data"][
+        "context_for_ai"
+    ]
+    qml_root = REPOSITORY_ROOT / "src" / "context_for_ai" / "ui" / "qml"
+
+    assert patterns == ["ui/qml/*.qml", "ui/qml/**/*.qml"]
+    assert {
+        path.relative_to(qml_root).as_posix()
+        for path in qml_root.rglob("*.qml")
+    } == {
+        "Main.qml",
+        "components/ChatPanel.qml",
+    }
+
+
 @pytest.mark.parametrize(
     ("environment", "expected"),
     (

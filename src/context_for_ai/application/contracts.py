@@ -723,6 +723,91 @@ type RecoveryResult = (
 
 
 @dataclass(frozen=True, slots=True)
+class PrepareApplicationShellRequest:
+    """Request one pre-QML recovery preflight and conversation selection."""
+
+
+@dataclass(frozen=True, slots=True)
+class ShellReadyResult:
+    """A usable conversation is ready and no startup recovery is required."""
+
+    conversation_id: DomainId
+    initial_conversation_created: bool
+    result_kind: Literal["SHELL_READY"] = field(
+        init=False,
+        default="SHELL_READY",
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.initial_conversation_created, bool):
+            raise LifecycleInvariantError(
+                "ShellReadyResult.initial_conversation_created must be boolean."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryRequiredResult:
+    """The sole global non-terminal run requires one foreground recovery."""
+
+    processing_run_id: DomainId
+    conversation_id: DomainId
+    result_kind: Literal["RECOVERY_REQUIRED"] = field(
+        init=False,
+        default="RECOVERY_REQUIRED",
+    )
+
+
+@unique
+class ShellPreparationFailureKind(StrEnum):
+    """Closed preparation stages that may fail before Qt is created."""
+
+    RECOVERY_PREFLIGHT_FAILED = "RECOVERY_PREFLIGHT_FAILED"
+    CONVERSATION_SETUP_FAILED = "CONVERSATION_SETUP_FAILED"
+
+
+_SHELL_PREPARATION_FAILURE_MESSAGES = {
+    ShellPreparationFailureKind.RECOVERY_PREFLIGHT_FAILED: (
+        "Previous processing state could not be inspected safely."
+    ),
+    ShellPreparationFailureKind.CONVERSATION_SETUP_FAILED: (
+        "A conversation could not be opened safely."
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ShellPreparationFailureResult:
+    """A closed content-free persistence failure during shell preparation."""
+
+    failure_kind: ShellPreparationFailureKind
+    result_kind: Literal["SHELL_PREPARATION_FAILURE"] = field(
+        init=False,
+        default="SHELL_PREPARATION_FAILURE",
+    )
+    code: FailureCode = field(
+        init=False,
+        default=FailureCode.PERSISTENCE_ERROR,
+    )
+    safe_message: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.failure_kind, ShellPreparationFailureKind):
+            raise LifecycleInvariantError(
+                "ShellPreparationFailureResult requires a closed failure kind."
+            )
+        object.__setattr__(
+            self,
+            "safe_message",
+            _SHELL_PREPARATION_FAILURE_MESSAGES[self.failure_kind],
+        )
+
+
+type PrepareApplicationShellResult = (
+    ShellReadyResult | RecoveryRequiredResult | ShellPreparationFailureResult
+)
+
+
+@dataclass(frozen=True, slots=True)
 class InspectContextInput:
     """Identify the processing run whose durable context evidence is requested."""
 
@@ -1242,6 +1327,46 @@ class RecoverProcessingRun(Protocol):
         request: RecoverProcessingRunRequest,
         cancellation_token: CancellationToken,
     ) -> RecoveryResult: ...
+
+
+class PrepareApplicationShell(Protocol):
+    """Prepare one safe initial shell selection before Qt creation."""
+
+    def execute(
+        self,
+        request: PrepareApplicationShellRequest,
+    ) -> PrepareApplicationShellResult: ...
+
+
+class StartupApplicationScope(Protocol):
+    """Own the startup connection and its sole preparation use case."""
+
+    prepare_application_shell: PrepareApplicationShell
+
+    def close(self) -> None: ...
+
+
+class ForegroundApplicationScope(Protocol):
+    """Own one worker-thread connection and the TASK-0014 foreground use cases."""
+
+    process_user_message: ProcessUserMessage
+    recover_processing_run: RecoverProcessingRun
+
+    def close(self) -> None: ...
+
+
+class ShellApplicationScopeFactory(Protocol):
+    """Create fresh calling-thread-owned startup and foreground scopes."""
+
+    def open_startup_scope(self) -> StartupApplicationScope: ...
+
+    def open_foreground_scope(self) -> ForegroundApplicationScope: ...
+
+
+class IdempotencyKeyFactory(Protocol):
+    """Allocate one caller-owned UUID for each accepted shell submission."""
+
+    def new_key(self) -> DomainId: ...
 
 
 class InspectContext(Protocol):
