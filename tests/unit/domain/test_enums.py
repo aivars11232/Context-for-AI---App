@@ -224,6 +224,7 @@ CANONICAL_ENUM_VALUES: dict[type[StrEnum], tuple[str, ...]] = {
     ),
     FailureCode: (
         "CONTEXT_BUDGET_EXCEEDED",
+        "CONTEXT_CONSTRUCTION_FAILED",
         "PERSISTENCE_ERROR",
         "CONCURRENCY_CONFLICT",
         "PROCESS_RESTARTED",

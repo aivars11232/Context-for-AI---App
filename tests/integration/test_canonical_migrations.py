@@ -31,6 +31,26 @@ TERMINAL_RUN_ID = "00000000-0000-4000-8000-000000000008"
 IDEMPOTENCY_KEY = "00000000-0000-4000-8000-000000000009"
 SECOND_IDEMPOTENCY_KEY = "00000000-0000-4000-8000-00000000000a"
 TERMINAL_IDEMPOTENCY_KEY = "00000000-0000-4000-8000-00000000000b"
+OLD_FAILURE_ID = "00000000-0000-4000-8000-00000000000c"
+NEW_FAILURE_ID = "00000000-0000-4000-8000-00000000000e"
+INVALID_FAILURE_ID = "00000000-0000-4000-8000-00000000000f"
+ORPHAN_FAILURE_ID = "00000000-0000-4000-8000-000000000010"
+V1_CHECKSUM = "efc7f72d38daab138e4f8a1a9cbaaae8816195ec4265246a03b00bf1884aaf6e"
+V1_FAILURE_CODES = (
+    "CONTEXT_BUDGET_EXCEEDED",
+    "PERSISTENCE_ERROR",
+    "CONCURRENCY_CONFLICT",
+    "PROCESS_RESTARTED",
+    "CONFIGURATION_CHANGED",
+    "PROVIDER_UNAVAILABLE",
+    "MODEL_NOT_FOUND",
+    "MODEL_TIMEOUT",
+    "MODEL_CANCELLED",
+    "INVALID_PROVIDER_RESPONSE",
+    "VALIDATION_EXHAUSTED",
+    "CONFIGURATION_INVALID",
+    "CANCELLED_BY_USER",
+)
 
 
 EXPECTED_COLUMNS = {
@@ -463,6 +483,41 @@ def _insert_conversation_and_message(
     )
 
 
+def _insert_pipeline_failure(
+    connection: sqlite3.Connection,
+    *,
+    failure_id: str,
+    processing_run_id: str = RUN_ID,
+    error_code: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO pipeline_failures (
+            id, processing_run_id, stage, error_code, safe_message,
+            details_json, is_terminal, created_at
+        ) VALUES (?, ?, 'CONTEXT', ?, 'safe message', '{"component":"PACKET_BUILD"}', 1, ?)
+        """,
+        (failure_id, processing_run_id, error_code, TIMESTAMP),
+    )
+
+
+def _pipeline_failure_index_metadata(
+    connection: sqlite3.Connection,
+) -> dict[str, tuple[object, ...]]:
+    return {
+        str(row[1]): (
+            row[2],
+            row[3],
+            row[4],
+            tuple(
+                index_row[2]
+                for index_row in connection.execute(f"PRAGMA index_info({row[1]})")
+            ),
+        )
+        for row in connection.execute("PRAGMA index_list(pipeline_failures)")
+    }
+
+
 def test_fresh_apply_and_reapply_are_exact_and_idempotent(tmp_path: Path) -> None:
     database_path = apply_migrations(tmp_path / "fresh.sqlite3")
 
@@ -483,7 +538,7 @@ def test_fresh_apply_and_reapply_are_exact_and_idempotent(tmp_path: Path) -> Non
             """
         ).fetchall()
         ledger_before = connection.execute(
-            "SELECT version, checksum, applied_at FROM schema_migrations"
+            "SELECT version, checksum, applied_at FROM schema_migrations ORDER BY version"
         ).fetchall()
         settings_before = connection.execute(
             "SELECT key, value_json, updated_at FROM settings"
@@ -501,7 +556,7 @@ def test_fresh_apply_and_reapply_are_exact_and_idempotent(tmp_path: Path) -> Non
             """
         ).fetchall()
         ledger_after = connection.execute(
-            "SELECT version, checksum, applied_at FROM schema_migrations"
+            "SELECT version, checksum, applied_at FROM schema_migrations ORDER BY version"
         ).fetchall()
         settings_after = connection.execute(
             "SELECT key, value_json, updated_at FROM settings"
@@ -513,8 +568,11 @@ def test_fresh_apply_and_reapply_are_exact_and_idempotent(tmp_path: Path) -> Non
     assert schema_after == schema_before
     assert settings_after == settings_before
     assert ledger_after == ledger_before
-    assert ledger_after[0][:2] == (1, MIGRATIONS[0].checksum)
-    assert ledger_counts == [(1, 1)]
+    assert MIGRATIONS[0].checksum == V1_CHECKSUM
+    assert [row[:2] for row in ledger_after] == [
+        (migration.version, migration.checksum) for migration in MIGRATIONS
+    ]
+    assert ledger_counts == [(migration.version, 1) for migration in MIGRATIONS]
 
 
 def test_version_zero_ledger_upgrades_to_the_complete_canonical_schema(
@@ -530,8 +588,151 @@ def test_version_zero_ledger_upgrades_to_the_complete_canonical_schema(
     with connect_database(database_path) as connection:
         assert _table_names(connection) == set(EXPECTED_COLUMNS)
         assert connection.execute(
+            "SELECT version, checksum FROM schema_migrations ORDER BY version"
+        ).fetchall() == [
+            (migration.version, migration.checksum) for migration in MIGRATIONS
+        ]
+
+
+def test_version_one_upgrade_widens_only_pipeline_failure_error_code(
+    tmp_path: Path,
+) -> None:
+    database_path = apply_migrations(
+        tmp_path / "upgrade-v1.sqlite3",
+        migrations=MIGRATIONS[:1],
+    )
+
+    with connect_database(database_path) as connection:
+        assert MIGRATIONS[0].checksum == V1_CHECKSUM
+        assert connection.execute(
             "SELECT version, checksum FROM schema_migrations"
-        ).fetchall() == [(1, MIGRATIONS[0].checksum)]
+        ).fetchall() == [(1, V1_CHECKSUM)]
+        _insert_conversation_and_message(
+            connection,
+            conversation_id=CONVERSATION_ID,
+            message_id=MESSAGE_ID,
+            sequence_number=0,
+        )
+        connection.execute(
+            """
+            INSERT INTO processing_runs (
+                id, conversation_id, user_message_id, idempotency_key, status,
+                state_version_at_start, configuration_fingerprint, started_at, completed_at
+            ) VALUES (?, ?, ?, ?, 'CONTROLLED_FAILURE', 0, 'fingerprint', ?, ?)
+            """,
+            (
+                RUN_ID,
+                CONVERSATION_ID,
+                MESSAGE_ID,
+                IDEMPOTENCY_KEY,
+                TIMESTAMP,
+                TIMESTAMP,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO settings (key, value_json, updated_at)
+            VALUES ('ui.theme', '"DARK"', ?)
+            """,
+            (TIMESTAMP,),
+        )
+        _insert_pipeline_failure(
+            connection,
+            failure_id=OLD_FAILURE_ID,
+            error_code="PERSISTENCE_ERROR",
+        )
+        columns_before = connection.execute(
+            "PRAGMA table_info(pipeline_failures)"
+        ).fetchall()
+        foreign_keys_before = connection.execute(
+            "PRAGMA foreign_key_list(pipeline_failures)"
+        ).fetchall()
+        indexes_before = _pipeline_failure_index_metadata(connection)
+        explicit_index_sql_before = connection.execute(
+            """
+            SELECT sql FROM sqlite_master
+            WHERE type = 'index' AND name = 'idx_pipeline_failures_run_created'
+            """
+        ).fetchone()
+        failure_rows_before = connection.execute(
+            "SELECT * FROM pipeline_failures ORDER BY id"
+        ).fetchall()
+        settings_before = connection.execute(
+            "SELECT * FROM settings ORDER BY key"
+        ).fetchall()
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_pipeline_failure(
+                connection,
+                failure_id=NEW_FAILURE_ID,
+                error_code="CONTEXT_CONSTRUCTION_FAILED",
+            )
+        assert connection.execute(
+            "SELECT count(*) FROM pipeline_failures"
+        ).fetchone() == (1,)
+
+    apply_migrations(database_path)
+
+    with connect_database(database_path) as connection:
+        assert connection.execute(
+            "SELECT version, checksum FROM schema_migrations ORDER BY version"
+        ).fetchall() == [
+            (migration.version, migration.checksum) for migration in MIGRATIONS
+        ]
+        assert connection.execute(
+            "PRAGMA table_info(pipeline_failures)"
+        ).fetchall() == columns_before
+        assert connection.execute(
+            "PRAGMA foreign_key_list(pipeline_failures)"
+        ).fetchall() == foreign_keys_before
+        assert _pipeline_failure_index_metadata(connection) == indexes_before
+        assert connection.execute(
+            """
+            SELECT sql FROM sqlite_master
+            WHERE type = 'index' AND name = 'idx_pipeline_failures_run_created'
+            """
+        ).fetchone() == explicit_index_sql_before
+        assert connection.execute(
+            "SELECT * FROM pipeline_failures ORDER BY id"
+        ).fetchall() == failure_rows_before
+        assert connection.execute(
+            "SELECT * FROM settings ORDER BY key"
+        ).fetchall() == settings_before
+        assert "pipeline_failures_v2" not in _table_names(connection)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+        for identifier_number, error_code in enumerate(V1_FAILURE_CODES, start=0x20):
+            _insert_pipeline_failure(
+                connection,
+                failure_id=(
+                    f"00000000-0000-4000-8000-{identifier_number:012x}"
+                ),
+                error_code=error_code,
+            )
+        _insert_pipeline_failure(
+            connection,
+            failure_id=NEW_FAILURE_ID,
+            error_code="CONTEXT_CONSTRUCTION_FAILED",
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_pipeline_failure(
+                connection,
+                failure_id=INVALID_FAILURE_ID,
+                error_code="NOT_A_FAILURE_CODE",
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_pipeline_failure(
+                connection,
+                failure_id=ORPHAN_FAILURE_ID,
+                processing_run_id=SECOND_RUN_ID,
+                error_code="CONTEXT_CONSTRUCTION_FAILED",
+            )
+        assert connection.execute(
+            "SELECT error_code FROM pipeline_failures ORDER BY id"
+        ).fetchall() == [
+            ("PERSISTENCE_ERROR",),
+            ("CONTEXT_CONSTRUCTION_FAILED",),
+            *((error_code,) for error_code in V1_FAILURE_CODES),
+        ]
 
 
 def test_schema_has_exact_columns_types_indexes_and_restrictive_foreign_keys(
@@ -799,7 +1000,7 @@ def test_documented_checks_foreign_keys_and_global_run_guard_reject_invalid_rows
 def test_failed_migration_rolls_back_schema_and_ledger_version(tmp_path: Path) -> None:
     database_path = apply_migrations(tmp_path / "rollback.sqlite3")
     failing_migration = Migration(
-        version=2,
+        version=len(MIGRATIONS) + 1,
         name="forced_failure",
         statements=(
             "CREATE TABLE should_roll_back (id INTEGER PRIMARY KEY)",
@@ -814,7 +1015,9 @@ def test_failed_migration_rolls_back_schema_and_ledger_version(tmp_path: Path) -
         assert "should_roll_back" not in _table_names(connection)
         assert connection.execute(
             "SELECT version, checksum FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1, MIGRATIONS[0].checksum)]
+        ).fetchall() == [
+            (migration.version, migration.checksum) for migration in MIGRATIONS
+        ]
 
 
 def test_checksum_and_order_validation_reject_mutated_history(tmp_path: Path) -> None:

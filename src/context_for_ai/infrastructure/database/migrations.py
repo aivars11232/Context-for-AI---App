@@ -671,11 +671,58 @@ _CANONICAL_SCHEMA_STATEMENTS = (
 )
 
 
+_WIDEN_PIPELINE_FAILURE_ERROR_CODE_STATEMENTS = (
+    f"""
+    CREATE TABLE pipeline_failures_v2 (
+        id TEXT NOT NULL PRIMARY KEY CHECK ({_uuid_check("id")}),
+        processing_run_id TEXT NOT NULL CHECK ({_uuid_check("processing_run_id")}),
+        stage TEXT NOT NULL CHECK (stage IN (
+            'ACCEPTANCE', 'CONTEXT', 'REQUEST', 'TRANSPORT', 'VALIDATION', 'CORRECTION',
+            'TERMINALIZATION', 'RECOVERY', 'MEMORY'
+        )),
+        error_code TEXT NOT NULL CHECK (error_code IN (
+            'CONTEXT_BUDGET_EXCEEDED', 'CONTEXT_CONSTRUCTION_FAILED',
+            'PERSISTENCE_ERROR', 'CONCURRENCY_CONFLICT', 'PROCESS_RESTARTED',
+            'CONFIGURATION_CHANGED', 'PROVIDER_UNAVAILABLE', 'MODEL_NOT_FOUND',
+            'MODEL_TIMEOUT', 'MODEL_CANCELLED', 'INVALID_PROVIDER_RESPONSE',
+            'VALIDATION_EXHAUSTED', 'CONFIGURATION_INVALID', 'CANCELLED_BY_USER'
+        )),
+        safe_message TEXT NOT NULL,
+        details_json TEXT NOT NULL CHECK ({_json_object_check("details_json")}),
+        is_terminal INTEGER NOT NULL CHECK (is_terminal IN (0, 1)),
+        created_at TEXT NOT NULL CHECK ({_utc_timestamp_check("created_at")}),
+        FOREIGN KEY (processing_run_id) REFERENCES processing_runs(id) ON DELETE RESTRICT
+    )
+    """,
+    """
+    INSERT INTO pipeline_failures_v2 (
+        id, processing_run_id, stage, error_code, safe_message,
+        details_json, is_terminal, created_at
+    )
+    SELECT
+        id, processing_run_id, stage, error_code, safe_message,
+        details_json, is_terminal, created_at
+    FROM pipeline_failures
+    """,
+    "DROP TABLE pipeline_failures",
+    "ALTER TABLE pipeline_failures_v2 RENAME TO pipeline_failures",
+    """
+    CREATE INDEX idx_pipeline_failures_run_created
+        ON pipeline_failures (processing_run_id, created_at)
+    """,
+)
+
+
 MIGRATIONS = (
     Migration(
         version=1,
         name="canonical_mvp_schema",
         statements=_CANONICAL_SCHEMA_STATEMENTS,
+    ),
+    Migration(
+        version=2,
+        name="widen_pipeline_failure_error_code",
+        statements=_WIDEN_PIPELINE_FAILURE_ERROR_CODE_STATEMENTS,
     ),
 )
 

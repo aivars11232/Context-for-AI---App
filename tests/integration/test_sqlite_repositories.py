@@ -1575,6 +1575,91 @@ def test_preconstructed_validation_exhaustion_projection_has_no_candidate_link(
     ).fetchone()[0] == 0
 
 
+def test_context_construction_failure_round_trips_without_unrelated_rows(
+    connection: sqlite3.Connection,
+) -> None:
+    bundle = repositories(connection)
+    core = seed_core(bundle)
+    failure = SafeFailure(
+        identifier(90),
+        core.run.id,
+        PipelineStage.CONTEXT,
+        FailureCode.CONTEXT_CONSTRUCTION_FAILED,
+        "Context could not be constructed safely.",
+        FrozenJsonObject(
+            {
+                "component": "PACKET_BUILD",
+                "reason_code": "CONTEXT_INVARIANT_VIOLATION",
+            }
+        ),
+        True,
+        stamp(5),
+    )
+    controlled_run = replace(
+        core.run,
+        status=ProcessingRunStatus.CONTROLLED_FAILURE,
+        completed_at=stamp(5),
+    )
+
+    with bundle.transactions.transaction():
+        bundle.runs.update(controlled_run)
+        bundle.models.add_failure(failure)
+
+    assert bundle.runs.get(core.run.id) == controlled_run
+    assert bundle.models.list_failures_for_run(core.run.id) == (failure,)
+    stored_failure = connection.execute(
+        """
+        SELECT stage, error_code, safe_message, details_json, is_terminal
+        FROM pipeline_failures WHERE id = ?
+        """,
+        (str(failure.id),),
+    ).fetchone()
+    assert stored_failure is not None
+    assert tuple(stored_failure) == (
+        "CONTEXT",
+        "CONTEXT_CONSTRUCTION_FAILED",
+        "Context could not be constructed safely.",
+        '{"component":"PACKET_BUILD","reason_code":"CONTEXT_INVARIANT_VIOLATION"}',
+        1,
+    )
+    unrelated_tables = (
+        "reference_resolutions",
+        "constraints",
+        "context_packets",
+        "retrieval_results",
+        "retrieval_exclusions",
+        "model_requests",
+        "model_responses",
+        "validation_results",
+        "correction_attempts",
+        "clarification_requests",
+    )
+    assert {
+        table_name: connection.execute(
+            f"SELECT count(*) FROM {table_name}"
+        ).fetchone()[0]
+        for table_name in unrelated_tables
+    } == {table_name: 0 for table_name in unrelated_tables}
+    assert connection.execute(
+        "SELECT count(*) FROM messages WHERE role = 'ASSISTANT'"
+    ).fetchone()[0] == 0
+
+    class RollbackMarker(Exception):
+        pass
+
+    rolled_back_failure = replace(failure, id=identifier(91), created_at=stamp(6))
+    with pytest.raises(RollbackMarker):
+        with bundle.transactions.transaction():
+            bundle.models.add_failure(rolled_back_failure)
+            raise RollbackMarker
+
+    assert bundle.runs.get(core.run.id) == controlled_run
+    assert bundle.models.list_failures_for_run(core.run.id) == (failure,)
+    assert connection.execute(
+        "SELECT count(*) FROM pipeline_failures"
+    ).fetchone()[0] == 1
+
+
 def test_transactions_idempotency_foreign_keys_and_typed_failures(
     connection: sqlite3.Connection,
 ) -> None:
