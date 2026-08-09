@@ -82,7 +82,10 @@ from context_for_ai.domain.enums import (
     TaskStatus,
     ValidationStatus,
     ValidationCheckId,
+    ValidationOutcome,
+    ValidationSeverity,
     ValidationViolationCode,
+    ValidationWarningCode,
 )
 from context_for_ai.domain.errors import (
     BusyError,
@@ -97,13 +100,17 @@ from context_for_ai.domain.errors import (
 from context_for_ai.domain.lifecycle import (
     ClarificationRequest,
     CorrectionAttempt,
+    MatchLocation,
     ModelRequest,
     ModelResponse,
     ProcessingRun,
     SafeFailure,
     ValidationResult,
+    ValidationEvidence,
     ValidationViolation,
     ValidationViolationEvidence,
+    calculate_validation_score,
+    validation_violation_message,
 )
 from context_for_ai.domain.policies import (
     MEMORY_REVISION_SCHEMA_VERSION,
@@ -209,6 +216,7 @@ __all__ = [
     "Message",
     "MessageRole",
     "MatchedRuleEvidence",
+    "MatchLocation",
     "ModelRequest",
     "ModelRequestPurpose",
     "ModelRequestStatus",
@@ -249,10 +257,15 @@ __all__ = [
     "UnitScore",
     "ValidationResult",
     "ValidationCheckId",
+    "ValidationEvidence",
+    "ValidationOutcome",
+    "ValidationSeverity",
     "ValidationStatus",
     "ValidationViolation",
     "ValidationViolationCode",
     "ValidationViolationEvidence",
+    "ValidationWarningCode",
+    "calculate_validation_score",
     "clear_terminal_active_task",
     "canonical_decimal_string",
     "canonical_json",
@@ -281,4 +294,5 @@ __all__ = [
     "touch_conversation_state",
     "transition_conversation_state",
     "utc_now",
+    "validation_violation_message",
 ]

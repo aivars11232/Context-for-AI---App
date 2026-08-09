@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
+from decimal import Context, Decimal, localcontext
 
 import pytest
 
@@ -16,20 +17,26 @@ from context_for_ai.domain.enums import (
     ProcessingRunStatus,
     ProviderKind,
     ValidationCheckId,
+    ValidationOutcome,
+    ValidationSeverity,
     ValidationStatus,
     ValidationViolationCode,
+    ValidationWarningCode,
 )
 from context_for_ai.domain.errors import LifecycleInvariantError
 from context_for_ai.domain.lifecycle import (
     ClarificationRequest,
     CorrectionAttempt,
+    MatchLocation,
     ModelRequest,
     ModelResponse,
     ProcessingRun,
     SafeFailure,
     ValidationResult,
+    ValidationEvidence,
     ValidationViolation,
     ValidationViolationEvidence,
+    calculate_validation_score,
 )
 from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, UnitScore
 
@@ -39,6 +46,92 @@ NOW = datetime(2026, 8, 2, 10, 0, tzinfo=timezone.utc)
 
 def identifier(number: int) -> DomainId:
     return DomainId(f"20000000-0000-4000-8000-{number:012d}")
+
+
+def normalized_input(
+    *,
+    predicate: str | None = None,
+    topic_terms: tuple[str, ...] = (),
+    output_type: str | None = None,
+    output_shape: str | None = None,
+) -> FrozenJsonObject:
+    return FrozenJsonObject(
+        {
+            "candidate_token_count": 2,
+            "sentence_count": 1,
+            "predicate": predicate,
+            "topic_terms": topic_terms,
+            "output_type": output_type,
+            "output_shape": output_shape,
+        }
+    )
+
+
+def passing_fixed_evidence() -> tuple[ValidationEvidence, ...]:
+    return (
+        ValidationEvidence(
+            0,
+            ValidationCheckId.TOPIC,
+            None,
+            None,
+            ValidationSeverity.INFO,
+            ValidationOutcome.PASSED,
+            normalized_input(topic_terms=("topic",)),
+            (MatchLocation(0, 5, 0),),
+            None,
+            None,
+            None,
+            "The deterministic predicate passed.",
+        ),
+        ValidationEvidence(
+            1,
+            ValidationCheckId.OUTPUT_SHAPE,
+            "shape-text-answer",
+            None,
+            ValidationSeverity.INFO,
+            ValidationOutcome.PASSED,
+            normalized_input(
+                output_type="TEXT_ANSWER",
+                output_shape="NON_EMPTY_TEXT",
+            ),
+            (),
+            None,
+            None,
+            None,
+            "The deterministic predicate passed.",
+        ),
+        ValidationEvidence(
+            2,
+            ValidationCheckId.ACTION_MARKER,
+            None,
+            None,
+            ValidationSeverity.INFO,
+            ValidationOutcome.PASSED,
+            normalized_input(),
+            (),
+            None,
+            None,
+            None,
+            "The deterministic predicate passed.",
+        ),
+    )
+
+
+def repetition_pass(ordinal: int) -> ValidationEvidence:
+    return ValidationEvidence(
+        ordinal,
+        ValidationCheckId.REPETITION,
+        None,
+        None,
+        ValidationSeverity.INFO,
+        ValidationOutcome.PASSED,
+        normalized_input(),
+        (),
+        None,
+        None,
+        None,
+        "The deterministic predicate passed.",
+    )
 
 
 def test_processing_run_is_an_immutable_lifecycle_record() -> None:
@@ -110,13 +203,39 @@ def test_model_request_and_response_freeze_transport_payloads() -> None:
 
 def test_validation_and_correction_records_preserve_typed_evidence() -> None:
     response_id = identifier(6)
+    required_evidence = ValidationEvidence(
+        3,
+        ValidationCheckId.REQUIRED_CONSTRAINT,
+        None,
+        identifier(8),
+        ValidationSeverity.ERROR,
+        ValidationOutcome.FAILED,
+        normalized_input(predicate="MUST_UPDATE:README"),
+        (),
+        "MUST_UPDATE:README",
+        ValidationViolationCode.MISSING_REQUIREMENT,
+        None,
+        "The deterministic predicate failed.",
+    )
+    evidence = (*passing_fixed_evidence(), required_evidence, repetition_pass(4))
+    violation = ValidationViolation(
+        0,
+        ValidationViolationCode.MISSING_REQUIREMENT,
+        "The response does not satisfy a required constraint.",
+        identifier(8),
+        ValidationViolationEvidence(
+            ValidationCheckId.REQUIRED_CONSTRAINT,
+            None,
+            3,
+        ),
+    )
     validation = ValidationResult(
         identifier(7),
         response_id,
         ValidationStatus.FAILED,
-        UnitScore("0.40"),
-        (FrozenJsonObject({"code": "MISSING_REQUIRED"}),),
-        (FrozenJsonObject({"constraint_id": str(identifier(8))}),),
+        UnitScore("0.70"),
+        (violation,),
+        evidence,
         NOW,
     )
     correction = CorrectionAttempt(
@@ -155,7 +274,7 @@ def test_validation_and_correction_records_preserve_typed_evidence() -> None:
 def test_validation_violation_is_closed_immutable_correction_evidence() -> None:
     evidence = ValidationViolationEvidence(
         ValidationCheckId.REQUIRED_CONSTRAINT,
-        "required-rule",
+        None,
         3,
     )
     violation = ValidationViolation(
@@ -174,7 +293,7 @@ def test_validation_violation_is_closed_immutable_correction_evidence() -> None:
             "constraint_id": str(identifier(8)),
             "evidence": {
                 "check_id": "REQUIRED_CONSTRAINT",
-                "rule_id": "required-rule",
+                "rule_id": None,
                 "evidence_ordinal": 3,
             },
         }
@@ -187,6 +306,198 @@ def test_validation_violation_is_closed_immutable_correction_evidence() -> None:
             identifier(8),
             evidence,
         )
+
+
+def test_validation_evidence_has_exact_closed_json_shape() -> None:
+    evidence = passing_fixed_evidence()[0]
+
+    assert evidence.to_json_object() == FrozenJsonObject(
+        {
+            "ordinal": 0,
+            "check_id": "TOPIC",
+            "rule_id": None,
+            "constraint_id": None,
+            "severity": "INFO",
+            "outcome": "PASSED",
+            "normalized_input": {
+                "candidate_token_count": 2,
+                "sentence_count": 1,
+                "predicate": None,
+                "topic_terms": ("topic",),
+                "output_type": None,
+                "output_shape": None,
+            },
+            "matches": (
+                {
+                    "source_start": 0,
+                    "source_end": 5,
+                    "sentence_ordinal": 0,
+                },
+            ),
+            "missing_predicate": None,
+            "violation_code": None,
+            "warning_code": None,
+            "explanation": "The deterministic predicate passed.",
+        }
+    )
+
+
+def test_validation_evidence_rejects_noncanonical_combinations() -> None:
+    values = {
+        "ordinal": 0,
+        "check_id": ValidationCheckId.TOPIC,
+        "rule_id": None,
+        "constraint_id": None,
+        "severity": ValidationSeverity.ERROR,
+        "outcome": ValidationOutcome.PASSED,
+        "normalized_input": normalized_input(topic_terms=("topic",)),
+        "matches": (),
+        "missing_predicate": None,
+        "violation_code": None,
+        "warning_code": None,
+        "explanation": "The deterministic predicate passed.",
+    }
+    with pytest.raises(LifecycleInvariantError, match="informational"):
+        ValidationEvidence(**values)  # type: ignore[arg-type]
+
+    values["severity"] = ValidationSeverity.INFO
+    values["normalized_input"] = FrozenJsonObject(
+        {**dict(normalized_input(topic_terms=("topic",))), "candidate_excerpt": "no"}
+    )
+    with pytest.raises(LifecycleInvariantError, match="exact canonical fields"):
+        ValidationEvidence(**values)  # type: ignore[arg-type]
+
+
+def test_literal_marker_constraint_may_record_an_uncontained_location() -> None:
+    marker_evidence = ValidationEvidence(
+        0,
+        ValidationCheckId.FORBIDDEN_CONSTRAINT,
+        None,
+        identifier(20),
+        ValidationSeverity.ERROR,
+        ValidationOutcome.FAILED,
+        normalized_input(predicate="MUST_NOT_EXECUTE:IMAGE_OR_ACTION"),
+        (MatchLocation(0, 3, None),),
+        None,
+        ValidationViolationCode.FORBIDDEN_ACTION,
+        None,
+        "The deterministic predicate failed.",
+    )
+
+    assert marker_evidence.matches[0].sentence_ordinal is None
+    with pytest.raises(LifecycleInvariantError, match="literal action-marker"):
+        ValidationEvidence(
+            0,
+            ValidationCheckId.FORBIDDEN_CONSTRAINT,
+            None,
+            identifier(20),
+            ValidationSeverity.ERROR,
+            ValidationOutcome.FAILED,
+            normalized_input(predicate="MUST_NOT_DELETE:FILE"),
+            (MatchLocation(0, 3, None),),
+            None,
+            ValidationViolationCode.FORBIDDEN_ACTION,
+            None,
+            "The deterministic predicate failed.",
+        )
+
+
+def test_conditional_rule_id_exists_exactly_for_preservation_predicates() -> None:
+    values = {
+        "ordinal": 0,
+        "check_id": ValidationCheckId.CONDITIONAL_CONSTRAINT,
+        "rule_id": None,
+        "constraint_id": identifier(20),
+        "severity": ValidationSeverity.INFO,
+        "outcome": ValidationOutcome.NOT_APPLICABLE,
+        "normalized_input": normalized_input(predicate="MUST_PRESERVE:HEADER"),
+        "matches": (),
+        "missing_predicate": None,
+        "violation_code": None,
+        "warning_code": None,
+        "explanation": "The check is not applicable to this packet.",
+    }
+    with pytest.raises(LifecycleInvariantError, match="require a rule ID"):
+        ValidationEvidence(**values)  # type: ignore[arg-type]
+
+    values["rule_id"] = "preserve-v1"
+    values["normalized_input"] = normalized_input(predicate="MUST_USE:PYTHON")
+    with pytest.raises(LifecycleInvariantError, match="null rule ID"):
+        ValidationEvidence(**values)  # type: ignore[arg-type]
+
+
+def test_validation_result_enforces_status_score_order_and_linkage() -> None:
+    evidence = (*passing_fixed_evidence(), repetition_pass(3))
+    result = ValidationResult(
+        identifier(7),
+        identifier(6),
+        ValidationStatus.PASSED,
+        UnitScore("1.00"),
+        (),
+        evidence,
+        NOW,
+    )
+    assert result.status is ValidationStatus.PASSED
+
+    with pytest.raises(LifecycleInvariantError, match="PASSED or FAILED"):
+        ValidationResult(
+            result.id,
+            result.model_response_id,
+            ValidationStatus.NOT_RUN,
+            result.score,
+            result.violations,
+            result.evidence,
+            result.created_at,
+        )
+    with pytest.raises(LifecycleInvariantError, match="canonical exact score"):
+        ValidationResult(
+            result.id,
+            result.model_response_id,
+            result.status,
+            UnitScore("0.95"),
+            result.violations,
+            result.evidence,
+            result.created_at,
+        )
+
+
+def test_validation_score_ignores_ambient_context_and_soft_warnings() -> None:
+    preferred = ValidationEvidence(
+        3,
+        ValidationCheckId.PREFERRED_CONSTRAINT,
+        None,
+        identifier(20),
+        ValidationSeverity.WARNING,
+        ValidationOutcome.WARNING,
+        normalized_input(predicate="PREFER_ADD:EXAMPLE"),
+        (),
+        "PREFER_ADD:EXAMPLE",
+        None,
+        ValidationWarningCode.PREFERRED_CONSTRAINT_UNSATISFIED,
+        "A non-failing deterministic warning was recorded.",
+    )
+    repeated = ValidationEvidence(
+        4,
+        ValidationCheckId.REPETITION,
+        None,
+        None,
+        ValidationSeverity.WARNING,
+        ValidationOutcome.WARNING,
+        normalized_input(),
+        (MatchLocation(0, 5, 0), MatchLocation(7, 12, 1)),
+        None,
+        None,
+        ValidationWarningCode.UNNECESSARY_REPETITION,
+        "A non-failing deterministic warning was recorded.",
+    )
+    evidence = (*passing_fixed_evidence(), preferred, repeated)
+
+    with localcontext(Context(prec=1)):
+        score = calculate_validation_score((), evidence)
+
+    assert score.value == Decimal("0.95")
+
+
 def test_clarification_and_safe_failure_are_distinct_typed_results() -> None:
     clarification = ClarificationRequest(
         identifier(11),

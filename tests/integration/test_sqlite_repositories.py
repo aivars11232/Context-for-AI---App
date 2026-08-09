@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import inspect
+import json
 from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
@@ -16,6 +17,9 @@ from typing import get_type_hints
 import pytest
 
 from context_for_ai.context_engine.prompt_rendering import _plan_initial
+from context_for_ai.context_engine.response_validation import (
+    DeterministicResponseValidator,
+)
 from context_for_ai.domain.decisions import (
     CONDITION_GRAMMAR_VERSION,
     CONTEXT_PACKET_SCHEMA_VERSION,
@@ -70,21 +74,32 @@ from context_for_ai.domain.enums import (
     ReferenceStatus,
     RetrievalExclusionReason,
     TaskStatus,
+    ValidationCheckId,
+    ValidationOutcome,
+    ValidationSeverity,
     ValidationStatus,
+    ValidationViolationCode,
+    ValidationWarningCode,
 )
 from context_for_ai.domain.errors import LifecycleInvariantError
 from context_for_ai.domain.lifecycle import (
     ClarificationRequest,
     CorrectionAttempt,
+    MatchLocation,
     ModelRequest,
     ModelResponse,
     ProcessingRun,
     SafeFailure,
+    ValidationEvidence,
     ValidationResult,
+    ValidationViolation,
+    ValidationViolationEvidence,
+    calculate_validation_score,
 )
 from context_for_ai.domain.policies import memory_revision_metadata
 from context_for_ai.domain.ports import (
     ClarificationRepository,
+    CorrectionExhausted,
     ConstraintRepository,
     ContextPacketRecord,
     ContextPacketRepository,
@@ -106,6 +121,7 @@ from context_for_ai.domain.ports import (
     TopicRepository,
     TransactionBoundary,
     ValidationRepository,
+    ValidationRequest,
     ContextBudgetExceeded,
 )
 from context_for_ai.domain.value_objects import DomainId, FrozenJsonObject, UnitScore
@@ -152,6 +168,7 @@ def context_packet_fixture(
     created_at: datetime,
     results: tuple[RetrievalResult, ...] = (),
     memories: tuple[Memory, ...] = (),
+    correction_limit: int = 2,
 ) -> ContextPacket:
     assert tuple(result.memory_id for result in results) == tuple(
         memory.id for memory in memories
@@ -219,8 +236,8 @@ def context_packet_fixture(
             "text_only": True,
             "no_actions": True,
             "streaming": False,
-            "correction_limit": 2,
-            "model_generation_limit": 3,
+            "correction_limit": correction_limit,
+            "model_generation_limit": correction_limit + 1,
             "absolute_model_generation_cap": 3,
         },
         "rendering": {
@@ -392,12 +409,14 @@ def add_empty_packet(
     core: CoreRecords,
     *,
     packet_number: int = 30,
+    correction_limit: int = 2,
 ) -> tuple[ContextPacketRecord, ProcessingRun]:
     packet = context_packet_fixture(
         packet_id=identifier(packet_number),
         run=core.run,
         message=core.user_message,
         created_at=stamp(10),
+        correction_limit=correction_limit,
     )
     record = ContextPacketRecord(packet, (), ())
     context_ready = replace(core.run, status=ProcessingRunStatus.CONTEXT_READY)
@@ -423,6 +442,147 @@ def initial_request(core: CoreRecords, packet: ContextPacket) -> ModelRequest:
         None,
         None,
         None,
+    )
+
+
+def validate_response(
+    packet: ContextPacket,
+    response: ModelResponse,
+    *,
+    result_id: DomainId = identifier(42),
+    created_at: datetime = BASE_TIME + timedelta(seconds=22),
+) -> ValidationResult:
+    return DeterministicResponseValidator().validate(
+        ValidationRequest(
+            packet,
+            response.id,
+            result_id,
+            response.response_text,
+            created_at,
+        )
+    )
+
+
+def validation_input(
+    *,
+    candidate_token_count: int,
+    sentence_count: int,
+    output: bool = False,
+) -> FrozenJsonObject:
+    return FrozenJsonObject(
+        {
+            "candidate_token_count": candidate_token_count,
+            "sentence_count": sentence_count,
+            "predicate": None,
+            "topic_terms": (),
+            "output_type": "TEXT_ANSWER" if output else None,
+            "output_shape": "NON_EMPTY_TEXT" if output else None,
+        }
+    )
+
+
+def repetition_score_report(
+    result_id: DomainId,
+    response_id: DomainId,
+    repetition_count: int,
+) -> ValidationResult:
+    sentence_count = max(1, repetition_count * 2)
+    common = {
+        "candidate_token_count": sentence_count,
+        "sentence_count": sentence_count,
+    }
+    evidence: list[ValidationEvidence] = [
+        ValidationEvidence(
+            0,
+            ValidationCheckId.TOPIC,
+            None,
+            None,
+            ValidationSeverity.INFO,
+            ValidationOutcome.NOT_APPLICABLE,
+            validation_input(**common),
+            (),
+            None,
+            None,
+            None,
+            "The check is not applicable to this packet.",
+        ),
+        ValidationEvidence(
+            1,
+            ValidationCheckId.OUTPUT_SHAPE,
+            "fixture-shape-answer",
+            None,
+            ValidationSeverity.INFO,
+            ValidationOutcome.PASSED,
+            validation_input(**common, output=True),
+            (),
+            None,
+            None,
+            None,
+            "The deterministic predicate passed.",
+        ),
+        ValidationEvidence(
+            2,
+            ValidationCheckId.ACTION_MARKER,
+            None,
+            None,
+            ValidationSeverity.INFO,
+            ValidationOutcome.PASSED,
+            validation_input(**common),
+            (),
+            None,
+            None,
+            None,
+            "The deterministic predicate passed.",
+        ),
+    ]
+    if repetition_count:
+        for group in range(repetition_count):
+            start = group * 4
+            evidence.append(
+                ValidationEvidence(
+                    len(evidence),
+                    ValidationCheckId.REPETITION,
+                    None,
+                    None,
+                    ValidationSeverity.WARNING,
+                    ValidationOutcome.WARNING,
+                    validation_input(**common),
+                    (
+                        MatchLocation(start, start + 1, group * 2),
+                        MatchLocation(start + 2, start + 3, group * 2 + 1),
+                    ),
+                    None,
+                    None,
+                    ValidationWarningCode.UNNECESSARY_REPETITION,
+                    "A non-failing deterministic warning was recorded.",
+                )
+            )
+    else:
+        evidence.append(
+            ValidationEvidence(
+                len(evidence),
+                ValidationCheckId.REPETITION,
+                None,
+                None,
+                ValidationSeverity.INFO,
+                ValidationOutcome.PASSED,
+                validation_input(**common),
+                (),
+                None,
+                None,
+                None,
+                "The deterministic predicate passed.",
+            )
+        )
+    frozen_evidence = tuple(evidence)
+    return ValidationResult(
+        result_id,
+        response_id,
+        ValidationStatus.PASSED,
+        calculate_validation_score((), frozen_evidence),
+        (),
+        frozen_evidence,
+        stamp(22),
     )
 
 
@@ -1005,15 +1165,7 @@ def test_model_success_lineage_settings_evaluation_and_restart_persistence(
         stamp(21),
     )
     bundle.models.add_response(response)
-    validation = ValidationResult(
-        identifier(42),
-        response.id,
-        ValidationStatus.PASSED,
-        UnitScore("1"),
-        (),
-        (FrozenJsonObject({"rule": "all-pass", "ok": True}),),
-        stamp(22),
-    )
+    validation = validate_response(packet_record.packet, response)
     bundle.validations.add(validation)
     assistant = Message(
         identifier(43),
@@ -1155,21 +1307,14 @@ def test_model_correction_lifecycle_rejects_invalid_candidates_and_duplicates(
     response = ModelResponse(
         identifier(41),
         succeeded_request.id,
-        "Invalid candidate text",
+        "TOOL_CALL:",
         FrozenJsonObject({"complete": True}),
         None,
         stamp(21),
     )
     bundle.models.add_response(response)
-    failed_validation = ValidationResult(
-        identifier(42),
-        response.id,
-        ValidationStatus.FAILED,
-        UnitScore("0.25"),
-        (FrozenJsonObject({"code": "MISSING_REQUIRED"}),),
-        (FrozenJsonObject({"constraint_id": str(identifier(90))}),),
-        stamp(22),
-    )
+    failed_validation = validate_response(packet_record.packet, response)
+    assert failed_validation.status is ValidationStatus.FAILED
     bundle.validations.add(failed_validation)
 
     assistant = Message(
@@ -1215,6 +1360,17 @@ def test_model_correction_lifecycle_rejects_invalid_candidates_and_duplicates(
         failed_validation.violations,
         stamp(23),
     )
+    wrong_reasons = replace(
+        correction,
+        reasons=failed_validation.violations[:1],
+    )
+    with pytest.raises(LifecycleInvariantError, match="exactly equal"):
+        with bundle.transactions.transaction():
+            bundle.models.add_request(revision_request)
+            bundle.models.add_correction(wrong_reasons)
+    assert bundle.models.get_request(revision_request.id) is None
+    assert bundle.models.list_corrections_for_run(core.run.id) == ()
+
     with bundle.transactions.transaction():
         bundle.models.add_request(revision_request)
         bundle.models.add_correction(correction)
@@ -1224,6 +1380,15 @@ def test_model_correction_lifecycle_rejects_invalid_candidates_and_duplicates(
         revision_request,
     )
     assert bundle.models.list_corrections_for_run(core.run.id) == (correction,)
+    stored_reason_json = connection.execute(
+        "SELECT reason_json FROM correction_attempts WHERE id = ?",
+        (str(correction.id),),
+    ).fetchone()[0]
+    assert tuple(
+        FrozenJsonObject(item) for item in json.loads(stored_reason_json)
+    ) == tuple(
+        violation.to_json_object() for violation in failed_validation.violations
+    )
 
     conflicting_correction = replace(correction, id=identifier(46))
     with pytest.raises(PersistenceError, match="already identifies"):
@@ -1249,6 +1414,165 @@ def test_model_correction_lifecycle_rejects_invalid_candidates_and_duplicates(
         bundle.models.add_failure(failure)
     assert bundle.models.list_failures_for_run(core.run.id) == (failure,)
     assert bundle.models.get_response(response.id).assistant_message_id is None
+
+
+def test_validation_json_and_every_reachable_score_round_trip_exactly(
+    connection: sqlite3.Connection,
+) -> None:
+    bundle = repositories(connection)
+    core = seed_core(bundle)
+    packet_record, context_ready = add_empty_packet(bundle, core)
+    pending = initial_request(core, packet_record.packet)
+    generating = replace(context_ready, status=ProcessingRunStatus.GENERATING)
+    with bundle.transactions.transaction():
+        bundle.runs.update(generating)
+        bundle.models.add_request(pending)
+    in_flight = replace(
+        pending,
+        status=ModelRequestStatus.IN_FLIGHT,
+        started_at=stamp(20),
+    )
+    succeeded = replace(
+        in_flight,
+        status=ModelRequestStatus.SUCCEEDED,
+        completed_at=stamp(21),
+    )
+    bundle.models.update_request(in_flight)
+    bundle.models.update_request(succeeded)
+    response = ModelResponse(
+        identifier(41),
+        succeeded.id,
+        "Buffered candidate",
+        FrozenJsonObject({"complete": True}),
+        None,
+        stamp(21),
+    )
+    bundle.models.add_response(response)
+
+    for repetition_count in range(21):
+        report = repetition_score_report(
+            identifier(42),
+            response.id,
+            repetition_count,
+        )
+        expected_score = max(
+            Decimal("0.00"),
+            Decimal("1.00") - Decimal("0.05") * repetition_count,
+        )
+        assert report.score.value == expected_score
+
+        bundle.validations.add(report)
+
+        assert bundle.validations.get(report.id) == report
+        row = connection.execute(
+            """
+            SELECT score, violations_json, evidence_json
+            FROM validation_results WHERE id = ?
+            """,
+            (str(report.id),),
+        ).fetchone()
+        assert UnitScore(row["score"]) == report.score
+        assert json.loads(row["violations_json"]) == []
+        stored_evidence = json.loads(row["evidence_json"])
+        assert sum(item["outcome"] == "WARNING" for item in stored_evidence) == (
+            repetition_count
+        )
+        connection.execute(
+            "DELETE FROM validation_results WHERE id = ?",
+            (str(report.id),),
+        )
+        connection.commit()
+
+    not_run = repetition_score_report(identifier(42), response.id, 0)
+    object.__setattr__(not_run, "status", ValidationStatus.NOT_RUN)
+    with pytest.raises(LifecycleInvariantError, match="NOT_RUN"):
+        bundle.validations.add(not_run)
+    assert bundle.validations.get(not_run.id) is None
+
+
+def test_preconstructed_validation_exhaustion_projection_has_no_candidate_link(
+    connection: sqlite3.Connection,
+) -> None:
+    bundle = repositories(connection)
+    core = seed_core(bundle)
+    packet_record, context_ready = add_empty_packet(
+        bundle,
+        core,
+        correction_limit=0,
+    )
+    pending = initial_request(core, packet_record.packet)
+    generating = replace(context_ready, status=ProcessingRunStatus.GENERATING)
+    with bundle.transactions.transaction():
+        bundle.runs.update(generating)
+        bundle.models.add_request(pending)
+    in_flight = replace(
+        pending,
+        status=ModelRequestStatus.IN_FLIGHT,
+        started_at=stamp(20),
+    )
+    succeeded = replace(
+        in_flight,
+        status=ModelRequestStatus.SUCCEEDED,
+        completed_at=stamp(21),
+    )
+    bundle.models.update_request(in_flight)
+    bundle.models.update_request(succeeded)
+    response = ModelResponse(
+        identifier(41),
+        succeeded.id,
+        "TOOL_CALL:",
+        FrozenJsonObject({"complete": True}),
+        None,
+        stamp(21),
+    )
+    bundle.models.add_response(response)
+    report = validate_response(packet_record.packet, response)
+    bundle.validations.add(report)
+    exhausted = CorrectionExhausted(
+        core.run.id,
+        packet_record.packet.id,
+        succeeded.id,
+        response.id,
+        report.id,
+        0,
+        0,
+    )
+    failure = SafeFailure(
+        identifier(47),
+        exhausted.processing_run_id,
+        PipelineStage.VALIDATION,
+        FailureCode.VALIDATION_EXHAUSTED,
+        "The response did not pass validation.",
+        FrozenJsonObject(
+            {
+                "context_packet_id": str(exhausted.context_packet_id),
+                "failed_model_request_id": str(exhausted.failed_model_request_id),
+                "failed_model_response_id": str(exhausted.failed_model_response_id),
+                "validation_result_id": str(exhausted.validation_result_id),
+                "attempt_number": exhausted.attempt_number,
+                "correction_limit": exhausted.correction_limit,
+            }
+        ),
+        True,
+        stamp(23),
+    )
+    terminal = replace(
+        generating,
+        status=ProcessingRunStatus.CONTROLLED_FAILURE,
+        completed_at=stamp(23),
+    )
+
+    with bundle.transactions.transaction():
+        bundle.models.add_failure(failure)
+        bundle.runs.update(terminal)
+
+    assert bundle.models.list_failures_for_run(core.run.id) == (failure,)
+    assert bundle.models.list_corrections_for_run(core.run.id) == ()
+    assert bundle.models.get_response(response.id).assistant_message_id is None
+    assert connection.execute(
+        "SELECT count(*) FROM correction_attempts WHERE processing_run_id = ?",
+        (str(core.run.id),),
+    ).fetchone()[0] == 0
 
 
 def test_transactions_idempotency_foreign_keys_and_typed_failures(

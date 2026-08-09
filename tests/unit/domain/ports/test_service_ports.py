@@ -15,6 +15,7 @@ import context_for_ai.domain.ports as public_ports
 from context_for_ai.domain.lifecycle import ClarificationRequest, ValidationResult
 from context_for_ai.domain.decisions import (
     ConstraintDecision,
+    CorrectionEnvelope,
     InterpretationDecision,
     ReferenceCandidateEvidence,
     ReferenceDecision,
@@ -31,6 +32,7 @@ from context_for_ai.domain.enums import (
     MemoryStatus,
     MemoryType,
     MessageRole,
+    ModelRequestPurpose,
     ModelRequestStatus,
     OutputType,
     ProcessingRunStatus,
@@ -55,6 +57,9 @@ from context_for_ai.domain.ports import (
     ContextRetriever,
     CorrectionController,
     CorrectionDecision,
+    CorrectionExhausted,
+    CorrectionPlanRequest,
+    FailedCandidateLineage,
     GenerationFailure,
     GenerationOutcome,
     GenerationRequest,
@@ -479,12 +484,15 @@ def test_deterministic_component_ports_have_typed_single_operation_contracts() -
     }
     correction_signature = inspect.signature(CorrectionController.plan)
     correction_hints = get_type_hints(CorrectionController.plan)
-    assert all(
-        parameter.kind is inspect.Parameter.KEYWORD_ONLY
-        for name, parameter in correction_signature.parameters.items()
-        if name != "self"
+    assert tuple(correction_signature.parameters) == ("self", "request")
+    assert correction_hints == {
+        "request": CorrectionPlanRequest,
+        "return": CorrectionDecision,
+    }
+    assert get_args(CorrectionDecision.__value__) == (
+        CorrectionEnvelope,
+        CorrectionExhausted,
     )
-    assert correction_hints["return"] == CorrectionDecision
 
     for request_type in (
         InterpretationRequest,
@@ -493,10 +501,83 @@ def test_deterministic_component_ports_have_typed_single_operation_contracts() -
         ReferenceResolutionRequest,
         ContextPacketBuildRequest,
         PromptRenderRequest,
+        ValidationRequest,
+        FailedCandidateLineage,
+        CorrectionPlanRequest,
+        CorrectionExhausted,
     ):
         assert is_dataclass(request_type)
         assert request_type.__dataclass_params__.frozen is True
         assert "__slots__" in vars(request_type)
+
+
+def test_failed_candidate_lineage_and_exhaustion_are_exact_bounded_values() -> None:
+    lineage = FailedCandidateLineage(
+        identifier(1),
+        identifier(2),
+        identifier(3),
+        identifier(4),
+        1,
+        ModelRequestPurpose.REVISION,
+        ModelRequestStatus.SUCCEEDED,
+        None,
+    )
+    exhausted = CorrectionExhausted(
+        lineage.processing_run_id,
+        lineage.context_packet_id,
+        lineage.model_request_id,
+        lineage.model_response_id,
+        identifier(5),
+        1,
+        1,
+    )
+
+    assert tuple(field.name for field in fields(FailedCandidateLineage)) == (
+        "processing_run_id",
+        "context_packet_id",
+        "model_request_id",
+        "model_response_id",
+        "attempt_number",
+        "request_purpose",
+        "request_status",
+        "assistant_message_id",
+    )
+    assert tuple(field.name for field in fields(CorrectionExhausted)) == (
+        "processing_run_id",
+        "context_packet_id",
+        "failed_model_request_id",
+        "failed_model_response_id",
+        "validation_result_id",
+        "attempt_number",
+        "correction_limit",
+    )
+    assert exhausted.failed_model_response_id == lineage.model_response_id
+
+    with pytest.raises(LifecycleInvariantError, match="must be 0, 1, or 2"):
+        FailedCandidateLineage(
+            lineage.processing_run_id,
+            lineage.context_packet_id,
+            lineage.model_request_id,
+            lineage.model_response_id,
+            3,
+            lineage.request_purpose,
+            lineage.request_status,
+            None,
+        )
+    with pytest.raises(LifecycleInvariantError, match="must equal"):
+        CorrectionExhausted(
+            lineage.processing_run_id,
+            lineage.context_packet_id,
+            lineage.model_request_id,
+            lineage.model_response_id,
+            identifier(5),
+            1,
+            2,
+        )
+
+
+def test_provisional_revision_envelope_is_not_public() -> None:
+    assert not hasattr(public_ports, "RevisionEnvelope")
 
 
 def test_validation_configuration_snapshot_requires_complete_model_shapes() -> None:

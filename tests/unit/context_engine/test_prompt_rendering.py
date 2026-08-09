@@ -264,7 +264,7 @@ def _packet(*, budget: int = 10000, original_text: str = "Explain the result.", 
 def _envelope() -> CorrectionEnvelope:
     evidence = ValidationViolationEvidence(
         ValidationCheckId.REQUIRED_CONSTRAINT,
-        "required-rule",
+        None,
         0,
     )
     violation = ValidationViolation(
@@ -391,7 +391,7 @@ def test_correction_uses_fixed_blocks_and_rejects_cross_packet_input() -> None:
     assert result.render_kind is PromptRenderKind.CORRECTION
     assert result.rendered_prompt.endswith(
         "@@CFA/CORRECTION/UNTRUSTED_DATA@@\n"
-        + '{"attempt_number":1,"context_packet_id":"50000000-0000-4000-8000-000000000010","failed_model_response_id":"50000000-0000-4000-8000-000000000060","schema_version":"mvp-correction-envelope-v1","violations":[{"code":"MISSING_REQUIREMENT","constraint_id":"50000000-0000-4000-8000-000000000030","evidence":{"check_id":"REQUIRED_CONSTRAINT","evidence_ordinal":0,"rule_id":"required-rule"},"message":"The response does not satisfy a required constraint.","ordinal":0}]}\n'
+        + '{"attempt_number":1,"context_packet_id":"50000000-0000-4000-8000-000000000010","failed_model_response_id":"50000000-0000-4000-8000-000000000060","schema_version":"mvp-correction-envelope-v1","violations":[{"code":"MISSING_REQUIREMENT","constraint_id":"50000000-0000-4000-8000-000000000030","evidence":{"check_id":"REQUIRED_CONSTRAINT","evidence_ordinal":0,"rule_id":null},"message":"The response does not satisfy a required constraint.","ordinal":0}]}\n'
         + "@@CFA/END@@\n"
     )
     assert packet.packet_json["rendering"] == _packet(include_optional=True).packet_json["rendering"]

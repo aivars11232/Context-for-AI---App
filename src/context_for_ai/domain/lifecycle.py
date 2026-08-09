@@ -5,18 +5,24 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
+import unicodedata
 
 from context_for_ai.domain.enums import (
     ClarificationReason,
     FailureCode,
     ModelRequestPurpose,
     ModelRequestStatus,
+    OutputType,
     PipelineStage,
     ProcessingRunStatus,
     ProviderKind,
     ValidationCheckId,
+    ValidationOutcome,
+    ValidationSeverity,
     ValidationStatus,
     ValidationViolationCode,
+    ValidationWarningCode,
 )
 from context_for_ai.domain.errors import LifecycleInvariantError
 from context_for_ai.domain.value_objects import (
@@ -59,14 +65,6 @@ def _non_negative_integer(field_name: str, value: int) -> None:
 
 def _freeze_json_object(value: FrozenJsonObject | Mapping[str, object]) -> FrozenJsonObject:
     return value if isinstance(value, FrozenJsonObject) else FrozenJsonObject(value)
-
-
-def _freeze_json_objects(
-    values: tuple[FrozenJsonObject, ...],
-) -> tuple[FrozenJsonObject, ...]:
-    if isinstance(values, (str, bytes)):
-        raise LifecycleInvariantError("JSON evidence must be a collection of objects.")
-    return tuple(_freeze_json_object(value) for value in values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,22 +140,6 @@ class ModelResponse:
         _normalize_time(self, "created_at")
 
 
-@dataclass(frozen=True, slots=True)
-class ValidationResult:
-    id: DomainId
-    model_response_id: DomainId
-    status: ValidationStatus
-    score: UnitScore
-    violations: tuple[FrozenJsonObject, ...]
-    evidence: tuple[FrozenJsonObject, ...]
-    created_at: datetime
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "violations", _freeze_json_objects(self.violations))
-        object.__setattr__(self, "evidence", _freeze_json_objects(self.evidence))
-        _normalize_time(self, "created_at")
-
-
 _VALIDATION_VIOLATION_MESSAGES = {
     ValidationViolationCode.TOPIC_MISMATCH:
         "The response does not reference the active topic.",
@@ -172,6 +154,395 @@ _VALIDATION_VIOLATION_MESSAGES = {
     ValidationViolationCode.CONDITIONAL_VIOLATION:
         "The response does not satisfy an active conditional constraint.",
 }
+
+_VALIDATION_EXPLANATIONS = {
+    ValidationOutcome.PASSED: "The deterministic predicate passed.",
+    ValidationOutcome.FAILED: "The deterministic predicate failed.",
+    ValidationOutcome.WARNING: "A non-failing deterministic warning was recorded.",
+    ValidationOutcome.NOT_APPLICABLE: "The check is not applicable to this packet.",
+}
+_VALIDATION_NORMALIZED_INPUT_KEYS = frozenset(
+    {
+        "candidate_token_count",
+        "sentence_count",
+        "predicate",
+        "topic_terms",
+        "output_type",
+        "output_shape",
+    }
+)
+_VALIDATION_OUTPUT_SHAPES = frozenset(
+    {"NON_EMPTY_TEXT", "NUMBERED_LIST", "FENCED_CODE", "COMPARISON_LIST"}
+)
+_MODEL_OUTPUT_TYPES = frozenset(
+    output_type
+    for output_type in OutputType
+    if output_type not in {OutputType.CLARIFICATION, OutputType.CONTROLLED_FAILURE}
+)
+_CONSTRAINT_CHECKS = frozenset(
+    {
+        ValidationCheckId.REQUIRED_CONSTRAINT,
+        ValidationCheckId.FORBIDDEN_CONSTRAINT,
+        ValidationCheckId.PRESERVE_CONSTRAINT,
+        ValidationCheckId.CONDITIONAL_CONSTRAINT,
+        ValidationCheckId.PREFERRED_CONSTRAINT,
+        ValidationCheckId.OPTIONAL_CONSTRAINT,
+        ValidationCheckId.ASSUMED_CONSTRAINT,
+    }
+)
+_FAILED_CODE_BY_CHECK = {
+    ValidationCheckId.TOPIC: ValidationViolationCode.TOPIC_MISMATCH,
+    ValidationCheckId.OUTPUT_SHAPE: ValidationViolationCode.OUTPUT_TYPE_MISMATCH,
+    ValidationCheckId.ACTION_MARKER: ValidationViolationCode.OUTPUT_TYPE_MISMATCH,
+    ValidationCheckId.REQUIRED_CONSTRAINT: ValidationViolationCode.MISSING_REQUIREMENT,
+    ValidationCheckId.FORBIDDEN_CONSTRAINT: ValidationViolationCode.FORBIDDEN_ACTION,
+    ValidationCheckId.PRESERVE_CONSTRAINT: ValidationViolationCode.PRESERVATION_VIOLATION,
+    ValidationCheckId.CONDITIONAL_CONSTRAINT: ValidationViolationCode.CONDITIONAL_VIOLATION,
+}
+_WARNING_CODE_BY_CHECK = {
+    ValidationCheckId.PREFERRED_CONSTRAINT:
+        ValidationWarningCode.PREFERRED_CONSTRAINT_UNSATISFIED,
+    ValidationCheckId.OPTIONAL_CONSTRAINT:
+        ValidationWarningCode.OPTIONAL_CONSTRAINT_UNSATISFIED,
+    ValidationCheckId.ASSUMED_CONSTRAINT:
+        ValidationWarningCode.ASSUMED_CONSTRAINT_NON_BINDING,
+    ValidationCheckId.REPETITION: ValidationWarningCode.UNNECESSARY_REPETITION,
+}
+_HARD_VIOLATION_CODES = frozenset(
+    {
+        ValidationViolationCode.MISSING_REQUIREMENT,
+        ValidationViolationCode.FORBIDDEN_ACTION,
+        ValidationViolationCode.PRESERVATION_VIOLATION,
+        ValidationViolationCode.CONDITIONAL_VIOLATION,
+    }
+)
+_TOPIC_OR_OUTPUT_VIOLATION_CODES = frozenset(
+    {
+        ValidationViolationCode.TOPIC_MISMATCH,
+        ValidationViolationCode.OUTPUT_TYPE_MISMATCH,
+    }
+)
+_VALIDATION_SCORE_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
+
+
+def validation_violation_message(code: ValidationViolationCode) -> str:
+    """Return the fixed public message for one candidate-failing code."""
+
+    if not isinstance(code, ValidationViolationCode):
+        raise LifecycleInvariantError("Validation violation code must be canonical.")
+    return _VALIDATION_VIOLATION_MESSAGES[code]
+
+
+@dataclass(frozen=True, slots=True)
+class MatchLocation:
+    """One source-mapped match without copied candidate content."""
+
+    source_start: int
+    source_end: int
+    sentence_ordinal: int | None
+
+    def __post_init__(self) -> None:
+        _non_negative_integer("MatchLocation.source_start", self.source_start)
+        if (
+            not isinstance(self.source_end, int)
+            or isinstance(self.source_end, bool)
+            or self.source_end <= self.source_start
+        ):
+            raise LifecycleInvariantError(
+                "MatchLocation.source_end must be greater than source_start."
+            )
+        if self.sentence_ordinal is not None:
+            _non_negative_integer(
+                "MatchLocation.sentence_ordinal",
+                self.sentence_ordinal,
+            )
+
+    def to_json_object(self) -> FrozenJsonObject:
+        return FrozenJsonObject(
+            {
+                "source_start": self.source_start,
+                "source_end": self.source_end,
+                "sentence_ordinal": self.sentence_ordinal,
+            }
+        )
+
+
+def _normalized_topic_term(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value == unicodedata.normalize("NFC", value).casefold()
+        and not any(character.isspace() for character in value)
+        and not any(
+            unicodedata.category(character).startswith("P") for character in value
+        )
+    )
+
+
+def _validate_normalized_input(
+    check_id: ValidationCheckId,
+    value: FrozenJsonObject,
+) -> None:
+    if frozenset(value) != _VALIDATION_NORMALIZED_INPUT_KEYS:
+        raise LifecycleInvariantError(
+            "ValidationEvidence.normalized_input must have the exact canonical fields."
+        )
+    for field_name in ("candidate_token_count", "sentence_count"):
+        _non_negative_integer(
+            f"ValidationEvidence.normalized_input.{field_name}",
+            value[field_name],  # type: ignore[arg-type]
+        )
+
+    predicate = value["predicate"]
+    topic_terms = value["topic_terms"]
+    output_type = value["output_type"]
+    output_shape = value["output_shape"]
+    _optional_text("ValidationEvidence.normalized_input.predicate", predicate)  # type: ignore[arg-type]
+    if not isinstance(topic_terms, tuple) or any(
+        not _normalized_topic_term(term) for term in topic_terms
+    ):
+        raise LifecycleInvariantError(
+            "ValidationEvidence topic_terms must be normalized tokens."
+        )
+
+    if check_id is ValidationCheckId.TOPIC:
+        if predicate is not None or output_type is not None or output_shape is not None:
+            raise LifecycleInvariantError(
+                "TOPIC evidence may contain only topic normalization policy."
+            )
+    elif topic_terms:
+        raise LifecycleInvariantError(
+            "Only TOPIC evidence may contain topic terms."
+        )
+
+    if check_id is ValidationCheckId.OUTPUT_SHAPE:
+        try:
+            canonical_output_type = OutputType(output_type)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as error:
+            raise LifecycleInvariantError(
+                "OUTPUT_SHAPE evidence requires a canonical output type."
+            ) from error
+        if canonical_output_type not in _MODEL_OUTPUT_TYPES:
+            raise LifecycleInvariantError(
+                "OUTPUT_SHAPE evidence requires a model-eligible output type."
+            )
+        if output_shape not in _VALIDATION_OUTPUT_SHAPES or predicate is not None:
+            raise LifecycleInvariantError(
+                "OUTPUT_SHAPE evidence requires one canonical shape."
+            )
+    elif output_type is not None or output_shape is not None:
+        raise LifecycleInvariantError(
+            "Only OUTPUT_SHAPE evidence may contain output policy fields."
+        )
+
+    if check_id in _CONSTRAINT_CHECKS:
+        if predicate is None:
+            raise LifecycleInvariantError(
+                "Constraint evidence requires its exact predicate."
+            )
+    elif predicate is not None:
+        raise LifecycleInvariantError(
+            "Only constraint evidence may contain a predicate."
+        )
+
+
+def _location_sort_key(location: MatchLocation) -> tuple[int, int, int]:
+    sentence = -1 if location.sentence_ordinal is None else location.sentence_ordinal
+    return location.source_start, location.source_end, sentence
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationEvidence:
+    """One exact deterministic check result retained in the validation report."""
+
+    ordinal: int
+    check_id: ValidationCheckId
+    rule_id: str | None
+    constraint_id: DomainId | None
+    severity: ValidationSeverity
+    outcome: ValidationOutcome
+    normalized_input: FrozenJsonObject
+    matches: tuple[MatchLocation, ...]
+    missing_predicate: str | None
+    violation_code: ValidationViolationCode | None
+    warning_code: ValidationWarningCode | None
+    explanation: str
+
+    def __post_init__(self) -> None:
+        _non_negative_integer("ValidationEvidence.ordinal", self.ordinal)
+        if not isinstance(self.check_id, ValidationCheckId):
+            raise LifecycleInvariantError("ValidationEvidence.check_id must be canonical.")
+        if not isinstance(self.severity, ValidationSeverity) or not isinstance(
+            self.outcome, ValidationOutcome
+        ):
+            raise LifecycleInvariantError(
+                "ValidationEvidence severity and outcome must be canonical."
+            )
+        _optional_text("ValidationEvidence.rule_id", self.rule_id)
+        _optional_text("ValidationEvidence.missing_predicate", self.missing_predicate)
+
+        if self.check_id in _CONSTRAINT_CHECKS:
+            if not isinstance(self.constraint_id, DomainId):
+                raise LifecycleInvariantError(
+                    "Constraint evidence requires a constraint domain ID."
+                )
+        elif self.constraint_id is not None:
+            raise LifecycleInvariantError(
+                "Non-constraint evidence requires a null constraint ID."
+            )
+
+        normalized_input = _freeze_json_object(self.normalized_input)
+        _validate_normalized_input(self.check_id, normalized_input)
+        object.__setattr__(self, "normalized_input", normalized_input)
+        predicate = normalized_input["predicate"]
+
+        requires_rule_id = self.check_id in {
+            ValidationCheckId.OUTPUT_SHAPE,
+            ValidationCheckId.PRESERVE_CONSTRAINT,
+        } or (
+            self.check_id is ValidationCheckId.CONDITIONAL_CONSTRAINT
+            and isinstance(predicate, str)
+            and predicate.startswith("MUST_PRESERVE:")
+        )
+        if requires_rule_id:
+            if self.rule_id is None:
+                raise LifecycleInvariantError(
+                    "Output-shape and preservation evidence require a rule ID."
+                )
+        elif self.rule_id is not None:
+            raise LifecycleInvariantError(
+                "This validation check requires a null rule ID."
+            )
+
+        matches = tuple(self.matches)
+        if any(not isinstance(match, MatchLocation) for match in matches):
+            raise LifecycleInvariantError(
+                "ValidationEvidence.matches must contain typed locations."
+            )
+        if matches != tuple(sorted(matches, key=_location_sort_key)) or len(
+            set(matches)
+        ) != len(matches):
+            raise LifecycleInvariantError(
+                "ValidationEvidence.matches must be sorted and deduplicated."
+            )
+        permits_uncontained_marker = (
+            self.check_id is ValidationCheckId.ACTION_MARKER
+            or (
+                predicate == "MUST_NOT_EXECUTE:IMAGE_OR_ACTION"
+                and self.check_id
+                in {
+                    ValidationCheckId.FORBIDDEN_CONSTRAINT,
+                    ValidationCheckId.CONDITIONAL_CONSTRAINT,
+                }
+            )
+        )
+        if not permits_uncontained_marker and any(
+            match.sentence_ordinal is None for match in matches
+        ):
+            raise LifecycleInvariantError(
+                "Only literal action-marker matches may have a null sentence ordinal."
+            )
+        object.__setattr__(self, "matches", matches)
+
+        if self.explanation != _VALIDATION_EXPLANATIONS[self.outcome]:
+            raise LifecycleInvariantError(
+                "ValidationEvidence.explanation must match its outcome."
+            )
+        if self.outcome is ValidationOutcome.FAILED:
+            if (
+                self.severity is not ValidationSeverity.ERROR
+                or self.warning_code is not None
+                or self.violation_code != _FAILED_CODE_BY_CHECK.get(self.check_id)
+            ):
+                raise LifecycleInvariantError(
+                    "FAILED evidence requires its canonical error code."
+                )
+        elif self.outcome is ValidationOutcome.WARNING:
+            if (
+                self.severity is not ValidationSeverity.WARNING
+                or self.violation_code is not None
+                or self.warning_code != _WARNING_CODE_BY_CHECK.get(self.check_id)
+            ):
+                raise LifecycleInvariantError(
+                    "WARNING evidence requires its canonical warning code."
+                )
+        elif (
+            self.severity is not ValidationSeverity.INFO
+            or self.violation_code is not None
+            or self.warning_code is not None
+        ):
+            raise LifecycleInvariantError(
+                "PASSED and NOT_APPLICABLE evidence must be informational."
+            )
+
+        expected_missing: str | None = None
+        if self.outcome is ValidationOutcome.FAILED:
+            if self.check_id is ValidationCheckId.TOPIC:
+                expected_missing = "ANY_ACTIVE_TOPIC_TERM"
+            elif self.check_id is ValidationCheckId.REQUIRED_CONSTRAINT:
+                expected_missing = predicate if isinstance(predicate, str) else None
+            elif (
+                self.check_id is ValidationCheckId.CONDITIONAL_CONSTRAINT
+                and isinstance(predicate, str)
+                and predicate.startswith("MUST_")
+                and not predicate.startswith(("MUST_NOT_", "MUST_PRESERVE:"))
+            ):
+                expected_missing = predicate
+        elif self.outcome is ValidationOutcome.WARNING and self.check_id in {
+            ValidationCheckId.PREFERRED_CONSTRAINT,
+            ValidationCheckId.OPTIONAL_CONSTRAINT,
+        }:
+            expected_missing = predicate if isinstance(predicate, str) else None
+        if self.missing_predicate != expected_missing:
+            raise LifecycleInvariantError(
+                "ValidationEvidence.missing_predicate is not canonical."
+            )
+
+        if self.outcome is ValidationOutcome.NOT_APPLICABLE and matches:
+            raise LifecycleInvariantError(
+                "NOT_APPLICABLE evidence cannot contain matches."
+            )
+        if self.check_id is ValidationCheckId.OUTPUT_SHAPE and matches:
+            raise LifecycleInvariantError("OUTPUT_SHAPE evidence cannot contain matches.")
+        if predicate == "MUST_PRESENT:ONE_ORDERED_STEP_AT_A_TIME" and matches:
+            raise LifecycleInvariantError(
+                "The structural one-step predicate cannot contain matches."
+            )
+        if self.check_id is ValidationCheckId.ASSUMED_CONSTRAINT and matches:
+            raise LifecycleInvariantError("ASSUMED evidence cannot contain matches.")
+        if self.check_id is ValidationCheckId.REPETITION:
+            if self.outcome is ValidationOutcome.WARNING and len(matches) < 2:
+                raise LifecycleInvariantError(
+                    "A repetition warning requires at least two locations."
+                )
+            if self.outcome is ValidationOutcome.PASSED and matches:
+                raise LifecycleInvariantError(
+                    "A repetition pass cannot contain matches."
+                )
+
+    def to_json_object(self) -> FrozenJsonObject:
+        return FrozenJsonObject(
+            {
+                "ordinal": self.ordinal,
+                "check_id": self.check_id.value,
+                "rule_id": self.rule_id,
+                "constraint_id": (
+                    None if self.constraint_id is None else str(self.constraint_id)
+                ),
+                "severity": self.severity.value,
+                "outcome": self.outcome.value,
+                "normalized_input": self.normalized_input,
+                "matches": tuple(match.to_json_object() for match in self.matches),
+                "missing_predicate": self.missing_predicate,
+                "violation_code": (
+                    None if self.violation_code is None else self.violation_code.value
+                ),
+                "warning_code": (
+                    None if self.warning_code is None else self.warning_code.value
+                ),
+                "explanation": self.explanation,
+            }
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +563,21 @@ class ValidationViolationEvidence:
             "ValidationViolationEvidence.evidence_ordinal",
             self.evidence_ordinal,
         )
+        if self.check_id in {
+            ValidationCheckId.OUTPUT_SHAPE,
+            ValidationCheckId.PRESERVE_CONSTRAINT,
+        }:
+            if self.rule_id is None:
+                raise LifecycleInvariantError(
+                    "Output-shape and preservation violation evidence require a rule ID."
+                )
+        elif (
+            self.check_id is not ValidationCheckId.CONDITIONAL_CONSTRAINT
+            and self.rule_id is not None
+        ):
+            raise LifecycleInvariantError(
+                "This violation evidence requires a null rule ID."
+            )
 
     def to_json_object(self) -> FrozenJsonObject:
         return FrozenJsonObject(
@@ -234,6 +620,20 @@ class ValidationViolation:
             raise LifecycleInvariantError(
                 "ValidationViolation.constraint_id must be a domain ID or null."
             )
+        expected_code = _FAILED_CODE_BY_CHECK.get(self.evidence.check_id)
+        if expected_code is None or self.code is not expected_code:
+            raise LifecycleInvariantError(
+                "ValidationViolation code must match its evidence check."
+            )
+        if self.evidence.check_id in _CONSTRAINT_CHECKS:
+            if self.constraint_id is None:
+                raise LifecycleInvariantError(
+                    "Constraint violations require a constraint ID."
+                )
+        elif self.constraint_id is not None:
+            raise LifecycleInvariantError(
+                "Non-constraint violations require a null constraint ID."
+            )
 
     def to_json_object(self) -> FrozenJsonObject:
         return FrozenJsonObject(
@@ -249,6 +649,166 @@ class ValidationViolation:
         )
 
 
+def calculate_validation_score(
+    violations: tuple[ValidationViolation, ...],
+    evidence: tuple[ValidationEvidence, ...],
+) -> UnitScore:
+    """Calculate the exact context-independent validation score."""
+
+    hard_count = sum(
+        violation.code in _HARD_VIOLATION_CODES for violation in violations
+    )
+    topic_or_output_count = sum(
+        violation.code in _TOPIC_OR_OUTPUT_VIOLATION_CODES
+        for violation in violations
+    )
+    repetition_count = sum(
+        item.warning_code is ValidationWarningCode.UNNECESSARY_REPETITION
+        for item in evidence
+    )
+    with localcontext(_VALIDATION_SCORE_CONTEXT):
+        score = max(
+            Decimal("0.00"),
+            Decimal("1.00")
+            - Decimal("0.30") * hard_count
+            - Decimal("0.15") * topic_or_output_count
+            - Decimal("0.05") * repetition_count,
+        )
+    return UnitScore(score)
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationResult:
+    id: DomainId
+    model_response_id: DomainId
+    status: ValidationStatus
+    score: UnitScore
+    violations: tuple[ValidationViolation, ...]
+    evidence: tuple[ValidationEvidence, ...]
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, DomainId) or not isinstance(
+            self.model_response_id, DomainId
+        ):
+            raise LifecycleInvariantError(
+                "ValidationResult IDs must be domain IDs."
+            )
+        if self.status not in {ValidationStatus.PASSED, ValidationStatus.FAILED}:
+            raise LifecycleInvariantError(
+                "ValidationResult status must be PASSED or FAILED."
+            )
+        if not isinstance(self.score, UnitScore):
+            raise LifecycleInvariantError("ValidationResult.score must be a unit score.")
+
+        violations = tuple(self.violations)
+        evidence = tuple(self.evidence)
+        if any(not isinstance(item, ValidationViolation) for item in violations):
+            raise LifecycleInvariantError(
+                "ValidationResult violations must be typed."
+            )
+        if not evidence or any(
+            not isinstance(item, ValidationEvidence) for item in evidence
+        ):
+            raise LifecycleInvariantError(
+                "ValidationResult requires typed evidence."
+            )
+        if [item.ordinal for item in evidence] != list(range(len(evidence))):
+            raise LifecycleInvariantError(
+                "ValidationResult evidence requires contiguous zero-based order."
+            )
+        check_order = {check: index for index, check in enumerate(ValidationCheckId)}
+        if tuple(check_order[item.check_id] for item in evidence) != tuple(
+            sorted(check_order[item.check_id] for item in evidence)
+        ):
+            raise LifecycleInvariantError(
+                "ValidationResult evidence requires canonical check order."
+            )
+        for fixed_check in (
+            ValidationCheckId.TOPIC,
+            ValidationCheckId.OUTPUT_SHAPE,
+            ValidationCheckId.ACTION_MARKER,
+        ):
+            if sum(item.check_id is fixed_check for item in evidence) != 1:
+                raise LifecycleInvariantError(
+                    "ValidationResult requires one item for every fixed check."
+                )
+        repetition = tuple(
+            item for item in evidence if item.check_id is ValidationCheckId.REPETITION
+        )
+        if not repetition or (
+            any(item.outcome is ValidationOutcome.WARNING for item in repetition)
+            and any(item.outcome is ValidationOutcome.PASSED for item in repetition)
+        ) or (
+            not any(item.outcome is ValidationOutcome.WARNING for item in repetition)
+            and not (
+                len(repetition) == 1
+                and repetition[0].outcome is ValidationOutcome.PASSED
+            )
+        ):
+            raise LifecycleInvariantError(
+                "ValidationResult repetition evidence is not canonical."
+            )
+        constraint_ids = tuple(
+            item.constraint_id
+            for item in evidence
+            if item.constraint_id is not None
+        )
+        if len(set(constraint_ids)) != len(constraint_ids):
+            raise LifecycleInvariantError(
+                "ValidationResult requires one evidence item per constraint."
+            )
+        count_pairs = {
+            (
+                item.normalized_input["candidate_token_count"],
+                item.normalized_input["sentence_count"],
+            )
+            for item in evidence
+        }
+        if len(count_pairs) != 1:
+            raise LifecycleInvariantError(
+                "ValidationResult evidence must share candidate normalization counts."
+            )
+
+        if [item.ordinal for item in violations] != list(range(len(violations))):
+            raise LifecycleInvariantError(
+                "ValidationResult violations require contiguous zero-based order."
+            )
+        failed_evidence = tuple(
+            item for item in evidence if item.outcome is ValidationOutcome.FAILED
+        )
+        if len(failed_evidence) != len(violations):
+            raise LifecycleInvariantError(
+                "Every failed evidence item requires exactly one violation."
+            )
+        for violation, item in zip(violations, failed_evidence, strict=True):
+            if (
+                violation.code is not item.violation_code
+                or violation.constraint_id != item.constraint_id
+                or violation.evidence.check_id is not item.check_id
+                or violation.evidence.rule_id != item.rule_id
+                or violation.evidence.evidence_ordinal != item.ordinal
+            ):
+                raise LifecycleInvariantError(
+                    "ValidationResult violation evidence linkage is not canonical."
+                )
+        expected_status = (
+            ValidationStatus.FAILED if violations else ValidationStatus.PASSED
+        )
+        if self.status is not expected_status:
+            raise LifecycleInvariantError(
+                "ValidationResult status must follow its violations."
+            )
+        if self.score != calculate_validation_score(violations, evidence):
+            raise LifecycleInvariantError(
+                "ValidationResult score must equal the canonical exact score."
+            )
+
+        object.__setattr__(self, "violations", violations)
+        object.__setattr__(self, "evidence", evidence)
+        _normalize_time(self, "created_at")
+
+
 @dataclass(frozen=True, slots=True)
 class CorrectionAttempt:
     id: DomainId
@@ -256,7 +816,7 @@ class CorrectionAttempt:
     attempt_number: int
     prior_model_response_id: DomainId
     revised_model_request_id: DomainId
-    reasons: tuple[FrozenJsonObject, ...]
+    reasons: tuple[ValidationViolation, ...]
     created_at: datetime
 
     def __post_init__(self) -> None:
@@ -264,9 +824,15 @@ class CorrectionAttempt:
             raise LifecycleInvariantError(
                 "CorrectionAttempt.attempt_number must be 1 or 2."
             )
-        reasons = _freeze_json_objects(self.reasons)
-        if not reasons:
+        reasons = tuple(self.reasons)
+        if not reasons or any(
+            not isinstance(reason, ValidationViolation) for reason in reasons
+        ):
             raise LifecycleInvariantError("CorrectionAttempt.reasons cannot be empty.")
+        if [reason.ordinal for reason in reasons] != list(range(len(reasons))):
+            raise LifecycleInvariantError(
+                "CorrectionAttempt.reasons require contiguous zero-based order."
+            )
         object.__setattr__(self, "reasons", reasons)
         _normalize_time(self, "created_at")
 

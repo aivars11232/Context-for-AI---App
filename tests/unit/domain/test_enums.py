@@ -45,7 +45,10 @@ from context_for_ai.domain.enums import (
     TaskStatus,
     ValidationStatus,
     ValidationCheckId,
+    ValidationOutcome,
+    ValidationSeverity,
     ValidationViolationCode,
+    ValidationWarningCode,
 )
 
 
@@ -129,6 +132,8 @@ CANONICAL_ENUM_VALUES: dict[type[StrEnum], tuple[str, ...]] = {
         "FAILED",
     ),
     ValidationStatus: ("PASSED", "FAILED", "NOT_RUN"),
+    ValidationSeverity: ("INFO", "WARNING", "ERROR"),
+    ValidationOutcome: ("PASSED", "FAILED", "WARNING", "NOT_APPLICABLE"),
     ValidationCheckId: (
         "TOPIC",
         "OUTPUT_SHAPE",
@@ -149,6 +154,12 @@ CANONICAL_ENUM_VALUES: dict[type[StrEnum], tuple[str, ...]] = {
         "FORBIDDEN_ACTION",
         "PRESERVATION_VIOLATION",
         "CONDITIONAL_VIOLATION",
+    ),
+    ValidationWarningCode: (
+        "PREFERRED_CONSTRAINT_UNSATISFIED",
+        "OPTIONAL_CONSTRAINT_UNSATISFIED",
+        "ASSUMED_CONSTRAINT_NON_BINDING",
+        "UNNECESSARY_REPETITION",
     ),
     ContextBudgetPhase: ("INITIAL", "CORRECTION"),
     PromptRenderKind: ("INITIAL", "CORRECTION"),

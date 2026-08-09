@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
-import unicodedata
 
+from context_for_ai.context_engine.normalization import normalize_word_tokens
 from context_for_ai.domain.decisions import RetrievalExclusion, RetrievalResult
 from context_for_ai.domain.entities import Memory
 from context_for_ai.domain.enums import (
@@ -76,13 +76,7 @@ class _ExclusionDraft:
 def _retrieval_tokens(value: str) -> tuple[str, ...]:
     if not isinstance(value, str):
         raise LifecycleInvariantError("Retrieval normalization requires text.")
-    normalized = unicodedata.normalize("NFC", value).casefold()
-    without_punctuation = "".join(
-        character
-        for character in normalized
-        if not unicodedata.category(character).startswith("P")
-    )
-    return tuple(without_punctuation.split())
+    return tuple(token.text for token in normalize_word_tokens(value))
 
 
 def normalize_retrieval_content(value: str) -> str:

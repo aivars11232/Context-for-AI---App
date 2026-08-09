@@ -1,0 +1,149 @@
+fixture_version: task-0013-response-validation-v1
+
+rich_case:
+  id: all-eleven-checks
+  topic_terms: [café]
+  candidate: "CAFE\u0301. Use Python and Rust. Delete file. Change header. Repeat me.\nrepeat me!"
+  constraints:
+    - {number: 30, ordinal: 0, type: REQUIRED, predicate: 'MUST_USE:PYTHON'}
+    - {number: 31, ordinal: 1, type: FORBIDDEN, predicate: 'MUST_NOT_DELETE:FILE'}
+    - {number: 32, ordinal: 2, type: PRESERVE, predicate: 'MUST_PRESERVE:HEADER'}
+    - {number: 33, ordinal: 3, type: CONDITIONAL, predicate: 'MUST_INCLUDE:SUMMARY', underlying_type: REQUIRED, condition_evaluation: 'TRUE'}
+    - {number: 34, ordinal: 4, type: PREFERRED, predicate: 'PREFER_ADD:EXAMPLE'}
+    - {number: 35, ordinal: 5, type: OPTIONAL, predicate: 'MAY_USE:RUST'}
+    - {number: 36, ordinal: 6, type: ASSUMED, predicate: 'ASSUME_USE:GO', status: OVERRIDDEN, winner_number: 30}
+  expected:
+    status: FAILED
+    score: '0.05'
+    checks: [TOPIC, OUTPUT_SHAPE, ACTION_MARKER, REQUIRED_CONSTRAINT, FORBIDDEN_CONSTRAINT, PRESERVE_CONSTRAINT, CONDITIONAL_CONSTRAINT, PREFERRED_CONSTRAINT, OPTIONAL_CONSTRAINT, ASSUMED_CONSTRAINT, REPETITION]
+    outcomes: [PASSED, PASSED, PASSED, PASSED, FAILED, FAILED, FAILED, WARNING, PASSED, WARNING, WARNING]
+    violations: [FORBIDDEN_ACTION, PRESERVATION_VIOLATION, CONDITIONAL_VIOLATION]
+    warnings: [PREFERRED_CONSTRAINT_UNSATISFIED, ASSUMED_CONSTRAINT_NON_BINDING, UNNECESSARY_REPETITION]
+    candidate_token_count: 13
+    sentence_count: 6
+    match_ranges:
+      TOPIC: [[0, 5, 0]]
+      REQUIRED_CONSTRAINT: [[7, 10, 1], [11, 17, 1]]
+      FORBIDDEN_CONSTRAINT: [[28, 34, 2], [35, 39, 2]]
+      PRESERVE_CONSTRAINT: [[41, 47, 3], [48, 54, 3]]
+      OPTIONAL_CONSTRAINT: [[7, 10, 1], [22, 26, 1]]
+      REPETITION: [[56, 66, 4], [67, 77, 5]]
+
+shape_cases:
+  - {id: non-empty-pass, output_type: TEXT_EXPLANATION, shape: NON_EMPTY_TEXT, candidate: '# Heading', outcome: PASSED, status: PASSED, score: '1.00'}
+  - {id: non-empty-fail, output_type: TEXT_EXPLANATION, shape: NON_EMPTY_TEXT, candidate: '', outcome: FAILED, status: FAILED, score: '0.85'}
+  - id: numbered-pass
+    output_type: TEXT_PLAN
+    shape: NUMBERED_LIST
+    candidate: |-
+      1. One
+      2. Two
+    outcome: PASSED
+    status: PASSED
+    score: '1.00'
+  - {id: numbered-fail, output_type: TEXT_PLAN, shape: NUMBERED_LIST, candidate: '01. One', outcome: FAILED, status: FAILED, score: '0.85'}
+  - id: fenced-pass
+    output_type: TEXT_CODE
+    shape: FENCED_CODE
+    candidate: |-
+      ```python
+      print('x')
+      ```
+    outcome: PASSED
+    status: PASSED
+    score: '1.00'
+  - id: fenced-fail
+    output_type: TEXT_CODE
+    shape: FENCED_CODE
+    candidate: |-
+      before
+      ```
+      x
+      ```
+    outcome: FAILED
+    status: FAILED
+    score: '0.80'
+  - id: comparison-pass
+    output_type: TEXT_COMPARISON
+    shape: COMPARISON_LIST
+    candidate: |-
+      - Alpha: one
+      * Beta: two
+    outcome: PASSED
+    status: PASSED
+    score: '1.00'
+  - id: comparison-fail
+    output_type: TEXT_COMPARISON
+    shape: COMPARISON_LIST
+    candidate: |-
+      - A!: one
+      * a: two
+    outcome: FAILED
+    status: FAILED
+    score: '0.85'
+
+additional_cases:
+  - id: empty-topic-and-shape
+    topic_terms: [topic]
+    candidate: ''
+    expected_status: FAILED
+    expected_score: '0.70'
+    expected_violations: [TOPIC_MISMATCH, OUTPUT_TYPE_MISMATCH]
+  - id: marker-and-derived-forbidden
+    candidate: 'Text TOOL_CALL: remains.'
+    constraints:
+      - {number: 30, ordinal: 0, type: FORBIDDEN, predicate: 'MUST_NOT_EXECUTE:IMAGE_OR_ACTION'}
+    expected_status: FAILED
+    expected_score: '0.55'
+    expected_violations: [OUTPUT_TYPE_MISMATCH, FORBIDDEN_ACTION]
+  - id: false-conditional-not-applicable
+    candidate: 'Delete file.'
+    constraints:
+      - {number: 30, ordinal: 0, type: CONDITIONAL, predicate: 'MUST_NOT_DELETE:FILE', status: INACTIVE, underlying_type: FORBIDDEN, condition_evaluation: 'FALSE'}
+    expected_status: PASSED
+    expected_score: '1.00'
+    conditional_outcome: NOT_APPLICABLE
+  - id: exact-required
+    candidate: 'Answer context for AI.'
+    constraints:
+      - {number: 30, ordinal: 0, type: REQUIRED, predicate: 'MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI'}
+    expected_status: PASSED
+    expected_score: '1.00'
+  - id: one-ordered-step
+    candidate: '1. First step'
+    constraints:
+      - {number: 30, ordinal: 0, type: REQUIRED, predicate: 'MUST_PRESENT:ONE_ORDERED_STEP_AT_A_TIME'}
+    expected_status: PASSED
+    expected_score: '1.00'
+
+invalid_predicates:
+  - {id: required-uses-forbidden, type: REQUIRED, predicate: 'MUST_NOT_DELETE:FILE'}
+  - {id: forbidden-uses-required, type: FORBIDDEN, predicate: 'MUST_DELETE:FILE'}
+  - {id: preserve-three-part, type: PRESERVE, predicate: 'MUST_NOT_CHANGE:FILE:preserve-v1'}
+  - {id: preferred-lowercase, type: PREFERRED, predicate: 'PREFER_use:PYTHON'}
+  - {id: optional-empty-object, type: OPTIONAL, predicate: 'MAY_USE:'}
+  - {id: conditional-soft-production, type: CONDITIONAL, predicate: 'MAY_USE:PYTHON', underlying_type: REQUIRED, condition_evaluation: 'TRUE'}
+
+invalid_packet_invariants:
+  - outer-schema
+  - topic-identity
+  - output-type-equality
+  - correction-limit
+  - missing-validation-context
+
+correction_cases:
+  - {limit: 0, attempt: 0, decision: EXHAUSTED}
+  - {limit: 1, attempt: 0, decision: ENVELOPE, next_attempt: 1}
+  - {limit: 1, attempt: 1, decision: EXHAUSTED}
+  - {limit: 2, attempt: 0, decision: ENVELOPE, next_attempt: 1}
+  - {limit: 2, attempt: 1, decision: ENVELOPE, next_attempt: 2}
+  - {limit: 2, attempt: 2, decision: EXHAUSTED}
+
+invalid_lineage_cases:
+  - cross-run
+  - cross-packet
+  - cross-response
+  - purpose
+  - request-status
+  - assistant-link
+  - over-limit

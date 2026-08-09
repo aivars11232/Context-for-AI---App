@@ -8,6 +8,7 @@ from itertools import permutations
 
 import pytest
 
+from context_for_ai.context_engine.normalization import normalize_words
 from context_for_ai.context_engine.retrieval import (
     DeterministicContextRetriever,
     normalize_retrieval_content,
@@ -129,6 +130,7 @@ def test_retrieval_normalization_deletes_punctuation_but_preserves_symbols() -> 
     value = "  CAFE\u0301\tFoo-bar, baz…qux  C++\u2003price€  "
 
     assert normalize_retrieval_content(value) == "café foobar bazqux c++ price€"
+    assert normalize_retrieval_content(value) == normalize_words(value)
     assert normalize_retrieval_content("---…") == ""
     with pytest.raises(LifecycleInvariantError, match="requires text"):
         normalize_retrieval_content(3)  # type: ignore[arg-type]

@@ -717,7 +717,7 @@ def correction_envelope(
         identifier(300),
         ValidationViolationEvidence(
             ValidationCheckId.REQUIRED_CONSTRAINT,
-            f"required-rule {MARKER_TEXT}",
+            None,
             0,
         ),
     )

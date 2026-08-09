@@ -19,8 +19,26 @@ REPOSITORY_ROOT = Path(__file__).parents[2]
 
 def test_package_imports() -> None:
     import context_for_ai
+    import context_for_ai.domain as domain
+    import context_for_ai.domain.ports as ports
 
     assert context_for_ai.__doc__ == "Context for AI local desktop application package."
+    for name in (
+        "MatchLocation",
+        "ValidationEvidence",
+        "ValidationOutcome",
+        "ValidationSeverity",
+        "ValidationWarningCode",
+        "calculate_validation_score",
+    ):
+        assert hasattr(domain, name)
+    for name in (
+        "CorrectionExhausted",
+        "CorrectionPlanRequest",
+        "FailedCandidateLineage",
+    ):
+        assert hasattr(ports, name)
+    assert not hasattr(ports, "RevisionEnvelope")
 
 
 def test_default_pytest_selection_centrally_excludes_live_ollama() -> None:

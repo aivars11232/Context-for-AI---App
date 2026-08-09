@@ -68,17 +68,26 @@ from context_for_ai.domain.enums import (
     ReferenceStatus,
     RetrievalExclusionReason,
     TaskStatus,
+    ValidationCheckId,
+    ValidationOutcome,
+    ValidationSeverity,
     ValidationStatus,
+    ValidationViolationCode,
+    ValidationWarningCode,
 )
 from context_for_ai.domain.errors import DomainError, LifecycleInvariantError
 from context_for_ai.domain.lifecycle import (
     ClarificationRequest,
     CorrectionAttempt,
+    MatchLocation,
     ModelRequest,
     ModelResponse,
     ProcessingRun,
     SafeFailure,
+    ValidationEvidence,
     ValidationResult,
+    ValidationViolation,
+    ValidationViolationEvidence,
 )
 from context_for_ai.domain.policies import (
     NON_TERMINAL_PROCESSING_RUN_STATUSES,
@@ -300,6 +309,176 @@ def _decode_object_array(value: object) -> tuple[FrozenJsonObject, ...]:
     if any(not isinstance(item, FrozenJsonObject) for item in decoded):
         raise PersistenceError("Stored JSON array must contain only objects.")
     return tuple(item for item in decoded if isinstance(item, FrozenJsonObject))
+
+
+_MATCH_LOCATION_KEYS = frozenset(
+    {"source_start", "source_end", "sentence_ordinal"}
+)
+_VALIDATION_EVIDENCE_KEYS = frozenset(
+    {
+        "ordinal",
+        "check_id",
+        "rule_id",
+        "constraint_id",
+        "severity",
+        "outcome",
+        "normalized_input",
+        "matches",
+        "missing_predicate",
+        "violation_code",
+        "warning_code",
+        "explanation",
+    }
+)
+_VALIDATION_VIOLATION_KEYS = frozenset(
+    {"ordinal", "code", "message", "constraint_id", "evidence"}
+)
+_VALIDATION_VIOLATION_EVIDENCE_KEYS = frozenset(
+    {"check_id", "rule_id", "evidence_ordinal"}
+)
+
+
+def _exact_json_keys(
+    value: FrozenJsonObject,
+    expected: frozenset[str],
+    field_name: str,
+) -> None:
+    if frozenset(value) != expected:
+        raise PersistenceError(f"Stored {field_name} has unknown or missing fields.")
+
+
+def _nested_object(value: object, field_name: str) -> FrozenJsonObject:
+    if not isinstance(value, FrozenJsonObject):
+        raise PersistenceError(f"Stored {field_name} must be an object.")
+    return value
+
+
+def _nested_array(value: object, field_name: str) -> tuple[object, ...]:
+    if not isinstance(value, tuple):
+        raise PersistenceError(f"Stored {field_name} must be an array.")
+    return value
+
+
+def _stored_optional_id(value: object) -> DomainId | None:
+    return None if value is None else DomainId(value)  # type: ignore[arg-type]
+
+
+def _decode_match_location(value: object) -> MatchLocation:
+    raw = _nested_object(value, "validation match location")
+    _exact_json_keys(raw, _MATCH_LOCATION_KEYS, "validation match location")
+    return MatchLocation(
+        raw["source_start"],  # type: ignore[arg-type]
+        raw["source_end"],  # type: ignore[arg-type]
+        raw["sentence_ordinal"],  # type: ignore[arg-type]
+    )
+
+
+def _decode_validation_evidence_item(value: FrozenJsonObject) -> ValidationEvidence:
+    _exact_json_keys(value, _VALIDATION_EVIDENCE_KEYS, "validation evidence")
+    normalized_input = _nested_object(
+        value["normalized_input"],
+        "validation normalized input",
+    )
+    matches = tuple(
+        _decode_match_location(item)
+        for item in _nested_array(value["matches"], "validation matches")
+    )
+    return ValidationEvidence(
+        value["ordinal"],  # type: ignore[arg-type]
+        ValidationCheckId(value["check_id"]),  # type: ignore[arg-type]
+        value["rule_id"],  # type: ignore[arg-type]
+        _stored_optional_id(value["constraint_id"]),
+        ValidationSeverity(value["severity"]),  # type: ignore[arg-type]
+        ValidationOutcome(value["outcome"]),  # type: ignore[arg-type]
+        normalized_input,
+        matches,
+        value["missing_predicate"],  # type: ignore[arg-type]
+        (
+            None
+            if value["violation_code"] is None
+            else ValidationViolationCode(value["violation_code"])  # type: ignore[arg-type]
+        ),
+        (
+            None
+            if value["warning_code"] is None
+            else ValidationWarningCode(value["warning_code"])  # type: ignore[arg-type]
+        ),
+        value["explanation"],  # type: ignore[arg-type]
+    )
+
+
+def _decode_validation_evidence(value: object) -> tuple[ValidationEvidence, ...]:
+    try:
+        return tuple(
+            _decode_validation_evidence_item(item)
+            for item in _decode_object_array(value)
+        )
+    except PersistenceError:
+        raise
+    except (DomainError, KeyError, TypeError, ValueError) as error:
+        raise PersistenceError(
+            "Stored validation evidence is not canonical."
+        ) from error
+
+
+def _decode_validation_violation_item(
+    value: FrozenJsonObject,
+) -> ValidationViolation:
+    _exact_json_keys(value, _VALIDATION_VIOLATION_KEYS, "validation violation")
+    evidence = _nested_object(
+        value["evidence"],
+        "validation violation evidence",
+    )
+    _exact_json_keys(
+        evidence,
+        _VALIDATION_VIOLATION_EVIDENCE_KEYS,
+        "validation violation evidence",
+    )
+    return ValidationViolation(
+        value["ordinal"],  # type: ignore[arg-type]
+        ValidationViolationCode(value["code"]),  # type: ignore[arg-type]
+        value["message"],  # type: ignore[arg-type]
+        _stored_optional_id(value["constraint_id"]),
+        ValidationViolationEvidence(
+            ValidationCheckId(evidence["check_id"]),  # type: ignore[arg-type]
+            evidence["rule_id"],  # type: ignore[arg-type]
+            evidence["evidence_ordinal"],  # type: ignore[arg-type]
+        ),
+    )
+
+
+def _decode_validation_violations(
+    value: object,
+) -> tuple[ValidationViolation, ...]:
+    try:
+        return tuple(
+            _decode_validation_violation_item(item)
+            for item in _decode_object_array(value)
+        )
+    except PersistenceError:
+        raise
+    except (DomainError, KeyError, TypeError, ValueError) as error:
+        raise PersistenceError(
+            "Stored validation violations are not canonical."
+        ) from error
+
+
+def _encode_validation_evidence(values: tuple[ValidationEvidence, ...]) -> str:
+    if any(not isinstance(item, ValidationEvidence) for item in values):
+        raise LifecycleInvariantError(
+            "Validation persistence requires typed evidence."
+        )
+    return _encode_json(tuple(item.to_json_object() for item in values))
+
+
+def _encode_validation_violations(
+    values: tuple[ValidationViolation, ...],
+) -> str:
+    if any(not isinstance(item, ValidationViolation) for item in values):
+        raise LifecycleInvariantError(
+            "Validation persistence requires typed violations."
+        )
+    return _encode_json(tuple(item.to_json_object() for item in values))
 
 
 def _project(row: sqlite3.Row) -> Project:
@@ -595,8 +774,8 @@ def _validation_result(row: sqlite3.Row) -> ValidationResult:
         DomainId(str(row["model_response_id"])),
         ValidationStatus(str(row["status"])),
         UnitScore(row["score"]),
-        _decode_object_array(row["violations_json"]),
-        _decode_object_array(row["evidence_json"]),
+        _decode_validation_violations(row["violations_json"]),
+        _decode_validation_evidence(row["evidence_json"]),
         parse_utc_timestamp(str(row["created_at"])),
     )
 
@@ -608,7 +787,7 @@ def _correction(row: sqlite3.Row) -> CorrectionAttempt:
         int(row["attempt_number"]),
         DomainId(str(row["prior_model_response_id"])),
         DomainId(str(row["revised_model_request_id"])),
-        _decode_object_array(row["reason_json"]),
+        _decode_validation_violations(row["reason_json"]),
         parse_utc_timestamp(str(row["created_at"])),
     )
 
@@ -2847,6 +3026,7 @@ class SQLiteModelCallRepository(_SQLiteRepository):
                 raise PersistenceError("Assistant message link was not applied exactly once.")
 
     def add_correction(self, correction: CorrectionAttempt) -> None:
+        encoded_reasons = _encode_validation_violations(correction.reasons)
         with self._write("Add correction attempt"):
             existing = self._one(
                 """
@@ -2867,10 +3047,13 @@ class SQLiteModelCallRepository(_SQLiteRepository):
                 self._connection,
                 """
                 SELECT prior_request.processing_run_id AS prior_run_id,
+                       prior_request.context_packet_id AS prior_packet_id,
                        prior_request.attempt_number AS prior_attempt,
                        prior_validation.status AS prior_validation_status,
+                       prior_validation.violations_json AS prior_violations_json,
                        prior_validation.created_at AS prior_validation_created_at,
                        revised_request.processing_run_id AS revised_run_id,
+                       revised_request.context_packet_id AS revised_packet_id,
                        revised_request.attempt_number AS revised_attempt,
                        revised_request.purpose AS revised_purpose,
                        processing_runs.status AS run_status
@@ -2896,13 +3079,21 @@ class SQLiteModelCallRepository(_SQLiteRepository):
             if (
                 row["prior_run_id"] != str(correction.processing_run_id)
                 or row["revised_run_id"] != str(correction.processing_run_id)
+                or row["prior_packet_id"] != row["revised_packet_id"]
                 or int(row["prior_attempt"]) != correction.attempt_number - 1
                 or int(row["revised_attempt"]) != correction.attempt_number
                 or row["revised_purpose"] != ModelRequestPurpose.REVISION.value
                 or row["prior_validation_status"] != ValidationStatus.FAILED.value
             ):
                 raise LifecycleInvariantError(
-                    "Correction lineage must be same-run, consecutive, and validation-driven."
+                    "Correction lineage must be same-run, same-packet, consecutive, and validation-driven."
+                )
+            prior_violations = _decode_validation_violations(
+                row["prior_violations_json"]
+            )
+            if correction.reasons != prior_violations:
+                raise LifecycleInvariantError(
+                    "Correction reasons must exactly equal the immediately prior failed report."
                 )
             if correction.created_at < parse_utc_timestamp(
                 str(row["prior_validation_created_at"])
@@ -2923,7 +3114,7 @@ class SQLiteModelCallRepository(_SQLiteRepository):
                     str(correction.id), str(correction.processing_run_id),
                     correction.attempt_number, str(correction.prior_model_response_id),
                     str(correction.revised_model_request_id),
-                    _encode_json(correction.reasons),
+                    encoded_reasons,
                     format_utc_timestamp(correction.created_at),
                 ),
             )
@@ -2980,6 +3171,25 @@ class SQLiteModelCallRepository(_SQLiteRepository):
 
 class SQLiteValidationRepository(_SQLiteRepository):
     def add(self, result: ValidationResult) -> None:
+        if result.status is ValidationStatus.NOT_RUN:
+            raise LifecycleInvariantError(
+                "A received candidate validation cannot be persisted as NOT_RUN."
+            )
+        encoded_violations = _encode_validation_violations(result.violations)
+        encoded_evidence = _encode_validation_evidence(result.evidence)
+        canonical_result = ValidationResult(
+            result.id,
+            result.model_response_id,
+            result.status,
+            result.score,
+            _decode_validation_violations(encoded_violations),
+            _decode_validation_evidence(encoded_evidence),
+            result.created_at,
+        )
+        if canonical_result != result:
+            raise LifecycleInvariantError(
+                "Validation persistence requires one canonical typed report."
+            )
         with self._write("Add validation result"):
             row = _fetch_one(
                 self._connection,
@@ -3013,8 +3223,8 @@ class SQLiteValidationRepository(_SQLiteRepository):
                 """,
                 (
                     str(result.id), str(result.model_response_id), result.status.value,
-                    float(result.score.value), _encode_json(result.violations),
-                    _encode_json(result.evidence),
+                    float(result.score.value), encoded_violations,
+                    encoded_evidence,
                     format_utc_timestamp(result.created_at),
                 ),
             )

@@ -30,6 +30,8 @@ from context_for_ai.domain.enums import (
     ContextBudgetPhase,
     FailureCode,
     MessageRole,
+    ModelRequestPurpose,
+    ModelRequestStatus,
     PromptRenderKind,
     PromptSection,
     ReferenceStatus,
@@ -616,6 +618,16 @@ class ValidationRequest:
     created_at: datetime
 
     def __post_init__(self) -> None:
+        if not isinstance(self.packet, ContextPacket):
+            raise LifecycleInvariantError(
+                "ValidationRequest.packet must be a typed context packet."
+            )
+        if not isinstance(self.model_response_id, DomainId) or not isinstance(
+            self.validation_result_id, DomainId
+        ):
+            raise LifecycleInvariantError(
+                "ValidationRequest response and result IDs must be domain IDs."
+            )
         if not isinstance(self.candidate_response, str):
             raise LifecycleInvariantError(
                 "ValidationRequest.candidate_response must be text."
@@ -624,38 +636,111 @@ class ValidationRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class RevisionEnvelope:
-    """Typed violations and unchanged packet lineage for one permitted revision."""
+class FailedCandidateLineage:
+    """Explicit persisted facts for the candidate that failed validation."""
 
+    processing_run_id: DomainId
     context_packet_id: DomainId
-    failed_model_response_id: DomainId
+    model_request_id: DomainId
+    model_response_id: DomainId
     attempt_number: int
-    violations: tuple[FrozenJsonObject, ...]
+    request_purpose: ModelRequestPurpose
+    request_status: ModelRequestStatus
+    assistant_message_id: DomainId | None
 
     def __post_init__(self) -> None:
-        if self.attempt_number not in (1, 2):
+        for field_name in (
+            "processing_run_id",
+            "context_packet_id",
+            "model_request_id",
+            "model_response_id",
+        ):
+            if not isinstance(getattr(self, field_name), DomainId):
+                raise LifecycleInvariantError(
+                    f"FailedCandidateLineage.{field_name} must be a domain ID."
+                )
+        if (
+            not isinstance(self.attempt_number, int)
+            or isinstance(self.attempt_number, bool)
+            or self.attempt_number not in (0, 1, 2)
+        ):
             raise LifecycleInvariantError(
-                "RevisionEnvelope.attempt_number must be 1 or 2."
+                "FailedCandidateLineage.attempt_number must be 0, 1, or 2."
             )
-        violations = tuple(
-            value if isinstance(value, FrozenJsonObject) else FrozenJsonObject(value)
-            for value in self.violations
-        )
-        if not violations:
+        if not isinstance(self.request_purpose, ModelRequestPurpose) or not isinstance(
+            self.request_status, ModelRequestStatus
+        ):
             raise LifecycleInvariantError(
-                "RevisionEnvelope.violations cannot be empty."
+                "FailedCandidateLineage request purpose and status must be canonical."
             )
-        object.__setattr__(self, "violations", violations)
+        if self.assistant_message_id is not None and not isinstance(
+            self.assistant_message_id, DomainId
+        ):
+            raise LifecycleInvariantError(
+                "FailedCandidateLineage.assistant_message_id must be a domain ID or null."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectionPlanRequest:
+    """One immutable packet, failed-candidate lineage, and failed report."""
+
+    packet: ContextPacket
+    failed_candidate: FailedCandidateLineage
+    validation_result: ValidationResult
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.packet, ContextPacket)
+            or not isinstance(self.failed_candidate, FailedCandidateLineage)
+            or not isinstance(self.validation_result, ValidationResult)
+        ):
+            raise LifecycleInvariantError(
+                "CorrectionPlanRequest requires typed packet, lineage, and report."
+            )
 
 
 @dataclass(frozen=True, slots=True)
 class CorrectionExhausted:
     """Typed bounded result when no configured revision remains."""
 
+    processing_run_id: DomainId
+    context_packet_id: DomainId
+    failed_model_request_id: DomainId
     failed_model_response_id: DomainId
+    validation_result_id: DomainId
+    attempt_number: int
+    correction_limit: int
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "processing_run_id",
+            "context_packet_id",
+            "failed_model_request_id",
+            "failed_model_response_id",
+            "validation_result_id",
+        ):
+            if not isinstance(getattr(self, field_name), DomainId):
+                raise LifecycleInvariantError(
+                    f"CorrectionExhausted.{field_name} must be a domain ID."
+                )
+        for field_name in ("attempt_number", "correction_limit"):
+            value = getattr(self, field_name)
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value not in (0, 1, 2)
+            ):
+                raise LifecycleInvariantError(
+                    f"CorrectionExhausted.{field_name} must be 0, 1, or 2."
+                )
+        if self.attempt_number != self.correction_limit:
+            raise LifecycleInvariantError(
+                "CorrectionExhausted attempt must equal the correction limit."
+            )
 
 
-type CorrectionDecision = RevisionEnvelope | CorrectionExhausted
+type CorrectionDecision = CorrectionEnvelope | CorrectionExhausted
 
 
 class ClarificationBuilder(Protocol):
@@ -718,12 +803,4 @@ class ResponseValidator(Protocol):
 class CorrectionController(Protocol):
     """Plan one bounded revision or report deterministic exhaustion."""
 
-    def plan(
-        self,
-        *,
-        context_packet_id: DomainId,
-        failed_model_response_id: DomainId,
-        validation_result: ValidationResult,
-        current_revision_count: int,
-        maximum_revisions: int,
-    ) -> CorrectionDecision: ...
+    def plan(self, request: CorrectionPlanRequest) -> CorrectionDecision: ...

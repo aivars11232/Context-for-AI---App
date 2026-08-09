@@ -5,13 +5,17 @@ from __future__ import annotations
 import pytest
 
 from context_for_ai.context_engine.normalization import (
+    find_casefolded_literal_spans,
     find_phrase_matches,
     normalize_capture,
     normalize_display_label,
     normalize_phrase,
     normalize_text,
+    normalize_word_tokens,
+    normalize_words,
     predicate_atom,
     split_action_object,
+    split_sentence_spans,
 )
 from context_for_ai.domain.errors import LifecycleInvariantError
 
@@ -63,3 +67,50 @@ def test_display_label_normalization_preserves_case_and_canonicalizes_unicode() 
     assert normalize_display_label(" \t\n ") == ""
     with pytest.raises(LifecycleInvariantError, match="requires text"):
         normalize_display_label(None)  # type: ignore[arg-type]
+
+
+def test_retrieval_words_delete_punctuation_and_preserve_exact_scalar_offsets() -> None:
+    source = "  CAFE\u0301\tStraße foo-bar\u2003C++  "
+
+    tokens = normalize_word_tokens(source)
+
+    assert tuple(token.text for token in tokens) == (
+        "café",
+        "strasse",
+        "foobar",
+        "c++",
+    )
+    assert tuple(source[token.source_start : token.source_end] for token in tokens) == (
+        "CAFE\u0301",
+        "Straße",
+        "foo-bar",
+        "C++",
+    )
+    assert normalize_words(source) == "café strasse foobar c++"
+    assert normalize_words("---…") == ""
+
+
+def test_casefolded_literal_matching_preserves_overlaps_and_source_mapping() -> None:
+    assert find_casefolded_literal_spans("aaaa", "aa") == (
+        (0, 2),
+        (1, 3),
+        (2, 4),
+    )
+    assert find_casefolded_literal_spans("Straße", "SS") == ((4, 5),)
+    with pytest.raises(LifecycleInvariantError, match="non-empty literal"):
+        find_casefolded_literal_spans("text", "")
+
+
+def test_sentence_spans_follow_exact_line_and_terminator_grammar() -> None:
+    source = "  One?!  Two\r\n  Three.\n\nFour?Five!  "
+
+    sentences = split_sentence_spans(source)
+
+    assert tuple(sentence.ordinal for sentence in sentences) == (0, 1, 2, 3)
+    assert tuple(
+        source[sentence.source_start : sentence.source_end]
+        for sentence in sentences
+    ) == ("One?!", "Two", "Three.", "Four?Five!")
+    assert split_sentence_spans(" \r\n\t ") == ()
+    with pytest.raises(LifecycleInvariantError, match="requires source text"):
+        split_sentence_spans(None)  # type: ignore[arg-type]
