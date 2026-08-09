@@ -211,6 +211,11 @@ class ProcessingRunRepository(Protocol):
 
     def get_non_terminal(self) -> ProcessingRun | None: ...
 
+    def list_for_conversation(
+        self,
+        conversation_id: DomainId,
+    ) -> tuple[ProcessingRun, ...]: ...
+
     def update(self, run: ProcessingRun) -> None: ...
 
 

@@ -15,6 +15,10 @@ REPOSITORY_ROOT = Path(__file__).parents[2]
 EXPECTED_QML = {
     "context_for_ai/ui/qml/Main.qml",
     "context_for_ai/ui/qml/components/ChatPanel.qml",
+    "context_for_ai/ui/qml/components/ContextInspectionPage.qml",
+    "context_for_ai/ui/qml/components/InspectionCollection.qml",
+    "context_for_ai/ui/qml/components/InspectionScalarList.qml",
+    "context_for_ai/ui/qml/components/InspectionSection.qml",
 }
 
 

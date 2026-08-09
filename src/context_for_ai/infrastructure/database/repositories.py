@@ -268,6 +268,64 @@ class SQLiteTransactionBoundary:
         return _joined_write_transaction(self._connection)
 
 
+@contextmanager
+def _read_only_snapshot(connection: sqlite3.Connection) -> Iterator[None]:
+    """Own one deferred, query-only SQLite snapshot on its calling thread."""
+
+    if _active_transaction_state(connection) is not None or connection.in_transaction:
+        raise PersistenceError(
+            "SQLite inspection snapshot cannot adopt an ambient transaction."
+        )
+    try:
+        row = connection.execute("PRAGMA query_only").fetchone()
+        if row is None:
+            raise PersistenceError("SQLite query-only state could not be read.")
+        prior_query_only = bool(row[0])
+        connection.execute("PRAGMA query_only = ON")
+        connection.execute("BEGIN")
+    except PersistenceError:
+        raise
+    except sqlite3.Error as error:
+        raise PersistenceError(
+            "SQLite inspection snapshot could not be opened."
+        ) from error
+
+    pending_error: BaseException | None = None
+    try:
+        yield
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        cleanup_error: sqlite3.Error | None = None
+        try:
+            if connection.in_transaction:
+                connection.rollback()
+        except sqlite3.Error as error:
+            cleanup_error = error
+        try:
+            connection.execute(
+                f"PRAGMA query_only = {'ON' if prior_query_only else 'OFF'}"
+            )
+        except sqlite3.Error as error:
+            cleanup_error = cleanup_error or error
+        if cleanup_error is not None and pending_error is None:
+            raise PersistenceError(
+                "SQLite inspection snapshot could not be closed."
+            ) from cleanup_error
+
+
+class SQLiteInspectionSnapshotBoundary:
+    """Open one deferred read-only snapshot without write-lock acquisition."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self._connection.row_factory = sqlite3.Row
+
+    def snapshot(self) -> AbstractContextManager[None]:
+        return _read_only_snapshot(self._connection)
+
+
 def _fetch_one(
     connection: sqlite3.Connection,
     sql: str,
@@ -2697,6 +2755,21 @@ class SQLiteProcessingRunRepository(_SQLiteRepository):
             "non-terminal processing run",
         )
 
+    def list_for_conversation(
+        self,
+        conversation_id: DomainId,
+    ) -> tuple[ProcessingRun, ...]:
+        return self._all(
+            """
+            SELECT * FROM processing_runs
+            WHERE conversation_id = ?
+            ORDER BY started_at, id
+            """,
+            (str(conversation_id),),
+            _processing_run,
+            "processing runs for conversation",
+        )
+
     def update(self, run: ProcessingRun) -> None:
         _validate_processing_run_timestamps(run)
         with self._write("Update processing run"):
@@ -4059,6 +4132,7 @@ __all__ = [
     "SQLiteMemoryRepository",
     "SQLiteMessageRepository",
     "SQLiteModelCallRepository",
+    "SQLiteInspectionSnapshotBoundary",
     "SQLiteProcessingRunRepository",
     "SQLiteProjectRepository",
     "SQLiteReferenceResolutionRepository",

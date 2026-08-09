@@ -12,6 +12,7 @@ import threading
 
 from context_for_ai.application import (
     ContextPacketStageService,
+    InspectContextService,
     PrepareApplicationShellService,
     ProcessUserMessageService,
     RecoverProcessingRunService,
@@ -58,6 +59,7 @@ from context_for_ai.infrastructure.database import (
     SQLiteConversationStateRepository,
     SQLiteEntityRepository,
     SQLiteEvaluationRepository,
+    SQLiteInspectionSnapshotBoundary,
     SQLiteMemoryRepository,
     SQLiteMessageRepository,
     SQLiteModelCallRepository,
@@ -243,6 +245,18 @@ class _ForegroundScope(_OwnedSQLiteScope):
         self.recover_processing_run = recover_processing_run
 
 
+class _InspectionScope(_OwnedSQLiteScope):
+    __slots__ = ("inspect_context",)
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        inspect_context: InspectContextService,
+    ) -> None:
+        super().__init__(connection)
+        self.inspect_context = inspect_context
+
+
 class ProductionShellScopeFactory:
     """Build fresh calling-thread-owned application scopes around SQLite."""
 
@@ -371,6 +385,19 @@ class ProductionShellScopeFactory:
                 context_packet_stage=stage,
             )
             return _ForegroundScope(connection, process, recover)
+        except BaseException:
+            connection.close()
+            raise
+
+    def open_inspection_scope(self) -> _InspectionScope:
+        connection = self._connection_factory(self._database_path)
+        try:
+            repositories = self._repositories(connection)
+            service = InspectContextService(
+                repositories=repositories,
+                snapshots=SQLiteInspectionSnapshotBoundary(connection),
+            )
+            return _InspectionScope(connection, service)
         except BaseException:
             connection.close()
             raise

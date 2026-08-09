@@ -88,8 +88,8 @@ def test_task_0015_at_001_real_startup_creates_one_chat_shell(
                 ).rglob("*.qml")
             )
         )
+        assert "CONTEXT_INSPECTION" in qml_text
         for deferred_route in (
-            "CONTEXT_INSPECTION",
             "Memory",
             "Projects",
             "Validation History",

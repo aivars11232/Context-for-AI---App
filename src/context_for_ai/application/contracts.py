@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from enum import StrEnum, unique
 from typing import Literal, Protocol
 
-from context_for_ai.domain.decisions import Constraint, ReferenceOutcome
 from context_for_ai.domain.entities import (
     Conversation,
     ConversationState,
@@ -52,12 +52,16 @@ from context_for_ai.domain.ports.context import (
 )
 from context_for_ai.domain.ports.model_gateway import CancellationToken
 from context_for_ai.domain.ports.records import (
-    ContextPacketRecord,
     EvaluationCase,
     EvaluationRun,
     MemoryRecord,
 )
-from context_for_ai.domain.value_objects import DomainId, UnitScore, ensure_utc
+from context_for_ai.domain.value_objects import (
+    DomainId,
+    UnitScore,
+    canonical_decimal_string,
+    ensure_utc,
+)
 
 
 def _required_text(field_name: str, value: str) -> None:
@@ -807,43 +811,612 @@ type PrepareApplicationShellResult = (
 )
 
 
+@unique
+class InspectionAvailability(StrEnum):
+    """Closed evidence availability vocabulary for context inspection."""
+
+    AVAILABLE = "AVAILABLE"
+    EMPTY = "EMPTY"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+@unique
+class InspectionRunOutcome(StrEnum):
+    """Safe historical processing outcome exposed by context inspection."""
+
+    PROCESSING = "PROCESSING"
+    SUCCEEDED = "SUCCEEDED"
+    CLARIFICATION = "CLARIFICATION"
+    CONTROLLED_FAILURE = "CONTROLLED_FAILURE"
+    CANCELLED = "CANCELLED"
+
+
+@unique
+class InspectionCheckpoint(StrEnum):
+    """Checkpoint derived only from committed inspection artifacts."""
+
+    ACCEPTED = "ACCEPTED"
+    CONTEXT_COMMITTED = "CONTEXT_COMMITTED"
+    VALIDATION_COMMITTED = "VALIDATION_COMMITTED"
+    CLARIFICATION_COMMITTED = "CLARIFICATION_COMMITTED"
+    TERMINAL_WITHOUT_CONTEXT = "TERMINAL_WITHOUT_CONTEXT"
+
+
+@unique
+class ActiveStateKind(StrEnum):
+    """Closed active-state owner kinds visible on the inspection page."""
+
+    PROJECT = "PROJECT"
+    TOPIC = "TOPIC"
+    TASK = "TASK"
+
+
+@unique
+class SafeTerminalKind(StrEnum):
+    """Terminal outcome kinds safe for historical inspection."""
+
+    CONTROLLED_FAILURE = "CONTROLLED_FAILURE"
+    CANCELLED = "CANCELLED"
+
+
+_INSPECTION_EMPTY_TEXT = "None recorded."
+_INSPECTION_NOT_APPLICABLE_TEXT = "Not applicable."
+_INSPECTION_UNAVAILABLE_TEXT = "Unavailable for this run."
+_ACTIVE_NULL_TEXTS = {
+    "No active project.",
+    "No active topic.",
+    "No active task.",
+}
+
+
+def _positive_integer(field_name: str, value: int) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise LifecycleInvariantError(f"{field_name} must be a positive integer.")
+
+
+def _canonical_inspection_label(code: str) -> str:
+    _required_text("CanonicalLabelView.code", code)
+    words = code.split("_")
+    if any(not word for word in words):
+        raise LifecycleInvariantError(
+            "CanonicalLabelView.code must contain non-empty underscore-separated words."
+        )
+    rendered = " ".join(word.lower() for word in words)
+    return rendered[0].upper() + rendered[1:]
+
+
 @dataclass(frozen=True, slots=True)
-class InspectContextInput:
-    """Identify the processing run whose durable context evidence is requested."""
+class CanonicalLabelView:
+    """One canonical enum code and its deterministic application-owned label."""
 
-    processing_run_id: DomainId
-
-
-@dataclass(frozen=True, slots=True)
-class InspectContextOutput:
-    """Durable context evidence for one run, without storage-layer records."""
-
-    run: ProcessingRun
-    packet: ContextPacketRecord | None
-    references: tuple[ReferenceOutcome, ...]
-    constraints: tuple[Constraint, ...]
-    clarification: ClarificationRequest | None
-    failures: tuple[SafeFailure, ...]
+    code: str
+    display_label: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "references", tuple(self.references))
-        object.__setattr__(self, "constraints", tuple(self.constraints))
-        object.__setattr__(self, "failures", tuple(self.failures))
-        run_id = self.run.id
-        if self.packet is not None and self.packet.packet.processing_run_id != run_id:
-            raise LifecycleInvariantError("Inspected packet must belong to the run.")
-        if any(reference.processing_run_id != run_id for reference in self.references):
-            raise LifecycleInvariantError("Inspected references must belong to the run.")
-        if any(constraint.processing_run_id != run_id for constraint in self.constraints):
-            raise LifecycleInvariantError("Inspected constraints must belong to the run.")
-        if self.clarification is not None and (
-            self.clarification.processing_run_id != run_id
+        expected = _canonical_inspection_label(self.code)
+        if self.display_label != expected:
+            raise LifecycleInvariantError(
+                "CanonicalLabelView.display_label must match its canonical code."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class InspectionScoreView:
+    """Canonical unrounded score text and fixed two-decimal display text."""
+
+    canonical_decimal: str
+    display_text: str
+
+    def __post_init__(self) -> None:
+        try:
+            value = Decimal(self.canonical_decimal)
+        except (InvalidOperation, TypeError, ValueError) as error:
+            raise LifecycleInvariantError(
+                "InspectionScoreView requires a canonical finite decimal score."
+            ) from error
+        if (
+            not value.is_finite()
+            or value < Decimal(0)
+            or value > Decimal(1)
+            or canonical_decimal_string(value) != self.canonical_decimal
         ):
             raise LifecycleInvariantError(
-                "Inspected clarification must belong to the run."
+                "InspectionScoreView.canonical_decimal must be canonical and in [0,1]."
             )
-        if any(failure.processing_run_id != run_id for failure in self.failures):
-            raise LifecycleInvariantError("Inspected failures must belong to the run.")
+        expected_display = format(
+            value.quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN),
+            ".2f",
+        )
+        if self.display_text != expected_display:
+            raise LifecycleInvariantError(
+                "InspectionScoreView.display_text must use two-decimal half-even formatting."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class InspectionValue[T]:
+    """One available or explicitly unavailable safe scalar value."""
+
+    availability: InspectionAvailability
+    value: T | None
+    display_text: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.availability, InspectionAvailability):
+            raise LifecycleInvariantError(
+                "InspectionValue requires a closed inspection availability."
+            )
+        if self.availability is InspectionAvailability.EMPTY:
+            raise LifecycleInvariantError("InspectionValue cannot use EMPTY availability.")
+        if self.availability is InspectionAvailability.AVAILABLE:
+            if self.value is None or not isinstance(self.display_text, str) or not self.display_text:
+                raise LifecycleInvariantError(
+                    "An available InspectionValue requires a value and display text."
+                )
+            return
+        if self.value is not None:
+            raise LifecycleInvariantError(
+                "A non-available InspectionValue cannot retain a value."
+            )
+        if self.availability is InspectionAvailability.NOT_APPLICABLE:
+            if self.display_text not in {
+                _INSPECTION_NOT_APPLICABLE_TEXT,
+                *_ACTIVE_NULL_TEXTS,
+            }:
+                raise LifecycleInvariantError(
+                    "A not-applicable InspectionValue requires contracted display text."
+                )
+        elif self.display_text != _INSPECTION_UNAVAILABLE_TEXT:
+            raise LifecycleInvariantError(
+                "An unavailable InspectionValue requires contracted display text."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class InspectionCollection[T]:
+    """One immutable collection with explicit evidence availability."""
+
+    availability: InspectionAvailability
+    items: tuple[T, ...]
+    display_text: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.availability, InspectionAvailability):
+            raise LifecycleInvariantError(
+                "InspectionCollection requires a closed inspection availability."
+            )
+        items = tuple(self.items)
+        object.__setattr__(self, "items", items)
+        if self.availability is InspectionAvailability.AVAILABLE:
+            if not items or self.display_text != "":
+                raise LifecycleInvariantError(
+                    "An available InspectionCollection requires items and empty display text."
+                )
+            return
+        if items:
+            raise LifecycleInvariantError(
+                "A non-available InspectionCollection cannot retain items."
+            )
+        expected = {
+            InspectionAvailability.EMPTY: _INSPECTION_EMPTY_TEXT,
+            InspectionAvailability.NOT_APPLICABLE: _INSPECTION_NOT_APPLICABLE_TEXT,
+            InspectionAvailability.UNAVAILABLE: _INSPECTION_UNAVAILABLE_TEXT,
+        }[self.availability]
+        if self.display_text != expected:
+            raise LifecycleInvariantError(
+                "InspectionCollection requires its contracted availability text."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class InspectionTargetView:
+    """Safe display identity and durable state of the selected historical run."""
+
+    user_message_sequence: int
+    request_label: str
+    outcome: InspectionRunOutcome
+    checkpoint: InspectionCheckpoint
+    outcome_label: str
+    checkpoint_label: str
+
+    def __post_init__(self) -> None:
+        _non_negative_integer(
+            "InspectionTargetView.user_message_sequence",
+            self.user_message_sequence,
+        )
+        if self.request_label != f"Request {self.user_message_sequence}":
+            raise LifecycleInvariantError(
+                "InspectionTargetView.request_label must use the safe request sequence."
+            )
+        if not isinstance(self.outcome, InspectionRunOutcome) or not isinstance(
+            self.checkpoint,
+            InspectionCheckpoint,
+        ):
+            raise LifecycleInvariantError(
+                "InspectionTargetView requires closed outcome and checkpoint values."
+            )
+        if self.outcome_label != _canonical_inspection_label(self.outcome.value):
+            raise LifecycleInvariantError(
+                "InspectionTargetView.outcome_label must match its outcome."
+            )
+        if self.checkpoint_label != _canonical_inspection_label(self.checkpoint.value):
+            raise LifecycleInvariantError(
+                "InspectionTargetView.checkpoint_label must match its checkpoint."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveStateItemView:
+    """Readable current label for one packet-snapshotted active owner ID."""
+
+    kind: ActiveStateKind
+    display_name: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, ActiveStateKind):
+            raise LifecycleInvariantError("ActiveStateItemView requires a closed kind.")
+        _required_text("ActiveStateItemView.display_name", self.display_name)
+
+
+@dataclass(frozen=True, slots=True)
+class QualifierEvidenceView:
+    """One ordered safe qualifier rule/source observation."""
+
+    ordinal: int
+    kind: CanonicalLabelView
+    rule_id: str
+    matched_text: str
+
+    def __post_init__(self) -> None:
+        _positive_integer("QualifierEvidenceView.ordinal", self.ordinal)
+        _required_text("QualifierEvidenceView.rule_id", self.rule_id)
+        _required_text("QualifierEvidenceView.matched_text", self.matched_text)
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceMessageSourceView:
+    """Safe message-sequence identity for reference source evidence."""
+
+    message_sequence: int
+    display_text: str
+
+    def __post_init__(self) -> None:
+        _non_negative_integer(
+            "ReferenceMessageSourceView.message_sequence",
+            self.message_sequence,
+        )
+        if self.display_text != f"Message {self.message_sequence}":
+            raise LifecycleInvariantError(
+                "ReferenceMessageSourceView.display_text must use its message sequence."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceEvidenceView:
+    """One ordered, redacted reference-candidate evidence record."""
+
+    rank: int
+    candidate_display_name: str | None
+    candidate_type: CanonicalLabelView | None
+    score: InspectionScoreView
+    rank_reason: CanonicalLabelView
+    evidence_message: ReferenceMessageSourceView | None
+    is_active: bool | None
+    activity_display_text: Literal["Active", "Inactive"] | None
+
+    def __post_init__(self) -> None:
+        _positive_integer("ReferenceEvidenceView.rank", self.rank)
+        if self.candidate_display_name is not None:
+            _required_text(
+                "ReferenceEvidenceView.candidate_display_name",
+                self.candidate_display_name,
+            )
+        if (self.is_active is None) != (self.activity_display_text is None):
+            raise LifecycleInvariantError(
+                "ReferenceEvidenceView activity value and text must be present together."
+            )
+        if self.is_active is not None:
+            if not isinstance(self.is_active, bool):
+                raise LifecycleInvariantError(
+                    "ReferenceEvidenceView.is_active must be boolean or null."
+                )
+            expected = "Active" if self.is_active else "Inactive"
+            if self.activity_display_text != expected:
+                raise LifecycleInvariantError(
+                    "ReferenceEvidenceView activity text must match its boolean."
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceInspectionView:
+    """One ordered reference outcome with only allowlisted safe evidence."""
+
+    mention_number: int
+    surface_text: str
+    status: CanonicalLabelView
+    resolved_display_name: InspectionValue[str]
+    source_message: InspectionValue[ReferenceMessageSourceView]
+    confidence: InspectionScoreView
+    evidence: tuple[ReferenceEvidenceView, ...]
+
+    def __post_init__(self) -> None:
+        _positive_integer("ReferenceInspectionView.mention_number", self.mention_number)
+        _required_text("ReferenceInspectionView.surface_text", self.surface_text)
+        evidence = tuple(self.evidence)
+        if not evidence:
+            raise LifecycleInvariantError(
+                "ReferenceInspectionView requires persisted candidate evidence."
+            )
+        object.__setattr__(self, "evidence", evidence)
+
+
+@dataclass(frozen=True, slots=True)
+class ConstraintConditionView:
+    """Safe closed projection of one persisted conditional predicate."""
+
+    grammar_version: str
+    kind: CanonicalLabelView
+    expected_value: str
+    evaluation: CanonicalLabelView
+
+    def __post_init__(self) -> None:
+        _required_text("ConstraintConditionView.grammar_version", self.grammar_version)
+        _required_text("ConstraintConditionView.expected_value", self.expected_value)
+
+
+@dataclass(frozen=True, slots=True)
+class ConstraintInspectionView:
+    """One ordered persisted constraint and its safe source evidence."""
+
+    ordinal: int
+    type: CanonicalLabelView
+    underlying_type: CanonicalLabelView | None
+    scope: CanonicalLabelView
+    normalized_rule: str
+    priority: int
+    source_kind: CanonicalLabelView
+    source_text: str
+    confidence: InspectionScoreView
+    resolution_status: CanonicalLabelView
+    condition: ConstraintConditionView | None
+
+    def __post_init__(self) -> None:
+        _positive_integer("ConstraintInspectionView.ordinal", self.ordinal)
+        _non_negative_integer("ConstraintInspectionView.priority", self.priority)
+        _required_text("ConstraintInspectionView.normalized_rule", self.normalized_rule)
+        _required_text("ConstraintInspectionView.source_text", self.source_text)
+
+
+@dataclass(frozen=True, slots=True)
+class ConflictRuleView:
+    """One safe constraint member of a persisted hard-conflict group."""
+
+    constraint_ordinal: int
+    type: CanonicalLabelView
+    normalized_rule: str
+    source_text: str
+
+    def __post_init__(self) -> None:
+        _positive_integer("ConflictRuleView.constraint_ordinal", self.constraint_ordinal)
+        _required_text("ConflictRuleView.normalized_rule", self.normalized_rule)
+        _required_text("ConflictRuleView.source_text", self.source_text)
+
+
+@dataclass(frozen=True, slots=True)
+class ConflictInspectionView:
+    """One ordered persisted conflict group with hidden group identity."""
+
+    ordinal: int
+    rules: tuple[ConflictRuleView, ...]
+
+    def __post_init__(self) -> None:
+        _positive_integer("ConflictInspectionView.ordinal", self.ordinal)
+        rules = tuple(self.rules)
+        if len(rules) < 2:
+            raise LifecycleInvariantError(
+                "ConflictInspectionView requires at least two persisted rules."
+            )
+        object.__setattr__(self, "rules", rules)
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievedMemoryInspectionView:
+    """One selected immutable packet memory snapshot and retrieval evidence."""
+
+    rank: int
+    content: str
+    scope: CanonicalLabelView
+    memory_confidence: InspectionScoreView
+    retrieval_score: InspectionScoreView
+    reasons: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _positive_integer("RetrievedMemoryInspectionView.rank", self.rank)
+        if not isinstance(self.content, str):
+            raise LifecycleInvariantError(
+                "RetrievedMemoryInspectionView.content must be exact text."
+            )
+        reasons = tuple(self.reasons)
+        if len(reasons) != 7:
+            raise LifecycleInvariantError(
+                "RetrievedMemoryInspectionView requires exactly seven reasons."
+            )
+        for reason in reasons:
+            _required_text("RetrievedMemoryInspectionView.reason", reason)
+        object.__setattr__(self, "reasons", reasons)
+
+
+@dataclass(frozen=True, slots=True)
+class ConfidenceInspectionView:
+    """Overall confidence and its persisted component evidence."""
+
+    overall: InspectionScoreView
+    interpretation: InspectionScoreView
+    references: InspectionValue[InspectionScoreView]
+    retrieval: InspectionValue[InspectionScoreView]
+
+
+@dataclass(frozen=True, slots=True)
+class SafeValidationViolationView:
+    """One ordered canonical safe validation violation."""
+
+    ordinal: int
+    code: CanonicalLabelView
+    message: str
+
+    def __post_init__(self) -> None:
+        _positive_integer("SafeValidationViolationView.ordinal", self.ordinal)
+        _required_text("SafeValidationViolationView.message", self.message)
+
+
+@dataclass(frozen=True, slots=True)
+class SafeValidationEvidenceView:
+    """One ordered allowlisted validation evidence record."""
+
+    ordinal: int
+    check_id: CanonicalLabelView
+    severity: CanonicalLabelView
+    outcome: CanonicalLabelView
+    violation_code: CanonicalLabelView | None
+    warning_code: CanonicalLabelView | None
+    explanation: str
+
+    def __post_init__(self) -> None:
+        _positive_integer("SafeValidationEvidenceView.ordinal", self.ordinal)
+        _required_text("SafeValidationEvidenceView.explanation", self.explanation)
+        if self.violation_code is not None and self.warning_code is not None:
+            raise LifecycleInvariantError(
+                "SafeValidationEvidenceView cannot expose both violation and warning codes."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationInspectionView:
+    """Latest-attempt validation projection without candidate or provider data."""
+
+    attempt_number: int
+    status: CanonicalLabelView
+    score: InspectionScoreView
+    violations: tuple[SafeValidationViolationView, ...]
+    evidence: tuple[SafeValidationEvidenceView, ...]
+
+    def __post_init__(self) -> None:
+        _positive_integer("ValidationInspectionView.attempt_number", self.attempt_number)
+        object.__setattr__(self, "violations", tuple(self.violations))
+        object.__setattr__(self, "evidence", tuple(self.evidence))
+
+
+@dataclass(frozen=True, slots=True)
+class ClarificationInspectionView:
+    """Safe clarification reason and deterministic persisted question."""
+
+    reason: CanonicalLabelView
+    question_text: str
+
+    def __post_init__(self) -> None:
+        _required_text("ClarificationInspectionView.question_text", self.question_text)
+
+
+@dataclass(frozen=True, slots=True)
+class SafeTerminalStatusView:
+    """Allowlisted historical terminal failure or cancellation status."""
+
+    kind: SafeTerminalKind
+    kind_label: str
+    stage: CanonicalLabelView
+    code: CanonicalLabelView
+    safe_message: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, SafeTerminalKind):
+            raise LifecycleInvariantError("SafeTerminalStatusView requires a closed kind.")
+        if self.kind_label != _canonical_inspection_label(self.kind.value):
+            raise LifecycleInvariantError(
+                "SafeTerminalStatusView.kind_label must match its kind."
+            )
+        _required_text("SafeTerminalStatusView.safe_message", self.safe_message)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextInspectionView:
+    """Complete closed historical inspection projection for one accepted run."""
+
+    target: InspectionTargetView
+    active_project: InspectionValue[ActiveStateItemView]
+    active_topic: InspectionValue[ActiveStateItemView]
+    active_task: InspectionValue[ActiveStateItemView]
+    intent: InspectionValue[CanonicalLabelView]
+    expected_output_type: InspectionValue[CanonicalLabelView]
+    qualifier_evidence: InspectionCollection[QualifierEvidenceView]
+    references: InspectionCollection[ReferenceInspectionView]
+    constraints: InspectionCollection[ConstraintInspectionView]
+    conflicts: InspectionCollection[ConflictInspectionView]
+    retrieved_memories: InspectionCollection[RetrievedMemoryInspectionView]
+    confidence: InspectionValue[ConfidenceInspectionView]
+    validation: InspectionValue[ValidationInspectionView]
+    correction_count: InspectionValue[int]
+    clarification: InspectionValue[ClarificationInspectionView]
+    terminal_status: InspectionValue[SafeTerminalStatusView]
+
+
+@dataclass(frozen=True, slots=True)
+class InspectContextRequest:
+    """Select the latest accepted run for one shell conversation."""
+
+    conversation_id: DomainId
+
+
+@dataclass(frozen=True, slots=True)
+class ContextInspectionReadyResult:
+    """One complete safe inspection view was loaded."""
+
+    view: ContextInspectionView
+    result_kind: Literal["CONTEXT_INSPECTION_READY"] = field(
+        init=False,
+        default="CONTEXT_INSPECTION_READY",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextInspectionEmptyResult:
+    """The existing conversation has no accepted processing run."""
+
+    result_kind: Literal["CONTEXT_INSPECTION_EMPTY"] = field(
+        init=False,
+        default="CONTEXT_INSPECTION_EMPTY",
+    )
+    safe_message: Literal[
+        "No processed request is available for this conversation."
+    ] = field(
+        init=False,
+        default="No processed request is available for this conversation.",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextInspectionLoadFailureResult:
+    """Inspection could not construct one complete safe historical view."""
+
+    result_kind: Literal["CONTEXT_INSPECTION_LOAD_FAILURE"] = field(
+        init=False,
+        default="CONTEXT_INSPECTION_LOAD_FAILURE",
+    )
+    code: Literal["INSPECTION_LOAD_FAILED"] = field(
+        init=False,
+        default="INSPECTION_LOAD_FAILED",
+    )
+    safe_message: Literal["Context inspection could not be loaded safely."] = field(
+        init=False,
+        default="Context inspection could not be loaded safely.",
+    )
+
+
+type InspectContextResult = (
+    ContextInspectionReadyResult
+    | ContextInspectionEmptyResult
+    | ContextInspectionLoadFailureResult
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1338,6 +1911,12 @@ class PrepareApplicationShell(Protocol):
     ) -> PrepareApplicationShellResult: ...
 
 
+class InspectContext(Protocol):
+    """Return one complete safe historical view for a conversation's latest run."""
+
+    def execute(self, request: InspectContextRequest) -> InspectContextResult: ...
+
+
 class StartupApplicationScope(Protocol):
     """Own the startup connection and its sole preparation use case."""
 
@@ -1355,24 +1934,28 @@ class ForegroundApplicationScope(Protocol):
     def close(self) -> None: ...
 
 
+class InspectionApplicationScope(Protocol):
+    """Own one worker-thread connection and the read-only inspection use case."""
+
+    inspect_context: InspectContext
+
+    def close(self) -> None: ...
+
+
 class ShellApplicationScopeFactory(Protocol):
-    """Create fresh calling-thread-owned startup and foreground scopes."""
+    """Create fresh calling-thread-owned finite shell application scopes."""
 
     def open_startup_scope(self) -> StartupApplicationScope: ...
 
     def open_foreground_scope(self) -> ForegroundApplicationScope: ...
+
+    def open_inspection_scope(self) -> InspectionApplicationScope: ...
 
 
 class IdempotencyKeyFactory(Protocol):
     """Allocate one caller-owned UUID for each accepted shell submission."""
 
     def new_key(self) -> DomainId: ...
-
-
-class InspectContext(Protocol):
-    """Return durable context evidence for one processing run."""
-
-    def execute(self, request: InspectContextInput) -> InspectContextOutput: ...
 
 
 class ContextPacketStage(Protocol):

@@ -13,6 +13,9 @@ from typing import Any
 import pytest
 
 from context_for_ai.application import (
+    ContextInspectionEmptyResult,
+    InspectContextRequest,
+    InspectContextService,
     PrepareApplicationShellRequest,
     ProcessUserMessageService,
     RecoverProcessingRunService,
@@ -215,6 +218,53 @@ def test_foreground_scope_is_opened_built_and_closed_on_worker_thread(
     assert len(connections.connections) == 1
     assert connections.connections[0].opened_thread_id == worker_thread_id
     assert connections.connections[0].closed_thread_id == worker_thread_id
+
+
+def test_inspection_scope_opens_queries_and_closes_on_its_worker_thread(
+    fixture_application_root: Path,
+    tmp_path: Path,
+) -> None:
+    connections = TrackingConnectionFactory()
+    factory = production_factory(fixture_application_root, tmp_path, connections)
+    startup = factory.open_startup_scope()
+    prepared = startup.prepare_application_shell.execute(
+        PrepareApplicationShellRequest()
+    )
+    assert isinstance(prepared, ShellReadyResult)
+    startup.close()
+    observations: queue.SimpleQueue[tuple[int, bool, bool, object]] = queue.SimpleQueue()
+
+    def use_scope() -> None:
+        scope = factory.open_inspection_scope()
+        result = scope.inspect_context.execute(
+            InspectContextRequest(prepared.conversation_id)
+        )
+        observations.put(
+            (
+                threading.get_ident(),
+                isinstance(scope.inspect_context, InspectContextService),
+                hasattr(scope, "process_user_message")
+                or hasattr(scope, "prepare_application_shell"),
+                result,
+            )
+        )
+        scope.close()
+
+    worker = threading.Thread(target=use_scope)
+    worker.start()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    worker_thread_id, has_inspection, has_other_use_case, result = observations.get()
+
+    assert has_inspection is True
+    assert has_other_use_case is False
+    assert result == ContextInspectionEmptyResult()
+    assert worker_thread_id != threading.get_ident()
+    assert len(connections.connections) == 2
+    inspection_connection = connections.connections[1]
+    assert inspection_connection.opened_thread_id == worker_thread_id
+    assert inspection_connection.closed_thread_id == worker_thread_id
+    assert inspection_connection.close_calls == 1
 
 
 def test_scope_rejects_cross_thread_close_then_owner_can_close(

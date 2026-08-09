@@ -57,9 +57,23 @@ ApplicationWindow {
                     objectName: "chatNavigationItem"
                     Layout.fillWidth: true
                     text: "Chat"
-                    highlighted: true
-                    enabled: false
+                    highlighted: shellFacade.route === "CHAT"
+                    enabled: shellFacade.route !== "CHAT"
+                    onClicked: shellFacade.navigate_to_chat()
+                    Accessible.role: Accessible.Button
                     Accessible.name: "Chat"
+                }
+
+                ItemDelegate {
+                    objectName: "contextInspectionNavigation"
+                    Layout.fillWidth: true
+                    text: "Context inspection"
+                    highlighted: shellFacade.route === "CONTEXT_INSPECTION"
+                    onClicked: shellFacade.navigate_to_context_inspection()
+                    Accessible.id: "contextInspectionNavigation"
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Context inspection"
+                    Accessible.description: ""
                 }
 
                 Item {
@@ -76,11 +90,20 @@ ApplicationWindow {
             }
         }
 
-        ChatPanel {
-            objectName: "chatPanel"
+        StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            facade: shellFacade
+            currentIndex: shellFacade.route === "CONTEXT_INSPECTION" ? 1 : 0
+
+            ChatPanel {
+                objectName: "chatPanel"
+                facade: shellFacade
+            }
+
+            ContextInspectionPage {
+                objectName: "contextInspectionPage"
+                facade: shellFacade
+            }
         }
     }
 }

@@ -36,9 +36,6 @@ from context_for_ai.application import (
     GetMemory,
     GetMemoryInput,
     IdempotencyKeyFactory,
-    InspectContext,
-    InspectContextInput,
-    InspectContextOutput,
     InspectValidation,
     InspectValidationInput,
     InspectValidationOutput,
@@ -131,7 +128,6 @@ from context_for_ai.domain.value_objects import DomainId, UnitScore
 
 
 USE_CASE_SIGNATURES = {
-    InspectContext: (InspectContextInput, InspectContextOutput),
     SelectProject: (SelectProjectInput, SelectProjectOutput),
     ApplyConversationStateTransition: (
         ApplyConversationStateTransitionInput,

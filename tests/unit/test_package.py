@@ -67,6 +67,10 @@ def test_qml_package_data_covers_root_and_arbitrary_nested_assets() -> None:
     } == {
         "Main.qml",
         "components/ChatPanel.qml",
+        "components/ContextInspectionPage.qml",
+        "components/InspectionCollection.qml",
+        "components/InspectionScalarList.qml",
+        "components/InspectionSection.qml",
     }
 
 
