@@ -16,6 +16,7 @@ data/database/*.db
 data/database/*.sqlite*
 data/logs/*
 data/cache/*
+data/acceptance/
 !data/database/.gitkeep
 !data/logs/.gitkeep
 !data/cache/.gitkeep

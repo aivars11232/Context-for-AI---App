@@ -1,0 +1,5 @@
+memory:
+  allow_manual_create: true
+  allow_manual_edit: true
+  allow_manual_soft_delete: true
+  automatic_mutation: false
