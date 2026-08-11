@@ -47,7 +47,9 @@ from context_for_ai.domain.ports.context import (
 from context_for_ai.domain.ports.model_gateway import (
     CancellationToken,
     CompletedGeneration,
+    GenerationOutcome,
     GenerationRequest,
+    GenerationSettings,
     InvalidProviderResponseFailure,
     ModelCancelledFailure,
     ModelNotFoundFailure,
@@ -124,8 +126,11 @@ class FixedIds:
 
 
 class FixedClock:
+    def __init__(self, value: datetime = NOW) -> None:
+        self._value = value
+
     def now(self) -> datetime:
-        return NOW
+        return self._value
 
 
 class TraceSink:
@@ -136,6 +141,11 @@ class TraceSink:
 class NoCancellation:
     def is_cancelled(self) -> bool:
         return False
+
+
+class CancelledToken:
+    def is_cancelled(self) -> bool:
+        return True
 
 
 class CapturingGateway:
@@ -161,6 +171,32 @@ class CapturingGateway:
             timedelta(microseconds=1),
             None,
         )
+
+
+class ReturningGateway:
+    def __init__(self, outcome: GenerationOutcome) -> None:
+        self.outcome = outcome
+        self.requests: list[GenerationRequest] = []
+
+    def generate(
+        self,
+        request: GenerationRequest,
+        cancellation_token: CancellationToken,
+    ) -> GenerationOutcome:
+        self.requests.append(request)
+        return self.outcome
+
+
+def generation_request() -> GenerationRequest:
+    return GenerationRequest(
+        model_name="local/smoke:latest",
+        rendered_prompt="CONTEXT_FOR_AI_PROMPT/mvp-prompt-policy-v2\n@@CFA/END@@\n",
+        settings=GenerationSettings(4096, 60, Decimal("0")),
+        processing_run_id=identifier(300),
+        context_packet_id=identifier(301),
+        model_request_id=identifier(302),
+        attempt_number=0,
+    )
 
 
 def read_yaml(path: Path) -> dict[str, object]:
@@ -524,6 +560,74 @@ def test_at_016_daemon_free_pipeline_uses_v2_semantics_and_production_evidence(
     )
 
 
+def test_live_preflight_estimate_tracks_actual_runtime_timestamp_bytes(
+    tmp_path: Path,
+) -> None:
+    configuration = load_configuration(application_root=AT_016_FIXTURE, environ={})
+
+    def execute_at(observed_at: datetime, database_name: str) -> tuple[str, int]:
+        database_path = apply_migrations(tmp_path / database_name)
+        factory = ProductionShellScopeFactory(
+            configuration=configuration,
+            database_path=database_path,
+            trace_logger=TraceSink(),  # type: ignore[arg-type]
+            clock=FixedClock(observed_at),
+            id_generator=FixedIds(),
+        )
+        gateway = CapturingGateway(
+            lambda request: live_acceptance._assert_pre_provider_database(
+                database_path,
+                configuration,
+                request,
+            )
+        )
+        factory._model_gateway = gateway  # type: ignore[attr-defined]
+        preparation = prepare_application_shell(factory)
+        assert isinstance(preparation, ShellReadyResult)
+
+        scope = factory.open_foreground_scope()
+        try:
+            result = scope.process_user_message.execute(
+                ProcessUserMessageRequest(
+                    preparation.conversation_id,
+                    USER_TEXT,
+                    identifier(999),
+                    None,
+                ),
+                NoCancellation(),
+            )
+        finally:
+            scope.close()
+
+        assert isinstance(result, SucceededResult)
+        assert len(gateway.requests) == 1
+        prompt = gateway.requests[0].rendered_prompt
+        prompt_estimate = conservative_utf8_estimate(prompt)
+        connection = connect_database(database_path)
+        try:
+            packet = SQLiteContextPacketRepository(connection).get_for_run(
+                result.processing_run_id
+            )
+        finally:
+            connection.close()
+        assert packet is not None
+        rendering = packet.packet.packet_json["rendering"]
+        assert rendering["mandatory_estimated_tokens"] == prompt_estimate
+        assert rendering["estimated_prompt_tokens"] == prompt_estimate
+        return prompt, prompt_estimate
+
+    fixed_prompt, fixed_estimate = execute_at(NOW, "fixed-clock.sqlite3")
+    runtime_at = NOW.replace(microsecond=123456)
+    runtime_prompt, runtime_estimate = execute_at(
+        runtime_at,
+        "runtime-clock.sqlite3",
+    )
+
+    assert runtime_at.isoformat().replace("+00:00", "Z") in runtime_prompt
+    assert len(runtime_prompt.encode("utf-8")) > len(fixed_prompt.encode("utf-8"))
+    assert runtime_estimate != fixed_estimate
+
+
 def test_impossible_passed_report_uses_existing_unexpected_result_failure() -> None:
     with pytest.raises(live_acceptance._LiveCheckFailure) as captured:
         live_acceptance._assert_required_constraint_evidence(
@@ -695,6 +799,52 @@ def test_prerequisites_admit_only_the_two_closed_passed_statuses() -> None:
             default_non_live_suite="FAILED",
             at_001_through_at_015="PASSED",
         )
+
+
+def test_pre_provider_harness_failure_is_not_mapped_to_model_cancelled() -> None:
+    recorder = live_acceptance._Recorder()
+    delegate = ReturningGateway(ModelCancelledFailure())
+
+    def fail_preflight(_: GenerationRequest) -> None:
+        raise live_acceptance._LiveCheckFailure(live_acceptance.LINEAGE_FAILURE)
+
+    observed = live_acceptance._ObservedGateway(
+        delegate,
+        recorder,
+        fail_preflight,
+    )
+
+    with pytest.raises(live_acceptance._LiveCheckFailure) as captured:
+        observed.generate(generation_request(), NoCancellation())
+
+    assert captured.value.failure == live_acceptance.LINEAGE_FAILURE
+    assert recorder.first_failure == live_acceptance.UNEXPECTED_FAILURE
+    assert recorder.outcomes == []
+    assert delegate.requests == []
+    assert live_acceptance._failure_for_result(None, recorder) == (
+        live_acceptance.UNEXPECTED_FAILURE
+    )
+
+
+def test_observed_gateway_preserves_real_provider_cancellation() -> None:
+    recorder = live_acceptance._Recorder()
+    outcome = ModelCancelledFailure()
+    delegate = ReturningGateway(outcome)
+    observed = live_acceptance._ObservedGateway(
+        delegate,
+        recorder,
+        lambda _: None,
+    )
+    request = generation_request()
+
+    assert observed.generate(request, CancelledToken()) == outcome
+    assert delegate.requests == [request]
+    assert recorder.first_failure is None
+    assert recorder.outcomes == [outcome]
+    assert live_acceptance._failure_for_result(None, recorder) == At016Failure(
+        "TRANSPORT",
+        "MODEL_CANCELLED",
+    )
 
 
 @pytest.mark.parametrize(

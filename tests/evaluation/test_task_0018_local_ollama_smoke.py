@@ -53,7 +53,6 @@ from context_for_ai.domain.ports import (
     CompletedGeneration,
     GenerationOutcome,
     GenerationRequest,
-    ModelCancelledFailure,
 )
 from context_for_ai.domain.ports.context import (
     ConstraintEvaluationRequest,
@@ -207,18 +206,20 @@ class _ObservedGateway:
         self._recorder.requests.append(request)
         try:
             self._preflight(request)
-        except _LiveCheckFailure as error:
-            self._recorder.fail(error.failure)
-            outcome: GenerationOutcome = ModelCancelledFailure()
-        except Exception:
+        except _LiveCheckFailure:
+            self._recorder.fail(UNEXPECTED_FAILURE)
+            raise
+        except sqlite3.Error:
             self._recorder.fail(PERSISTENCE_FAILURE)
-            outcome = ModelCancelledFailure()
-        else:
-            try:
-                outcome = self._delegate.generate(request, cancellation_token)
-            except Exception:
-                self._recorder.fail(UNEXPECTED_FAILURE)
-                raise
+            raise
+        except Exception:
+            self._recorder.fail(UNEXPECTED_FAILURE)
+            raise
+        try:
+            outcome = self._delegate.generate(request, cancellation_token)
+        except Exception:
+            self._recorder.fail(UNEXPECTED_FAILURE)
+            raise
         self._recorder.outcomes.append(outcome)
         return outcome
 
@@ -756,11 +757,13 @@ def _assert_pre_provider_database(
         )
 
         rendering = packet["rendering"]
+        prompt = generation.rendered_prompt
+        rendered_prompt_estimate = conservative_utf8_estimate(prompt)
         _require(rendering["prompt_policy_version"] == "mvp-prompt-policy-v2")
         _require(rendering["token_estimator"] == "conservative_utf8_v1")
         _require(rendering["token_budget"] == 2048)
-        _require(rendering["mandatory_estimated_tokens"] == 1362)
-        _require(rendering["estimated_prompt_tokens"] == 1362)
+        _require(rendering["mandatory_estimated_tokens"] == rendered_prompt_estimate)
+        _require(rendering["estimated_prompt_tokens"] == rendered_prompt_estimate)
         _require(rendering["included_sections"] == ["CONSTRAINTS"])
         _require(rendering["omitted_sections"] == [])
 
@@ -813,7 +816,7 @@ def _assert_pre_provider_database(
             request_projection["rendering"]
             == {
                 "effective_prompt_budget": 2048,
-                "estimated_prompt_tokens": 1362,
+                "estimated_prompt_tokens": rendered_prompt_estimate,
                 "included_sections": ["CONSTRAINTS"],
                 "omitted_sections": [],
                 "prompt_policy_version": "mvp-prompt-policy-v2",
@@ -822,7 +825,6 @@ def _assert_pre_provider_database(
         )
         _require(request_projection["schema_version"] == "mvp-model-request-v1")
 
-        prompt = generation.rendered_prompt
         _require(generation.model_name == configuration.model.name)
         _require(generation.attempt_number == 0)
         _require(generation.settings.context_window_tokens == 4096)
@@ -918,7 +920,10 @@ def _assert_pre_provider_database(
                 },
             ]
         )
-        _require(conservative_utf8_estimate(prompt) == 1362)
+        _require(
+            request_projection["rendering"]["estimated_prompt_tokens"]
+            == conservative_utf8_estimate(prompt)
+        )
 
 
 def _pump_until(
