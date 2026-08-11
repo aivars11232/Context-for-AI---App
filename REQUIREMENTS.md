@@ -95,6 +95,21 @@ memories, confidence, response policy, and trace identifiers. It shall apply
 the canonical token-budget and truncation rules, including non-droppable hard
 conditional and conflict evidence.
 
+Every newly constructed packet shall use `mvp-prompt-policy-v2`. Its trusted
+prompt shall retain each constraint's canonical `normalized_rule` as
+machine-audit data and shall also render the deterministic model-facing
+semantic instruction derived from that rule. The prompt shall additionally
+render only the closed topic, output-shape, action-marker, and active-preserve
+semantics needed for the same production validator to judge the response. No
+candidate-failing production requirement may depend on model semantics absent
+from those trusted projections.
+
+This requirement does not authorize a wholesale `validation_context` dump,
+untrusted source text as instruction, free-form or model-generated paraphrase,
+or weaker validation. Historical `mvp-prompt-policy-v1` packets and model
+requests remain immutable, historically truthful, and renderable only through
+their version-specific compatibility path; they are not rewritten as v2.
+
 ### FR-011 AI provider abstraction
 
 The system shall call one configured local-only Ollama text-generation model
@@ -117,6 +132,12 @@ only the canonical finite lexical and structural predicates, produce the same
 typed report and exact score for identical inputs, treat documented warnings as
 non-failing, and perform no model call, repository lookup, packet mutation, or
 fact/hallucination judgment.
+
+Prompt-policy v2 changes only what trusted semantics are communicated before
+generation. It shall not change candidate normalization, canonical predicate
+parsing, `MUST_EXACTLY` consecutive-token matching, violation behavior, score,
+or any other TASK-0013 validator rule; no acceptance-only or model-specific
+validator path is permitted.
 
 ### FR-013 Bounded correction
 

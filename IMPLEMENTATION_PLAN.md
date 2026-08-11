@@ -101,8 +101,29 @@ remains.
 
 ## Stage 8 — Local Ollama acceptance (`TASK-0018`)
 
-Run the opt-in, reproducible local-Ollama smoke acceptance against the
-configured local model and record non-secret environment/model metadata.
+Before TASK-0018 implementation continues or any live call begins, complete one
+bounded predecessor-correction gate after TASK-0017:
 
-**Exit:** AT-016 passes. A failed or unavailable live environment is reported,
-not ignored.
+1. Reopen only TASK-0010's prompt-rendering implementation boundary. Make
+   `mvp-prompt-policy-v2` current for new packets, add the exact deterministic
+   trusted validation/constraint semantic projections and byte-level grammar,
+   include those bytes in existing budgeting/correction behavior, and retain
+   exact version-dispatched v1 reading/rendering for historical packets.
+2. Preserve packet schema v2, the existing SQLite schema, historical packet and
+   model-request rows, and all TASK-0013 candidate normalization, predicate,
+   match, report, score, and correction behavior. No migration or validator
+   workaround is part of this correction.
+3. Make the revised AT-009 and affected non-live regression suite green. Only
+   then update TASK-0018's testing/evaluation harness to expect v2 and replace
+   its private raw-output sentinel with the exact production
+   `REQUIRED_CONSTRAINT` evidence assertion in AT-016.
+
+After that gate and the full deterministic/UI prerequisite chain are green, run
+the opt-in, reproducible local-Ollama smoke acceptance against the configured
+local model and record only the contracted non-secret environment/model
+metadata. TASK-0018 remains test/evaluation-only and owns no production repair.
+
+**Exit:** revised AT-009 and every non-live prerequisite are green, then AT-016
+passes through one normal production-validator success with no private
+candidate oracle. A failed or unavailable live environment is reported, not
+ignored.

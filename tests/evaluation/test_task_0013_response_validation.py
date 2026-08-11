@@ -22,6 +22,7 @@ from context_for_ai.domain.decisions import (
     CONTEXT_PACKET_SCHEMA_VERSION,
     CORRECTION_ENVELOPE_SCHEMA_VERSION,
     CORRECTION_INSTRUCTION,
+    HISTORICAL_PROMPT_POLICY_VERSION,
     ContextPacket,
     CorrectionEnvelope,
 )
@@ -327,7 +328,8 @@ def test_at011_malformed_predicates_and_packet_invariants_produce_no_report() ->
                     underlying_type=case.get("underlying_type"),
                     condition_evaluation=case.get("condition_evaluation"),
                 ),
-            )
+            ),
+            prompt_policy_version=HISTORICAL_PROMPT_POLICY_VERSION,
         )
         request = ValidationRequest(
             packet_value,

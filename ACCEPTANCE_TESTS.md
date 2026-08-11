@@ -160,7 +160,9 @@ scalar budget values. Include resolved/not-applicable references, active hard/
 true-conditional/preferred/optional constraints, inactive conditionals,
 complete override evidence, ranked memories, strings that resemble every
 prompt marker, every canonical TASK-0008 candidate score/reason pairing, and
-budgets that exercise fit and overflow.
+budgets that exercise fit and overflow. Parameterize null/empty/non-empty topic
+semantics, every output shape, configured action-marker literals, an active
+preserve rule, and every ordinary/reserved canonical predicate template.
 
 **Component action:** call
 `ContextPacketBuilder.build(ContextPacketBuildRequest)` and
@@ -176,34 +178,57 @@ initial `PromptRenderResult`. Outer identity/time remain outside
 the payload has schema `mvp-context-packet-v2`, exact original text, the closed
 topic/rule `validation_context`, all other required fields, complete ordered
 decision/evidence data, and selected memory snapshots. Validation context is
-not rendered or budgeted, and the prompt policy remains
-`mvp-prompt-policy-v1`.
+not rendered wholesale; its exact closed topic, output-shape, action-marker,
+and active-preserve semantic projections are trusted, mandatory, and budgeted.
+The newly built packet and render use `mvp-prompt-policy-v2`.
 Retrieval exclusions remain aggregate evidence outside the payload in canonical
 memory-UUID order, and retrieval confidence equals the upstream decision value
-without recomputation. The prompt uses `mvp-prompt-policy-v1`, the exact section
-bytes/order and canonical JSON, and includes every mandatory item. Rebuilding
-and rerendering the same fixture is byte-for-byte identical. Successful inputs
+without recomputation. The prompt uses the exact v2 preamble, semantic-policy
+line, section bytes/order, canonical JSON, and final LF. Every trusted
+constraint retains canonical `normalized_rule` and has the one exact
+`semantic_instruction` selected from the closed grammar; the validation-
+semantics object contains exactly its contracted fields. Rebuilding and
+rerendering the same fixture is byte-for-byte identical. The
+`MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK` fixture renders the exact semantic
+phrase `answer context for ai smoke ok` through the general mapping, not a
+fixture-specific branch. Successful inputs
 contain only `RESOLVED`/`NOT_APPLICABLE` references, no active material
 `ASSUMED` constraint, and no `CONFLICTING` constraint; ambiguous, unresolved,
 assumed, conflicting, incomplete-lineage, and mismatched-lineage pre-packet
 fixtures produce no packet or render. `OVERRIDDEN` records retain complete
 mandatory source and winner/related evidence.
 
+**Pass — prompt-policy compatibility:** a newly built packet cannot select v1
+and always records v2 in its outer record, payload rendering metadata, and
+render result. A preconstructed valid historical packet whose outer/payload
+policy is v1 remains readable and renders byte-for-byte with the historical v1
+preamble, seven-field trusted constraint projection, and no semantic-policy
+line or validation-semantics block. Its packet and stored rendering metadata
+are unchanged; a correction also stays on v1. Rendering the historical packet
+as v2, rendering a v2 packet as v1, or accepting any unknown policy is rejected
+rather than upgraded or guessed.
+
 **Pass — estimator and truncation:** `conservative_utf8_v1` returns `0` for
 `""`, `1` for `"abc"`, `2` for `"abcd"`, `1` for `"é"`, and `2` for `"😀"`,
-and estimates the complete UTF-8 render. Equality with the effective budget
-fits. Smaller fitting budgets tail-prune only whole items from the fixed total
-sequence—references, inactive-condition evidence, preferred constraints,
-retrieval by rank, then optional constraints—rerendering the whole prompt after
-each removal with no backfill. Exact projection/item-key omission records and
-included sections are deterministic, including a fixture whose whole-item
-removal has zero marginal estimated tokens; packet evidence and mandatory
-content are unchanged.
+and estimates the complete UTF-8 render, including v2 semantic bytes. Equality
+with the effective budget fits. The validation-semantics projection and every
+active hard/true-conditional semantic instruction are mandatory. Smaller
+fitting budgets tail-prune only whole items from the fixed total sequence—
+references, inactive-condition evidence, preferred constraints, retrieval by
+rank, then optional constraints—rerendering the whole prompt after each removal
+with no backfill. A retained preferred/optional item includes its complete
+canonical and semantic projection; neither projection may be pruned alone.
+Exact projection/item-key omission records and included sections are
+deterministic, including a fixture whose whole-item removal has zero marginal
+estimated tokens; packet evidence and mandatory content are unchanged.
 
 **Pass — canonicalization, injection, and correction:** marker-like user,
 reference, constraint `source_texts`/resolution evidence, and memory strings—
 including quotes, backslashes, CR/LF, U+2028, and U+2029—remain inside one
 canonical-JSON data line and cannot create, close, or reorder a trusted section.
+No source/evidence string participates in `semantic_instruction`; special
+action-marker and preservation semantics use only their immutable validation-
+context arrays and exact templates.
 The correction block uses only the closed typed violation and compact-evidence
 objects. Reordered input object keys render identically; exact decimals render
 in fixed-point form. TASK-0008 source candidate scores `0.0`, `0.6`, `0.8`,
@@ -824,6 +849,9 @@ The deterministic pre-provider expectations are:
   normalized rule `MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK`;
 - the unchanged active derived `FORBIDDEN`
   `MUST_NOT_EXECUTE:IMAGE_OR_ACTION` constraint at priority `1000`; and
+- packet/render policy `mvp-prompt-policy-v2`, with the canonical exact rule
+  retained and the exact trusted semantic instruction derived generally as
+  `Include the complete consecutive phrase "answer context for ai smoke ok" in one sentence; do not use a synonym or approximate substitution for that phrase.`;
 - response policy `TEXT_ANSWER`, `NON_EMPTY_TEXT`, text-only, no actions, and
   correction limit `0`.
 
@@ -831,23 +859,29 @@ No new validation predicate exists. The normal validator evaluates
 `MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK` as the consecutive normalized
 token sequence `answer context for ai smoke ok` in one candidate sentence. The
 candidate must also be substantive and contain no configured action marker.
-Separately, the AT-016 test performs a content-private smoke assertion that the
-raw buffered candidate contains at least one exact case-sensitive
-`CONTEXT_FOR_AI_SMOKE_OK` occurrence whose adjacent characters, when present,
-are not ASCII letters, digits, or underscore. The assertion inspects content
-in memory but never emits the sentinel or candidate to a log or artifact.
+The uppercase `CONTEXT_FOR_AI_SMOKE_OK` source literal remains only a private
+fixture identifier inside the exact user message and its canonical constraint
+evidence. It is not a production output requirement and AT-016 adds no private
+candidate predicate for it. Production rendering is not required to request
+that raw case-sensitive identifier, and candidate-side underscores receive no
+special equivalence.
 
-Raw response equality is not required. Additional natural-language text is
-permitted only when the normal validator still passes and the bounded exact
-sentinel occurrence exists. This makes the oracle structural rather than an
-exact-prose comparison.
+Instead, AT-016 asserts the production validation result itself. The passed
+report contains exactly one `REQUIRED_CONSTRAINT` evidence item for this
+constraint with `severity=INFO`, `outcome=PASSED`, normalized-input predicate
+`MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK`, null missing/violation/warning
+fields, and at least one match whose sentence ordinal is non-null. Returned and
+persisted report values must agree exactly. Raw response equality is not
+required; additional natural-language text is permitted only when every normal
+production check still passes. This remains a structural response oracle, not
+an exact-prose comparison or a provider ping.
 
 `validation.max_revisions: 0` makes AT-016 a one-generation smoke. There is
 exactly one attempt-`0` request and at most one completed buffered response; no
 correction row or revision request is permitted. If that first response fails
-provider-envelope validation, the normal response validator, or the private
-sentinel assertion, AT-016 fails. Production correction behavior outside this
-fixture is unchanged.
+provider-envelope validation, any normal response-validator check, or the exact
+required-constraint evidence assertion above, AT-016 fails. Production
+correction behavior outside this fixture is unchanged.
 
 #### Live action and success assertions
 
@@ -868,8 +902,8 @@ Pass requires all of the following:
 2. Static configuration and all three live preflight checks pass before the
    prompt-bearing request.
 3. One complete valid response is privately buffered within the shared
-   deadline, and both the normal response validator and the private sentinel
-   assertion pass.
+   deadline, and the normal response validator plus the exact production
+   `MUST_EXACTLY` evidence assertion pass.
 4. Exactly one initial request, one response, one passed validation, and one
    final `ASSISTANT` message persist with the complete correlation set. The
    assistant message, persisted response, returned `assistant_text`, facade
@@ -877,19 +911,26 @@ Pass requires all of the following:
    contract.
 5. The normal no-correction success trace sequence persists with exact stages
    and correlations. Serialized routine logs and traces contain none of the
-   fixture user text, sentinel, rendered/raw prompt, packet JSON, candidate or
-   assistant text, raw provider body/exception, endpoint, headers, credentials,
-   cookies, environment values, `.env` content, absolute sensitive paths, or
-   complete configuration.
+   fixture user text, fixture smoke identifier, rendered/raw prompt, packet
+   JSON, candidate or assistant text, raw provider body/exception, endpoint,
+   headers, credentials, cookies, environment values, `.env` content, absolute
+   sensitive paths, or complete configuration.
 6. The standalone evidence artifact below is written atomically, re-read, and
    validated against its closed schema.
 
 Every invalid configuration, non-local endpoint, unavailable or incompatible
 daemon, failed native cloud-disable attestation, missing or remote-marked model,
 timeout, cancellation, malformed or wrong-model provider response, validation
-failure, sentinel mismatch, persistence or lineage failure, missing or
-redaction-violating trace, QML result mismatch, or evidence failure is a failed
-opted-in acceptance result, never a dynamic skip.
+failure or production-evidence mismatch, persistence or lineage failure,
+missing or redaction-violating trace, QML result mismatch, or evidence failure
+is a failed opted-in acceptance result, never a dynamic skip.
+
+A normal failed validator at the zero-revision limit selects
+`VALIDATION/VALIDATION_EXHAUSTED`. A disagreement between returned and persisted
+validation lineage selects `LINEAGE/LINEAGE_MISMATCH`. A structurally impossible
+passed report that lacks its canonical required-constraint evidence selects the
+existing last-resort `ACCEPTANCE/UNEXPECTED_RESULT`; it does not create a new
+private validation code.
 
 #### Standalone evidence ownership and schema
 
@@ -981,7 +1022,7 @@ listed pair; it never retains the unexpected value or exception.
 | `CONFIGURATION` | `MODEL_NAME_REQUIRED`, `CONFIGURATION_INVALID` |
 | `STARTUP` | `STARTUP_FAILED` |
 | `TRANSPORT` | `PROVIDER_UNAVAILABLE`, `MODEL_NOT_FOUND`, `MODEL_TIMEOUT`, `MODEL_CANCELLED`, `INVALID_PROVIDER_RESPONSE` |
-| `VALIDATION` | `VALIDATION_EXHAUSTED`, `SMOKE_SENTINEL_MISMATCH` |
+| `VALIDATION` | `VALIDATION_EXHAUSTED` |
 | `PERSISTENCE` | `PERSISTENCE_ERROR` |
 | `LINEAGE` | `LINEAGE_MISMATCH` |
 | `TRACE` | `TRACE_ASSERTION_FAILED` |
@@ -996,12 +1037,12 @@ complete artifact limitation vocabulary and order; free-form limitations are
 prohibited. The completion report may explain these codes without quoting any
 prohibited content.
 
-The artifact additionally prohibits fixture user text, sentinel/token text,
-rendered or raw prompt, packet JSON, raw candidate/response/final assistant
-text, raw provider objects, endpoint/base URL, headers, authorization/cookie
-data, credentials, secrets, process environment values, `.env` content,
-absolute sensitive paths, complete configuration, hostname, username, and
-machine-unique identifiers.
+The artifact additionally prohibits fixture user text, the fixture smoke
+identifier, canonical predicate text, rendered or raw prompt, packet JSON, raw
+candidate/response/final assistant text, raw provider objects, endpoint/base
+URL, headers, authorization/cookie data, credentials, secrets, process
+environment values, `.env` content, absolute sensitive paths, complete
+configuration, hostname, username, and machine-unique identifiers.
 
 #### File location, publication, and retention
 

@@ -1,6 +1,7 @@
 # TASK-0010 — Immutable Context Packet and Prompt Rendering
 
-Status: Specification reconciled; awaiting implementation approval
+Status: Semantic-alignment specification reconciled; prompt-policy-v2
+implementation repair pending
 
 ## Goal
 
@@ -12,6 +13,8 @@ defined by `docs/contracts/ContextPacket.md`.
 
 - `docs/contracts/ContextPacket.md`
 - `docs/contracts/DomainAndDecisionRules.md`
+- `docs/contracts/Persistence.md`
+- `REQUIREMENTS.md` FR-010 and the FR-012 compatibility boundary
 - `DATABASE_SCHEMA.md`
 - `ACCEPTANCE_TESTS.md` AT-009
 
@@ -62,32 +65,45 @@ the completed packet.
 The component-owned versions are fixed at:
 
 - packet schema `mvp-context-packet-v2`;
-- prompt policy `mvp-prompt-policy-v1`;
+- current prompt policy `mvp-prompt-policy-v2`;
+- historical read/render prompt policy `mvp-prompt-policy-v1`;
 - correction envelope `mvp-correction-envelope-v1`; and
 - estimator `conservative_utf8_v1`.
 
-Prompt rendering uses the exact preamble, policy line, ordered `@@CFA/...@@`
-section markers, trust classifications, canonical JSON rules, and correction
-blocks in the ContextPacket contract. User/reference/constraint-evidence/
-retrieval/correction data is serialized as data and cannot create a trusted
-instruction boundary. Canonical JSON accepts exact decimals and rejects binary
-floating-point input rather than converting it implicitly. Before packet
-construction, the builder maps only TASK-0008 candidate-evidence scores in the
-fixed canonical five-value domain to their exact decimal values and validates
-the score/reason pairing; this is a representation projection, not reranking.
-Rendered prompt text is returned only to its in-process caller and is neither
-persisted nor logged by TASK-0010.
+New packet construction always selects v2. Prompt rendering uses its exact
+preamble, semantic-policy line, ordered `@@CFA/...@@` section markers, trust
+classifications, canonical JSON rules, and correction blocks in the
+ContextPacket contract. Every trusted constraint renders both canonical
+`normalized_rule` and the exact deterministic `semantic_instruction` derived
+from its parsed rule; the closed validation-semantics block communicates only
+the topic, output-shape, action-marker, and active-preserve inputs needed by the
+unchanged production validator. Source text and other untrusted evidence never
+participate in either trusted projection, and no free-form paraphrasing is
+permitted.
+
+A stored v1 packet remains readable/renderable only through the exact v1
+grammar and can never be upgraded or rendered as v2. New callers cannot select
+v1. User/reference/constraint-evidence/retrieval/correction data remains
+serialized as data and cannot create a trusted instruction boundary. Canonical
+JSON accepts exact decimals and rejects binary floating-point input rather than
+converting it implicitly. Before packet construction, the builder maps only
+TASK-0008 candidate-evidence scores in the fixed canonical five-value domain to
+their exact decimal values and validates the score/reason pairing; this is a
+representation projection, not reranking. Rendered prompt text is returned
+only to its in-process caller and is neither persisted nor logged by TASK-0010.
 
 The effective prompt budget and estimate are computed exactly as specified in
 the contract. Mandatory content includes full protocol framing, response
-policy, original request, active state, active hard/true-conditional
-constraints, and override evidence groups. Optional items begin fully included
-and are tail-pruned as whole items in this fixed order: resolved references,
-inactive-conditional evidence, active `PREFERRED` constraints, selected
-retrieval by rank, then active `OPTIONAL` constraints. Each removal rerenders
-the complete prompt; there is no splitting, reordering, rewriting, summarizing,
-or backfill. Omission records identify the projection and stable whole-item
-keys. Render omission never deletes packet evidence.
+policy, validation semantics, original request, active state, active hard/true-
+conditional constraints with their semantic instructions, and override
+evidence groups. Optional items begin fully included and are tail-pruned as
+whole items in this fixed order: resolved references, inactive-conditional
+evidence, active `PREFERRED` constraints, selected retrieval by rank, then
+active `OPTIONAL` constraints. A retained soft constraint keeps its canonical
+and semantic projections together. Each removal rerenders the complete prompt;
+there is no splitting, reordering, rewriting, summarizing, or backfill.
+Omission records identify the projection and stable whole-item keys. Render
+omission never deletes packet evidence.
 
 A correction envelope must name the same packet and have an attempt number
 within that packet's correction limit. A correction render starts from the
@@ -116,21 +132,22 @@ are programmer/configuration errors and must not be converted into that result.
 
 ## Required work
 
-1. Implement the recursively immutable value objects and exact validation for
-   `mvp-context-packet-v2`, the outer packet, `ContextPacketRecord`, correction
-   envelopes, render outcomes, and omission evidence.
-2. Implement `ContextPacketBuilder` as a pure deterministic projection over its
-   explicit immutable request, including the fixed TASK-0008 candidate-score
-   projection, with one caller-supplied creation time and no clock, repository,
-   or provider dependency.
-3. Implement `PromptRenderer`, canonical JSON, `conservative_utf8_v1`, effective
-   budgeting, full-rerender tail pruning, trust-boundary framing, and initial
-   and correction overflow results exactly as contracted.
-4. Implement `ContextPacketStage` using the existing repository, transaction,
-   and ID-generator ports for the two atomic initial persistence outcomes. Do
-   not add packet update or delete behavior.
-5. Add direct builder/renderer unit fixtures and temporary-SQLite transaction
-   fixtures that demonstrate every AT-009 assertion.
+1. Change the current construction constant to v2 while accepting stored v1
+   and v2 packet-policy identities through explicit version dispatch. Retain
+   packet schema v2 and every existing immutable packet field.
+2. Implement the pure canonical-rule-to-semantic-instruction mapping and the
+   closed validation-semantics projection exactly as contracted. Reject a
+   malformed/unsupported canonical form rather than reparsing source evidence.
+3. Implement the exact v2 renderer bytes and make semantic bytes participate in
+   `conservative_utf8_v1`, mandatory budgeting, full-rerender tail pruning,
+   omission accounting, and correction rendering. Retain the exact v1 renderer
+   only for historical packets and reject cross-version or unknown dispatch.
+4. Preserve the existing `ContextPacketBuilder` and `ContextPacketStage`
+   boundaries and atomic outcomes. New packets record v2; no packet update,
+   historical rewrite, provider call, or schema migration is added.
+5. Update direct builder/renderer and temporary-SQLite fixtures to demonstrate
+   every revised AT-009 assertion, including exact v2 bytes and historical v1
+   compatibility.
 
 ## Boundaries
 
@@ -139,6 +156,8 @@ are programmer/configuration errors and must not be converted into that result.
 - Do not call a model/provider, validate candidate output, control correction
   attempts, create model/validation/correction/assistant rows, or orchestrate
   later processing-run states.
+- Do not change TASK-0013 candidate normalization, predicate parsing, matching,
+  violation, warning, score, or correction-control behavior.
 - Do not read provider settings beyond the scalar budget values already in the
   build request; do not add model-name, base-URL, temperature, gateway, or
   tokenizer-service coupling.
@@ -154,7 +173,11 @@ are programmer/configuration errors and must not be converted into that result.
   fixtures; no provider mock or broader pipeline service is required.
 - Cover complete, optional-tail-pruned, initial impossible-budget, correction,
   correction-overflow, delimiter-injection, and repeated-render determinism
-  cases, including exact estimator vectors and byte-for-byte prompt assertions.
+  cases, including every semantic template, validation-semantics shape, exact
+  estimator vectors, and byte-for-byte v2 prompt assertions.
+- Prove a historical v1 packet renders only exact v1 bytes and remains
+  unchanged; prove new-build v1 selection, cross-version rendering, and unknown
+  versions are rejected.
 - Verify packet evidence remains complete and unchanged across render omission
   and correction attempts; verify cross-packet/out-of-limit correction input is
   rejected and correction results report only additional omissions.
@@ -164,9 +187,9 @@ are programmer/configuration errors and must not be converted into that result.
 
 ## Exit criteria
 
-- `ContextPacket.md`, TASK-0010, AT-009, and the deferred register agree on the
-  public seams, ownership, versions, grammar, estimator, pruning, overflow, and
-  persistence behavior.
+- `REQUIREMENTS.md`, `ContextPacket.md`, TASK-0010, AT-009, persistence, and the
+  deferred register agree on the public seams, semantic projections, versions,
+  grammar, estimator, pruning, overflow, and historical behavior.
 - D-008 and the TASK-0010 portion of D-014 are resolved without assigning
   provider, validator, correction-controller, or later orchestration work to
   this task.
@@ -174,4 +197,6 @@ are programmer/configuration errors and must not be converted into that result.
   are persisted only by the specified atomic success path.
 - Original request text, active hard constraints, true conditional hard
   constraints, and override evidence are never silently dropped.
+- Every new trusted prompt exposes the pass-critical production semantics, and
+  no validator or TASK-0018-specific exception is introduced.
 - Every AT-009 assertion passes and all implementation verification is green.

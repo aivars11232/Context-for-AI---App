@@ -3,8 +3,9 @@
 ## Status and use
 
 This register records specification work intentionally deferred by the bounded
-documentation repair pass authorized on 2026-08-02. It does not change MVP scope,
-authorize implementation, or override the source-of-truth order in
+documentation repair pass authorized on 2026-08-02 and the bounded semantic-
+alignment reconciliation authorized on 2026-08-11. It does not change MVP
+scope, perform implementation, or override the source-of-truth order in
 `SPECIFICATION_GOVERNANCE.md`.
 
 Each item must be reconciled in documentation before implementation begins for
@@ -23,7 +24,7 @@ also agree.
 | D-005 | Resolved as a cross-layer contract: startup invokes one finite `RecoverProcessingRun` foreground execution before admission, with a fresh owned token and no queue, polling, daemon, or detached work. Later presentation wiring remains TASK-0015 delivery, not an open TASK-0014 specification decision. | `TASK-0014`, `TASK-0015` |
 | D-006 | Resolved for the provider-independent contract below: `ModelGateway` returns typed values, application/repository code persists lifecycle state, and live/recovery token ownership is explicit. TASK-0012 must preserve this contract at the Ollama transport boundary. | `TASK-0011`, `TASK-0012` |
 | D-007 | Resolved: `docs/diagrams/SEQUENCES.md` now shows duplicate/existing, global Busy, clarification, joined context/state CAS, `PENDING` claim, bounded generation/correction, and one-shot recovery branches. | `TASK-0014` |
-| D-008 | Resolved for TASK-0010 below: the fixed prompt-policy/schema versions, versioning rules, complete packet/aggregate shapes, rendering grammar, evidence, retrieval, budgeting, omission, and typed-overflow contracts are authoritative. | `TASK-0010` |
+| D-008 | Resolved for TASK-0010 below: packet schema v2, current prompt policy v2, historical v1 compatibility, versioning rules, complete packet/aggregate shapes, rendering grammar, semantic projections, evidence, retrieval, budgeting, omission, and typed-overflow contracts are authoritative. The aligned implementation repair remains pending under D-016. | `TASK-0010` |
 | D-009 | The TASK-0018 portion is resolved: AT-016 uses one closed standalone local JSON artifact owned by its testing/evaluation harness and creates no runtime evaluation row. General evaluation-case/evaluation-run shapes, taxonomy, repositories, use cases, and runtime persistence retain their deferred status. | `TASK-0005`, `TASK-0018` |
 | D-010 | Resolved: `ConfigurationAndLogging.md` fixes event/stage/correlation/error/order semantics and AT-014/AT-015 contain exact owning assertions, including recovery and redaction. | `TASK-0014` |
 | D-011 | Reconcile local-Ollama opt-in semantics in `TASK-0012` and `TASK-0018`: no flag skips; flag present makes invalid daemon/model/configuration a failed opt-in test. | `TASK-0018` |
@@ -31,6 +32,7 @@ also agree.
 | D-013 | The TASK-0009 and TASK-0017 portions are resolved below: history is inspectable only, no restore exists, and `ManualOperationsUI.md` fixes the complete manual-memory presentation/trace/acceptance contract. Any separate TASK-0015 portion retains its existing status. | `TASK-0015`, `TASK-0017` |
 | D-014 | The TASK-0014, TASK-0016, and TASK-0017 portions are resolved below by their canonical public-result, transaction, inspection/manual-operation, safety, trace, and acceptance contracts. Portions assigned to other delivery tasks retain their existing status. | `TASK-0002` through `TASK-0018` |
 | D-015 | Resolved for TASK-0014: roadmap, backlog, and implementation-plan wording now agrees on global admission, one-shot recovery, clarification persistence, and AT-002/full-AT-012/AT-015 ownership. | `TASK-0014` |
+| D-016 | Resolved in documentation: canonical `normalized_rule` was not translated into deterministic validator-equivalent trusted model semantics, while AT-016 imposed an undisclosed raw candidate sentinel. Current prompt policy v2 now renders closed semantic projections; the raw fixture identifier is not an output oracle; TASK-0013 remains unchanged; historical v1 rows remain truthful without migration. TASK-0010 implementation and later TASK-0018 harness repair are still pending. | `TASK-0010`, `TASK-0013`, `TASK-0018` |
 
 ### TASK-0002 reconciliation
 
@@ -174,11 +176,12 @@ direct component and narrow persistence assertions in AT-009.
 TASK-0010 consumes already-computed interpretation, reference, constraint, and
 retrieval decisions through an explicit provider-independent
 `ContextPacketBuildRequest`. It owns the recursively immutable
-`mvp-context-packet-v2` aggregate, `mvp-prompt-policy-v1` grammar,
-`mvp-correction-envelope-v1` render input, canonical JSON,
-`conservative_utf8_v1`, deterministic whole-item budgeting/omission evidence,
-typed initial/correction budget outcomes, and its two atomic initial
-context-stage persistence outcomes.
+`mvp-context-packet-v2` aggregate, current `mvp-prompt-policy-v2` grammar,
+historical v1 read/render dispatch, `mvp-correction-envelope-v1` render input,
+canonical JSON, deterministic canonical-rule and validation-semantic
+projections, `conservative_utf8_v1`, deterministic whole-item budgeting/
+omission evidence, typed initial/correction budget outcomes, and its two atomic
+initial context-stage persistence outcomes.
 
 The reconciliation does not assign interpretation, reference resolution,
 constraint resolution, retrieval selection, provider/model calls, response
@@ -186,6 +189,12 @@ validation, correction control/persistence, later pipeline orchestration,
 trace-event integration, or UI behavior to TASK-0010. After the TASK-0011
 reconciliation below, D-014 remains unresolved for `TASK-0012` through
 `TASK-0018`; no later-task issue is resolved here.
+
+This section records specification ownership only. The repository implementation
+at the start of the 2026-08-11 reconciliation still emitted v1 bytes and did not
+produce the semantic projections. The bounded TASK-0010 repair and revised
+AT-009 evidence in D-016 remain required before TASK-0018 may continue; no code
+or test repair occurred in that documentation-only pass.
 
 ### TASK-0011 reconciliation
 
@@ -331,10 +340,11 @@ G18-01, G18-02, and G18-03 are closed by the complete AT-016 contract in
 The fixture is one independent, versioned copy of the established complete
 six-file configuration with closed deltas, an empty initial state, one exact
 message, deterministic pre-provider expectations, the existing normalized
-validation predicate, one private bounded sentinel assertion, and zero
-revisions. It therefore permits one provider generation and defines a
-structural smoke oracle without fixing or publishing the model's surrounding
-prose.
+validation predicate and exact production evidence assertion, and zero
+revisions. The uppercase source literal remains a private fixture identifier,
+not a candidate-output predicate. The fixture therefore permits one provider
+generation and defines a structural production-validation oracle without
+fixing or publishing the model's surrounding prose.
 
 The TASK-0018 portion of D-009 is resolved by one standalone
 `at-016-evidence-v1` local JSON artifact per exact-opt-in execution. Its owner,
@@ -353,8 +363,44 @@ override; and every other opted-in failure fails. This bounded reconciliation
 does not alter D-014 or any unrelated deferred-task portion.
 
 Specification closure does not execute AT-016 or clear its delivery order.
-TASK-0018 implementation and live acceptance remain blocked until TASK-0017 and
-its prerequisite chain are implemented with green exit criteria.
+TASK-0018 implementation and live acceptance remain blocked until the D-016
+TASK-0010 prompt-policy-v2 repair, revised AT-009, TASK-0017, and their
+prerequisite chains are implemented with green exit criteria. TASK-0018 then
+updates only its testing/evaluation harness to consume v2 and the production
+validation evidence; it does not own the production repair.
+
+### TASK-0010 / TASK-0013 / TASK-0018 semantic alignment
+
+D-016 records the gap found after the original task specifications had each
+been implemented against their own contracts: v1 rendered canonical
+`normalized_rule` as a trusted field but did not define or render its
+validator-equivalent model meaning, while TASK-0013 correctly split canonical
+predicate atoms at underscores and AT-016 separately required a raw
+case-sensitive fixture identifier from the candidate. A compliant prompt and a
+compliant validator could therefore disagree without either violating its own
+then-current task contract.
+
+The documentation decision is now closed:
+
+- `normalized_rule` remains the canonical machine/audit representation;
+- new packets use `mvp-prompt-policy-v2`, rendering both that canonical value
+  and one exact semantic instruction derived from the canonical grammar;
+- the trusted validation-semantics block exposes only pass-critical topic,
+  output-shape, action-marker, and active-preserve semantics;
+- persisted v1 packets and model requests keep their identifiers and bytes and
+  render only through v1; the existing generic text/JSON storage needs no
+  schema or data migration;
+- TASK-0013 candidate normalization, predicate parsing, `MUST_EXACTLY`, report,
+  score, and correction behavior do not change; and
+- the uppercase AT-016 fixture identifier is source/evidence only. AT-016
+  asserts the normal passed `REQUIRED_CONSTRAINT` evidence and has no private
+  output predicate or `SMOKE_SENTINEL_MISMATCH` code.
+
+This was documentation reconciliation only. Production still requires the
+bounded TASK-0010 v2 implementation/test repair, and the uncommitted TASK-0018
+testing/evaluation work must later replace its v1/raw-sentinel expectations
+after that prerequisite is green. AT-016 has not been run, TASK-0018 is not
+complete, and no implementation result is claimed here.
 
 ## Historical planning reconciliation
 

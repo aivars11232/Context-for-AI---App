@@ -45,7 +45,11 @@ from context_for_ai.domain.value_objects import (
 
 CONDITION_GRAMMAR_VERSION = "mvp-condition-v1"
 CONTEXT_PACKET_SCHEMA_VERSION = "mvp-context-packet-v2"
-PROMPT_POLICY_VERSION = "mvp-prompt-policy-v1"
+HISTORICAL_PROMPT_POLICY_VERSION = "mvp-prompt-policy-v1"
+PROMPT_POLICY_VERSION = "mvp-prompt-policy-v2"
+SUPPORTED_PROMPT_POLICY_VERSIONS = frozenset(
+    {HISTORICAL_PROMPT_POLICY_VERSION, PROMPT_POLICY_VERSION}
+)
 CORRECTION_ENVELOPE_SCHEMA_VERSION = "mvp-correction-envelope-v1"
 TOKEN_ESTIMATOR_VERSION = "conservative_utf8_v1"
 CORRECTION_INSTRUCTION = (
@@ -1469,7 +1473,7 @@ class RenderingMetadata:
     omitted_sections: tuple[OmissionRecord, ...]
 
     def __post_init__(self) -> None:
-        if self.prompt_policy_version != PROMPT_POLICY_VERSION:
+        if self.prompt_policy_version not in SUPPORTED_PROMPT_POLICY_VERSIONS:
             raise LifecycleInvariantError("Unknown prompt-policy version.")
         if self.token_estimator != TOKEN_ESTIMATOR_VERSION:
             raise LifecycleInvariantError("Unknown token-estimator version.")
@@ -2342,7 +2346,10 @@ def _validate_packet_payload(packet: FrozenJsonObject) -> None:
 
     rendering = _packet_object(packet["rendering"], "packet.rendering")
     _packet_keys(rendering, "packet.rendering", {"prompt_policy_version", "token_estimator", "token_budget", "mandatory_estimated_tokens", "estimated_prompt_tokens", "included_sections", "omitted_sections"})
-    if rendering["prompt_policy_version"] != PROMPT_POLICY_VERSION or rendering["token_estimator"] != TOKEN_ESTIMATOR_VERSION:
+    if (
+        rendering["prompt_policy_version"] not in SUPPORTED_PROMPT_POLICY_VERSIONS
+        or rendering["token_estimator"] != TOKEN_ESTIMATOR_VERSION
+    ):
         raise LifecycleInvariantError("Packet rendering versions are invalid.")
     token_budget = _packet_uint(rendering["token_budget"], "packet rendering budget")
     mandatory_tokens = _packet_uint(rendering["mandatory_estimated_tokens"], "packet rendering mandatory estimate")
@@ -2563,10 +2570,8 @@ class ContextPacket:
             raise LifecycleInvariantError(
                 f"ContextPacket.schema_version must be {CONTEXT_PACKET_SCHEMA_VERSION!r}."
             )
-        if self.prompt_policy_version != PROMPT_POLICY_VERSION:
-            raise LifecycleInvariantError(
-                f"ContextPacket.prompt_policy_version must be {PROMPT_POLICY_VERSION!r}."
-            )
+        if self.prompt_policy_version not in SUPPORTED_PROMPT_POLICY_VERSIONS:
+            raise LifecycleInvariantError("Unknown ContextPacket prompt-policy version.")
         _required_text(
             "ContextPacket.configuration_fingerprint",
             self.configuration_fingerprint,

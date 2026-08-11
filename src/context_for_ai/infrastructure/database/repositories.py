@@ -18,7 +18,7 @@ from context_for_ai.context_engine.normalization import (
     normalize_text,
 )
 from context_for_ai.domain.decisions import (
-    PROMPT_POLICY_VERSION,
+    SUPPORTED_PROMPT_POLICY_VERSIONS,
     Condition,
     Constraint,
     ContextPacket,
@@ -3010,7 +3010,7 @@ def _projection_uint(value: object, field_name: str, *, minimum: int = 0) -> int
     return value
 
 
-def _validate_model_request_projection(request: ModelRequest) -> None:
+def _validate_model_request_projection(request: ModelRequest) -> str:
     projection = _exact_object_keys(
         request.request,
         frozenset(
@@ -3115,9 +3115,13 @@ def _validate_model_request_projection(request: ModelRequest) -> None:
         raise LifecycleInvariantError(
             "ModelRequest render kind must match its request purpose."
         )
-    if rendering["prompt_policy_version"] != PROMPT_POLICY_VERSION:
+    prompt_policy_version = rendering["prompt_policy_version"]
+    if (
+        not isinstance(prompt_policy_version, str)
+        or prompt_policy_version not in SUPPORTED_PROMPT_POLICY_VERSIONS
+    ):
         raise LifecycleInvariantError(
-            "ModelRequest rendering requires the canonical prompt policy."
+            "ModelRequest rendering requires a supported prompt policy."
         )
     _projection_uint(
         rendering["estimated_prompt_tokens"],
@@ -3178,6 +3182,7 @@ def _validate_model_request_projection(request: ModelRequest) -> None:
         raise LifecycleInvariantError(
             "ModelRequest rendered_prompt must be non-empty exact text."
         )
+    return prompt_policy_version
 
 
 def _validate_model_response_projection(
@@ -3399,6 +3404,30 @@ def _register_run_terminal_validation(
 
 
 class SQLiteModelCallRepository(_SQLiteRepository):
+    def _stored_request(self, row: sqlite3.Row) -> ModelRequest:
+        request = _model_request(row)
+        request_prompt_policy = _validate_model_request_projection(request)
+        packet = _fetch_one(
+            self._connection,
+            """
+            SELECT processing_run_id, prompt_policy_version
+            FROM context_packets WHERE id = ?
+            """,
+            (str(request.context_packet_id),),
+            "Validate stored model request packet",
+        )
+        if packet is None or packet["processing_run_id"] != str(
+            request.processing_run_id
+        ):
+            raise LifecycleInvariantError(
+                "A stored model request packet must belong to the same processing run."
+            )
+        if packet["prompt_policy_version"] != request_prompt_policy:
+            raise LifecycleInvariantError(
+                "A stored model request prompt policy must match its context packet."
+            )
+        return request
+
     def _run_for_request(self, request: ModelRequest) -> ProcessingRun:
         return _require_existing(
             SQLiteProcessingRunRepository(self._connection).get(request.processing_run_id),
@@ -3408,7 +3437,7 @@ class SQLiteModelCallRepository(_SQLiteRepository):
     def add_request(self, request: ModelRequest) -> None:
         run = self._run_for_request(request)
         _validate_model_request_shape(request, run)
-        _validate_model_request_projection(request)
+        request_prompt_policy = _validate_model_request_projection(request)
         if request.status is not ModelRequestStatus.PENDING:
             raise LifecycleInvariantError("A new model request must start as PENDING.")
         if run.status in TERMINAL_PROCESSING_RUN_STATUSES:
@@ -3416,13 +3445,20 @@ class SQLiteModelCallRepository(_SQLiteRepository):
         with self._write("Add model request"):
             packet = _fetch_one(
                 self._connection,
-                "SELECT processing_run_id FROM context_packets WHERE id = ?",
+                """
+                SELECT processing_run_id, prompt_policy_version
+                FROM context_packets WHERE id = ?
+                """,
                 (str(request.context_packet_id),),
                 "Validate model request packet",
             )
             if packet is None or packet["processing_run_id"] != str(request.processing_run_id):
                 raise LifecycleInvariantError(
                     "A model request packet must belong to the same processing run."
+                )
+            if packet["prompt_policy_version"] != request_prompt_policy:
+                raise LifecycleInvariantError(
+                    "A model request prompt policy must match its context packet."
                 )
             if request.attempt_number > 0:
                 prior = _fetch_one(
@@ -3477,7 +3513,7 @@ class SQLiteModelCallRepository(_SQLiteRepository):
     def get_request(self, request_id: DomainId) -> ModelRequest | None:
         return self._one(
             "SELECT * FROM model_requests WHERE id = ?",
-            (str(request_id),), _model_request, "model request",
+            (str(request_id),), self._stored_request, "model request",
         )
 
     def list_requests_for_run(
@@ -3488,7 +3524,7 @@ class SQLiteModelCallRepository(_SQLiteRepository):
             SELECT * FROM model_requests
             WHERE processing_run_id = ? ORDER BY attempt_number, id
             """,
-            (str(processing_run_id),), _model_request, "model requests",
+            (str(processing_run_id),), self._stored_request, "model requests",
         )
 
     def update_request(self, request: ModelRequest) -> None:

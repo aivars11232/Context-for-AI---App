@@ -182,6 +182,65 @@ owned by `ResponseValidation.md`; they do not create additional grammar.
 packet containing one is invalid component input; validation never guesses an
 equivalent predicate or silently selects between vocabularies.
 
+### Canonical predicates and model-facing semantics
+
+`normalized_rule` is the canonical machine representation of one constraint.
+It is stable audit and validator input; it is not self-explanatory natural
+language and a model is never required to infer the meaning of underscores,
+prefixes, or the colon-delimited grammar.
+
+For any legal `ATOM`, define `predicate_tokens(ATOM)` by splitting the atom at
+each underscore and converting every resulting ASCII `A` through `Z` character
+to its lower-case ASCII counterpart. Digits are unchanged. Define
+`predicate_phrase(ATOM)` by joining those tokens with one ASCII space. These
+functions are total for the grammar above and are the sole transformation from
+canonical operands to validator predicate tokens. They do not inspect raw
+source text.
+
+The semantic meaning of every supported production is closed by this table:
+
+| Canonical form | Deterministic semantic predicate |
+|---|---|
+| `MUST_<ACTION>:<OBJECT>` | Both `predicate_tokens(ACTION)` and `predicate_tokens(OBJECT)` occur as complete consecutive token sequences in one normalized candidate sentence; their relative order is irrelevant. |
+| `MUST_EXACTLY:<ACTION_AND_TARGET>` | `predicate_tokens(ACTION_AND_TARGET)` occurs as one complete consecutive token sequence in one normalized candidate sentence. Synonyms and approximate matches do not satisfy it. |
+| `MUST_PRESENT:ONE_ORDERED_STEP_AT_A_TIME` | The candidate has exactly one non-empty line and that line is a valid numbered-list item numbered `1`. |
+| `MUST_NOT_<ACTION>:<OBJECT>` | The candidate violates the rule exactly when both operand token sequences occur in one normalized candidate sentence; their relative order is irrelevant. |
+| `MUST_NOT_EXECUTE:IMAGE_OR_ACTION` | The candidate violates the rule exactly when any literal in the packet's immutable ordered `validation_context.action_markers` occurs under the literal-matching rule in `ResponseValidation.md`. |
+| `MUST_PRESERVE:<OBJECT>` | The candidate violates the rule exactly when a token from the packet's immutable ordered `validation_context.preserve_change_verbs` and `predicate_tokens(OBJECT)` both occur in one normalized candidate sentence. |
+| `PREFER_<ACTION>:<OBJECT>` | The positive action/object predicate above is preferred; absence is a non-failing warning. |
+| `MAY_<ACTION>:<OBJECT>` | The positive action/object predicate above is optional; absence is a non-failing warning. |
+| `ASSUME_<ACTION>:<OBJECT>` | This is non-binding evidence and is never a model instruction or candidate-failing predicate. |
+
+An active true `CONDITIONAL` uses the semantic predicate of its hard
+`underlying_type`. A false conditional is inactive, an overridden constraint is
+evidence only, and a conflicting or material assumed constraint blocks before
+packet construction. None of those non-active records becomes a trusted model
+instruction.
+
+The deterministic model-facing semantic projection is derived only from the
+parsed canonical form and, for `MUST_NOT_EXECUTE` and `MUST_PRESERVE`, the two
+listed immutable validation-context arrays. It is never derived by reparsing
+`source_texts`, qualifier `matched_text`, a normalized capture, the exact user
+message, or memory content. Those values remain provenance/evidence and retain
+their existing trust classification. `ContextPacket.md` owns the exact,
+byte-stable text projection and prompt-policy version that render this semantic
+predicate alongside `normalized_rule`; free-form paraphrasing is prohibited.
+
+For example, the canonical rule
+`MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK` maps generally, not by a fixture
+special case, to the predicate tokens
+`("answer", "context", "for", "ai", "smoke", "ok")` and predicate phrase
+`answer context for ai smoke ok`.
+
+Response validation is unchanged by this projection. Predicate atom
+underscores are split only while parsing the trusted canonical predicate.
+Candidate normalization remains Unicode NFC plus case-folding, punctuation
+deletion, Unicode-whitespace splitting, and empty-token removal; it does not
+give candidate-side underscores a special equivalence to separate predicate
+tokens. `MUST_EXACTLY` matching remains the deterministic consecutive-token,
+single-sentence rule above. No acceptance-test-only or model-specific validator
+path is permitted.
+
 `context.yaml` also owns versioned `unsupported_request_rules`. Each rule has a
 unique ID, a category of `IMAGE_GENERATION` or `EXTERNAL_ACTION`, and one or more
 normalized phrases. A matched unsupported rule makes the result `UNSUPPORTED`

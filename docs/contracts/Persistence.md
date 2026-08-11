@@ -235,7 +235,7 @@ dedicated table.
   },
   "rendering": {
     "render_kind": "INITIAL" | "CORRECTION",
-    "prompt_policy_version": "mvp-prompt-policy-v1",
+    "prompt_policy_version": "mvp-prompt-policy-v1" | "mvp-prompt-policy-v2",
     "estimated_prompt_tokens": <non-negative integer>,
     "effective_prompt_budget": <non-negative integer>,
     "included_sections": [<canonical section>, ...],
@@ -257,6 +257,32 @@ correction row exists. For attempt `N` in `1..2`, purpose is `REVISION`, render
 kind is `CORRECTION`, and exactly one `correction_attempts` row for `N` points to
 this request and the immediately preceding failed response. `request_json` is
 render/settings evidence, not a second correction-envelope authority.
+
+### Prompt-policy history and migration decision
+
+Every `context_packets.prompt_policy_version` value equals both
+`packet_json.rendering.prompt_policy_version` and the version that produced its
+initial prompt bytes. Every model request copies that same packet version into
+`request_json.rendering.prompt_policy_version`; its separate `rendered_prompt`
+column contains only bytes produced by that version. A correction request uses
+the unchanged packet version.
+
+After the prompt-policy-v2 repair, all newly constructed packets and their new
+model requests record `mvp-prompt-policy-v2`. Existing packet and model-request
+rows that record `mvp-prompt-policy-v1` remain byte-for-byte unchanged and
+historically truthful. They are loaded and, where recovery requires rendering,
+dispatched only through the exact historical v1 renderer. Repositories never
+rewrite a v1 identifier, prompt, `request_json`, packet JSON, estimate, or
+omission record to v2.
+
+No schema or data migration is required. The existing
+`context_packets.prompt_policy_version` column is non-null text,
+`context_packets.packet_json.rendering.prompt_policy_version` is already an
+independently versioned string, and the closed `mvp-model-request-v1`
+`request_json` keeps the same keys, types, and meanings while carrying either
+known prompt-policy identifier. The `mvp-model-request-v1` schema name therefore
+does not change. An unknown identifier or a row/payload/request mismatch is an
+invariant failure, not a migration or best-effort upgrade.
 
 ## Closed completed-response projection
 

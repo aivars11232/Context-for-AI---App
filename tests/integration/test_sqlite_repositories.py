@@ -23,6 +23,7 @@ from context_for_ai.context_engine.response_validation import (
 from context_for_ai.domain.decisions import (
     CONDITION_GRAMMAR_VERSION,
     CONTEXT_PACKET_SCHEMA_VERSION,
+    HISTORICAL_PROMPT_POLICY_VERSION,
     PROMPT_POLICY_VERSION,
     Condition,
     Constraint,
@@ -170,6 +171,7 @@ def context_packet_fixture(
     results: tuple[RetrievalResult, ...] = (),
     memories: tuple[Memory, ...] = (),
     correction_limit: int = 2,
+    prompt_policy_version: str = PROMPT_POLICY_VERSION,
 ) -> ContextPacket:
     assert tuple(result.memory_id for result in results) == tuple(
         memory.id for memory in memories
@@ -242,7 +244,7 @@ def context_packet_fixture(
             "absolute_model_generation_cap": 3,
         },
         "rendering": {
-            "prompt_policy_version": PROMPT_POLICY_VERSION,
+            "prompt_policy_version": prompt_policy_version,
             "token_estimator": "conservative_utf8_v1",
             "token_budget": 10000,
             "mandatory_estimated_tokens": 0,
@@ -264,7 +266,7 @@ def context_packet_fixture(
         message.id,
         FrozenJsonObject(payload),
         CONTEXT_PACKET_SCHEMA_VERSION,
-        PROMPT_POLICY_VERSION,
+        prompt_policy_version,
         run.configuration_fingerprint,
         created_at,
     )
@@ -411,6 +413,7 @@ def add_empty_packet(
     *,
     packet_number: int = 30,
     correction_limit: int = 2,
+    prompt_policy_version: str = PROMPT_POLICY_VERSION,
 ) -> tuple[ContextPacketRecord, ProcessingRun]:
     packet = context_packet_fixture(
         packet_id=identifier(packet_number),
@@ -418,6 +421,7 @@ def add_empty_packet(
         message=core.user_message,
         created_at=stamp(10),
         correction_limit=correction_limit,
+        prompt_policy_version=prompt_policy_version,
     )
     record = ContextPacketRecord(packet, (), ())
     context_ready = replace(core.run, status=ProcessingRunStatus.CONTEXT_READY)
@@ -445,6 +449,7 @@ def initial_request(core: CoreRecords, packet: ContextPacket) -> ModelRequest:
             context_packet_id=packet.id,
             attempt_number=0,
             render_kind="INITIAL",
+            prompt_policy_version=packet.prompt_policy_version,
         ),
         None,
         None,
@@ -460,6 +465,7 @@ def model_request_projection(
     context_packet_id: DomainId,
     attempt_number: int,
     render_kind: str,
+    prompt_policy_version: str = PROMPT_POLICY_VERSION,
 ) -> FrozenJsonObject:
     return FrozenJsonObject(
         {
@@ -477,7 +483,7 @@ def model_request_projection(
             },
             "rendering": {
                 "render_kind": render_kind,
-                "prompt_policy_version": "mvp-prompt-policy-v1",
+                "prompt_policy_version": prompt_policy_version,
                 "estimated_prompt_tokens": 64,
                 "effective_prompt_budget": 3584,
                 "included_sections": (),
@@ -1374,6 +1380,164 @@ def test_model_success_lineage_settings_evaluation_and_restart_persistence(
         assert not isinstance(restarted.runs.get(core.run.id), sqlite3.Row)
     finally:
         reopened.close()
+
+
+@pytest.mark.parametrize(
+    "prompt_policy_version",
+    (HISTORICAL_PROMPT_POLICY_VERSION, PROMPT_POLICY_VERSION),
+)
+def test_context_packet_and_model_request_policy_round_trip_without_rewrite(
+    connection: sqlite3.Connection,
+    prompt_policy_version: str,
+) -> None:
+    bundle = repositories(connection)
+    core = seed_core(bundle)
+    packet_record, context_ready = add_empty_packet(
+        bundle,
+        core,
+        prompt_policy_version=prompt_policy_version,
+    )
+    request = initial_request(core, packet_record.packet)
+    with bundle.transactions.transaction():
+        bundle.runs.update(
+            replace(context_ready, status=ProcessingRunStatus.GENERATING)
+        )
+        bundle.models.add_request(request)
+
+    assert bundle.packets.get(packet_record.packet.id) == packet_record
+    assert bundle.models.get_request(request.id) == request
+    packet_row = connection.execute(
+        """
+        SELECT prompt_policy_version, packet_json
+        FROM context_packets WHERE id = ?
+        """,
+        (str(packet_record.packet.id),),
+    ).fetchone()
+    request_row = connection.execute(
+        "SELECT request_json FROM model_requests WHERE id = ?",
+        (str(request.id),),
+    ).fetchone()
+    assert packet_row["prompt_policy_version"] == prompt_policy_version
+    assert json.loads(packet_row["packet_json"])["rendering"][
+        "prompt_policy_version"
+    ] == prompt_policy_version
+    assert json.loads(request_row["request_json"])["rendering"][
+        "prompt_policy_version"
+    ] == prompt_policy_version
+
+
+@pytest.mark.parametrize(
+    ("packet_policy", "request_policy"),
+    (
+        (HISTORICAL_PROMPT_POLICY_VERSION, PROMPT_POLICY_VERSION),
+        (PROMPT_POLICY_VERSION, HISTORICAL_PROMPT_POLICY_VERSION),
+    ),
+)
+def test_model_request_policy_must_match_context_packet_policy(
+    connection: sqlite3.Connection,
+    packet_policy: str,
+    request_policy: str,
+) -> None:
+    bundle = repositories(connection)
+    core = seed_core(bundle)
+    packet_record, context_ready = add_empty_packet(
+        bundle,
+        core,
+        prompt_policy_version=packet_policy,
+    )
+    request = initial_request(core, packet_record.packet)
+    mismatched = replace(
+        request,
+        request=model_request_projection(
+            request_id=request.id,
+            processing_run_id=request.processing_run_id,
+            context_packet_id=request.context_packet_id,
+            attempt_number=request.attempt_number,
+            render_kind="INITIAL",
+            prompt_policy_version=request_policy,
+        ),
+    )
+    bundle.runs.update(
+        replace(context_ready, status=ProcessingRunStatus.GENERATING)
+    )
+
+    with pytest.raises(LifecycleInvariantError, match="must match its context packet"):
+        bundle.models.add_request(mismatched)
+
+    assert bundle.models.get_request(request.id) is None
+
+
+def test_model_request_unknown_prompt_policy_fails_closed(
+    connection: sqlite3.Connection,
+) -> None:
+    bundle = repositories(connection)
+    core = seed_core(bundle)
+    packet_record, context_ready = add_empty_packet(bundle, core)
+    request = initial_request(core, packet_record.packet)
+    unknown = replace(
+        request,
+        request=model_request_projection(
+            request_id=request.id,
+            processing_run_id=request.processing_run_id,
+            context_packet_id=request.context_packet_id,
+            attempt_number=request.attempt_number,
+            render_kind="INITIAL",
+            prompt_policy_version="mvp-prompt-policy-v999",
+        ),
+    )
+    bundle.runs.update(
+        replace(context_ready, status=ProcessingRunStatus.GENERATING)
+    )
+
+    with pytest.raises(LifecycleInvariantError, match="supported prompt policy"):
+        bundle.models.add_request(unknown)
+
+    assert bundle.models.get_request(request.id) is None
+
+
+@pytest.mark.parametrize(
+    "stored_policy",
+    (HISTORICAL_PROMPT_POLICY_VERSION, "mvp-prompt-policy-v999"),
+)
+def test_stored_model_request_invalid_prompt_policy_is_not_exposed(
+    connection: sqlite3.Connection,
+    stored_policy: str,
+) -> None:
+    bundle = repositories(connection)
+    core = seed_core(bundle)
+    packet_record, context_ready = add_empty_packet(bundle, core)
+    request = initial_request(core, packet_record.packet)
+    with bundle.transactions.transaction():
+        bundle.runs.update(
+            replace(context_ready, status=ProcessingRunStatus.GENERATING)
+        )
+        bundle.models.add_request(request)
+
+    row = connection.execute(
+        "SELECT request_json FROM model_requests WHERE id = ?",
+        (str(request.id),),
+    ).fetchone()
+    stored_projection = json.loads(row["request_json"])
+    stored_projection["rendering"]["prompt_policy_version"] = stored_policy
+    connection.execute(
+        "UPDATE model_requests SET request_json = ? WHERE id = ?",
+        (
+            json.dumps(
+                stored_projection,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            str(request.id),
+        ),
+    )
+    connection.commit()
+
+    with pytest.raises(PersistenceError, match="could not be mapped"):
+        bundle.models.get_request(request.id)
+    with pytest.raises(PersistenceError, match="could not be mapped"):
+        bundle.models.list_requests_for_run(core.run.id)
 
 
 def test_model_correction_lifecycle_rejects_invalid_candidates_and_duplicates(

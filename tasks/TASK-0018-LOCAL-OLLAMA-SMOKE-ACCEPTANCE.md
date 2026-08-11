@@ -1,9 +1,11 @@
 # TASK-0018 — Local Ollama Smoke Acceptance
 
-Specification status: Reconciled; G18-01, G18-02, and G18-03 are closed.
+Specification status: Semantic alignment reconciled; G18-01, G18-02, and
+G18-03 are closed.
 
-Implementation/acceptance status: Blocked by TASK-0017 and its prerequisite
-chain. AT-016 has not been implemented or executed by this reconciliation.
+Implementation/acceptance status: Blocked by the TASK-0010 prompt-policy-v2
+repair and by TASK-0017 with its prerequisite chain. AT-016 has not been
+executed by this reconciliation.
 
 ## Goal
 
@@ -29,7 +31,7 @@ criterion after the complete deterministic and UI acceptance chain is green.
 
 | Gate | Closed decision |
 |---|---|
-| G18-01 | AT-016 owns an independent six-file synthetic fixture at `tests/fixtures/at_016_local_ollama_smoke/`, version `at-016-local-ollama-smoke-v1`. AT-016 fixes the fixture deltas, empty initial state, exact user message, deterministic interpretation/packet expectations, normal validation predicate, private bounded sentinel assertion, and zero-revision one-generation oracle in `ACCEPTANCE_TESTS.md`. |
+| G18-01 | AT-016 owns an independent six-file synthetic fixture at `tests/fixtures/at_016_local_ollama_smoke/`, version `at-016-local-ollama-smoke-v1`. AT-016 fixes the fixture deltas, empty initial state, exact user message, deterministic interpretation/packet expectations, prompt policy v2, the normal production validation predicate/evidence assertion, and the zero-revision one-generation oracle in `ACCEPTANCE_TESTS.md`. The uppercase fixture identifier is not a separate candidate predicate. |
 | G18-02 | The testing/evaluation harness owns one standalone local JSON artifact per exact-opt-in execution. The artifact is not an `evaluation_cases`/`evaluation_runs` record and is not owned by production code, SQLite, QML, or routine logging. Runtime evaluation persistence remains deferred consistently under D-009. |
 | G18-03 | AT-016 closes the artifact field/schema version, safe failure vocabulary, canonical serialization, authoritative gateway timing projection, bounded OS metadata source, prohibited content, atomic unique publication, local-only handling, and operator-managed retention. No database schema or migration is required. |
 
@@ -45,11 +47,16 @@ failure fails rather than skipping.
   `mvp-config-fixture-v2`, with only the exact deltas listed in AT-016. Its
   exact message is `Exactly answer CONTEXT_FOR_AI_SMOKE_OK.` and its correction
   limit is zero.
+- The TASK-0010 prerequisite supplies `mvp-prompt-policy-v2`, retaining the
+  canonical rule and rendering its exact general semantic instruction for the
+  phrase `answer context for ai smoke ok`. TASK-0018 neither implements nor
+  overrides that production behavior.
 - The normal production validator must pass the derived
   `MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK` rule. The acceptance harness
-  separately requires one identifier-bounded, case-sensitive sentinel
-  occurrence in the privately buffered candidate. Candidate prose is otherwise
-  not fixed, and no content is emitted as evidence.
+  asserts the exact passed `REQUIRED_CONSTRAINT` evidence and returned/persisted
+  equality defined by AT-016. It does not require a raw case-sensitive or
+  underscore-containing candidate literal. Candidate prose is otherwise not
+  fixed, and no content is emitted as evidence.
 - The complete real local composition performs one provider generation, durable
   lifecycle/lineage/trace work, and the QML-visible accepted-result assertion.
   No pull, alias discovery, cloud fallback, retry generation, or correction is
@@ -66,9 +73,10 @@ failure fails rather than skipping.
 
 ## Required implementation work
 
-1. After TASK-0017 is implemented with green exit criteria, add only the
-   versioned AT-016 fixture, marked live acceptance harness, and testing-layer
-   artifact writer/validator specified by AT-016.
+1. After the TASK-0010 v2 repair and TASK-0017 exit criteria are green,
+   implement or update only the versioned AT-016 fixture, marked live
+   acceptance harness, and testing-layer artifact writer/validator specified by
+   AT-016.
 2. Cover `data/acceptance/` with repository ignore rules before any live AT-016
    execution. Never commit, append to, overwrite, or automatically delete an
    evidence artifact.
@@ -79,22 +87,26 @@ failure fails rather than skipping.
    persistence, lineage, trace, redaction, facade, and packaged QML path without
    adding a TASK-0018 production feature or weakening an assertion to obtain a
    live pass.
-5. Record the final prerequisite commands/results and safe artifact reference
+5. Remove any private raw-sentinel candidate helper/assertion and
+   `SMOKE_SENTINEL_MISMATCH` artifact code. Assert only the production
+   `MUST_EXACTLY` evidence and v2 packet/render identity required by AT-016.
+6. Record the final prerequisite commands/results and safe artifact reference
    in the normal completion report.
 
 ## Boundaries
 
 - No application behavior, public API, QML surface, provider contract, normal
   validation behavior, correction behavior, routine log schema, or trace schema
-  change is assigned.
+  change is assigned. The prerequisite prompt-policy repair remains TASK-0010
+  ownership and must be complete before this task continues.
 - No `evaluation_cases` or `evaluation_runs` shape, repository, use case, row,
   schema migration, or general evaluation framework is assigned.
 - No cloud fallback, model routing, streaming, model pull, alias discovery,
   external service, background processing, or non-loopback endpoint is allowed.
-- No fixture prompt, sentinel, candidate/response/assistant text, provider
-  payload, endpoint, secret, environment value, hostname, username, or
-  machine-unique identifier may enter the standalone artifact or routine
-  diagnostics.
+- No fixture prompt, fixture smoke identifier, canonical predicate,
+  candidate/response/assistant text, provider payload, endpoint, secret,
+  environment value, hostname, username, or machine-unique identifier may enter
+  the standalone artifact or routine diagnostics.
 - No application change may be made merely to make a live model pass, and MVP
   completion may not be claimed while a prerequisite or deterministic
   acceptance criterion is failing.
@@ -106,7 +118,8 @@ failure fails rather than skipping.
 - Verify absent, invalid, and exact-`1` opt-in branches, including the rule that
   only absent opt-in on explicit selection skips and writes no artifact.
 - Run the explicitly selected AT-016 once against the named installed local
-  model and verify the one-generation pipeline, persistence/lineage, trace and
+  model and verify the v2 packet/render identity, production required-
+  constraint evidence, one-generation pipeline, persistence/lineage, trace and
   redaction assertions, QML result, and closed standalone artifact.
 - Re-read the published JSON, validate its exact schema/canonical encoding and
   prohibited-content rules, confirm that no evaluation row was created, and
@@ -114,12 +127,15 @@ failure fails rather than skipping.
 
 ## Exit criteria
 
-Specification readiness is complete now: G18-01 through G18-03 have no
-remaining ambiguity. Implementation readiness remains prerequisite-blocked
-until TASK-0017 is implemented with green exit criteria.
+Specification readiness is complete now: G18-01 through G18-03 and the
+TASK-0010/TASK-0013 semantic boundary have no remaining ambiguity.
+Implementation readiness remains prerequisite-blocked until the TASK-0010 v2
+repair and TASK-0017 prerequisite chain are implemented with green exit
+criteria.
 
 After that dependency clears, TASK-0018 is complete only when the complete
 default/non-live and AT-001-through-AT-015 prerequisites are green, one
 exact-opt-in AT-016 execution passes against the named local model, its valid
 standalone artifact is retained locally and referenced by the completion
 report, and no code or runtime behavior outside this task boundary was added.
+The uppercase fixture identifier is never an additional output oracle.

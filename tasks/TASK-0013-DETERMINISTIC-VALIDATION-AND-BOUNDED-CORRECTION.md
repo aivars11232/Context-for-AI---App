@@ -45,6 +45,17 @@ weakening packet constraints or exposing invalid output.
   generation, prompt rendering, or persistence side effect.
 - Do not orchestrate the complete pipeline until TASK-0014.
 
+## Semantic-alignment boundary
+
+Prompt policy v2 is TASK-0010 pre-generation behavior. TASK-0013 continues to
+consume canonical `normalized_rule` and the immutable validation snapshot; it
+does not consume, validate, regenerate, or persist `semantic_instruction`.
+Predicate-side atom underscores still split into lower-case predicate tokens,
+while candidate normalization and every finite match/score rule remain exactly
+those in `ResponseValidation.md`. The raw AT-016 fixture identifier has no
+TASK-0013 meaning. No validator weakening, candidate-side underscore
+equivalence, acceptance-only branch, or model-specific logic is authorized.
+
 ## Acceptance ownership
 
 - TASK-0013 owns all of AT-011 and only the explicitly labeled TASK-0013

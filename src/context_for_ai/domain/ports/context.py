@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Protocol
 
 from context_for_ai.domain.decisions import (
-    PROMPT_POLICY_VERSION,
+    SUPPORTED_PROMPT_POLICY_VERSIONS,
     TOKEN_ESTIMATOR_VERSION,
     Constraint,
     ConstraintDecision,
@@ -530,7 +530,7 @@ class PromptRenderResult:
             raise LifecycleInvariantError(
                 "Prompt render result requires a packet domain ID."
             )
-        if self.prompt_policy_version != PROMPT_POLICY_VERSION:
+        if self.prompt_policy_version not in SUPPORTED_PROMPT_POLICY_VERSIONS:
             raise LifecycleInvariantError("Prompt render result has an unknown policy.")
         if not isinstance(self.render_kind, PromptRenderKind):
             raise LifecycleInvariantError(

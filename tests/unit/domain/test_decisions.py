@@ -11,7 +11,9 @@ import pytest
 from context_for_ai.domain.decisions import (
     CONDITION_GRAMMAR_VERSION,
     CONTEXT_PACKET_SCHEMA_VERSION,
+    HISTORICAL_PROMPT_POLICY_VERSION,
     PROMPT_POLICY_VERSION,
+    SUPPORTED_PROMPT_POLICY_VERSIONS,
     Condition,
     Constraint,
     ConstraintConflictGroup,
@@ -28,6 +30,7 @@ from context_for_ai.domain.decisions import (
     ReferenceOutcome,
     RequestInterpretation,
     ResponsePolicy,
+    RenderingMetadata,
     RetrievalExclusion,
     RetrievalResult,
 )
@@ -67,7 +70,11 @@ def identifier(number: int) -> DomainId:
     return DomainId(f"10000000-0000-4000-8000-{number:012d}")
 
 
-def valid_packet_json(*, action_markers: list[str] | None = None) -> dict[str, object]:
+def valid_packet_json(
+    *,
+    action_markers: list[str] | None = None,
+    prompt_policy_version: str = PROMPT_POLICY_VERSION,
+) -> dict[str, object]:
     return {
         "schema_version": CONTEXT_PACKET_SCHEMA_VERSION,
         "trace": {
@@ -124,7 +131,7 @@ def valid_packet_json(*, action_markers: list[str] | None = None) -> dict[str, o
             "absolute_model_generation_cap": 3,
         },
         "rendering": {
-            "prompt_policy_version": PROMPT_POLICY_VERSION,
+            "prompt_policy_version": prompt_policy_version,
             "token_estimator": "conservative_utf8_v1",
             "token_budget": 1000,
             "mandatory_estimated_tokens": 200,
@@ -695,6 +702,75 @@ def test_packet_and_retrieval_records_freeze_nested_evidence() -> None:
     assert validation_context["action_markers"] == ("TOOL_CALL:",)
     assert selected.reasons == SELECTED_REASONS
     assert excluded.details["minimum_relevance_score"] == "0.5"
+
+
+def test_prompt_policy_versions_are_closed_and_dual_version_records_are_valid() -> None:
+    assert HISTORICAL_PROMPT_POLICY_VERSION == "mvp-prompt-policy-v1"
+    assert PROMPT_POLICY_VERSION == "mvp-prompt-policy-v2"
+    assert SUPPORTED_PROMPT_POLICY_VERSIONS == frozenset(
+        {HISTORICAL_PROMPT_POLICY_VERSION, PROMPT_POLICY_VERSION}
+    )
+
+    for policy_version in SUPPORTED_PROMPT_POLICY_VERSIONS:
+        metadata = RenderingMetadata(
+            policy_version,
+            "conservative_utf8_v1",
+            1000,
+            200,
+            200,
+            (),
+            (),
+        )
+        packet = ContextPacket(
+            identifier(7),
+            identifier(1),
+            identifier(2),
+            valid_packet_json(prompt_policy_version=policy_version),  # type: ignore[arg-type]
+            CONTEXT_PACKET_SCHEMA_VERSION,
+            policy_version,
+            "configuration-fingerprint",
+            NOW,
+        )
+
+        assert metadata.prompt_policy_version == policy_version
+        assert packet.prompt_policy_version == policy_version
+
+
+def test_prompt_policy_versions_reject_unknown_and_outer_payload_mismatch() -> None:
+    with pytest.raises(LifecycleInvariantError, match="Unknown prompt-policy"):
+        RenderingMetadata(
+            "mvp-prompt-policy-v3",
+            "conservative_utf8_v1",
+            1000,
+            200,
+            200,
+            (),
+            (),
+        )
+
+    with pytest.raises(LifecycleInvariantError, match="outer identity/version"):
+        ContextPacket(
+            identifier(7),
+            identifier(1),
+            identifier(2),
+            valid_packet_json(),  # type: ignore[arg-type]
+            CONTEXT_PACKET_SCHEMA_VERSION,
+            HISTORICAL_PROMPT_POLICY_VERSION,
+            "configuration-fingerprint",
+            NOW,
+        )
+
+    with pytest.raises(LifecycleInvariantError, match="Unknown ContextPacket"):
+        ContextPacket(
+            identifier(7),
+            identifier(1),
+            identifier(2),
+            valid_packet_json(prompt_policy_version="mvp-prompt-policy-v3"),  # type: ignore[arg-type]
+            CONTEXT_PACKET_SCHEMA_VERSION,
+            "mvp-prompt-policy-v3",
+            "configuration-fingerprint",
+            NOW,
+        )
 
 
 def test_context_packet_rejects_v1_and_outer_payload_mismatch() -> None:

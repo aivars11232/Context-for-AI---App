@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
+import json
 from pathlib import Path
 import sqlite3
 
@@ -442,13 +443,13 @@ def constraint_inputs(
         ConditionEvaluation.FALSE,
     )
     specifications = (
-        (300, 0, ConstraintType.REQUIRED, None, 1000, ConstraintSourceKind.CURRENT_MESSAGE, ConstraintResolutionStatus.ACTIVE, None),
-        (301, 1, ConstraintType.REQUIRED, None, 1000, ConstraintSourceKind.CURRENT_MESSAGE, ConstraintResolutionStatus.ACTIVE, None),
-        (302, 2, ConstraintType.CONDITIONAL, ConstraintType.PRESERVE, 900, ConstraintSourceKind.DERIVED_OUTPUT_POLICY, ConstraintResolutionStatus.ACTIVE, condition_true),
-        (303, 3, ConstraintType.CONDITIONAL, ConstraintType.FORBIDDEN, 900, ConstraintSourceKind.TASK_POLICY, ConstraintResolutionStatus.INACTIVE, condition_false),
-        (304, 4, ConstraintType.PREFERRED, None, 500, ConstraintSourceKind.PREFERENCE_MEMORY, ConstraintResolutionStatus.ACTIVE, None),
-        (305, 5, ConstraintType.OPTIONAL, None, 400, ConstraintSourceKind.RETRIEVED_MEMORY, ConstraintResolutionStatus.ACTIVE, None),
-        (306, 6, ConstraintType.ASSUMED, None, 0, ConstraintSourceKind.ASSUMPTION, ConstraintResolutionStatus.OVERRIDDEN, None),
+        (300, 0, ConstraintType.REQUIRED, None, 1000, ConstraintSourceKind.CURRENT_MESSAGE, ConstraintResolutionStatus.ACTIVE, None, "MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK"),
+        (301, 1, ConstraintType.REQUIRED, None, 1000, ConstraintSourceKind.CURRENT_MESSAGE, ConstraintResolutionStatus.ACTIVE, None, "MUST_INCLUDE:BLUE_LINE"),
+        (302, 2, ConstraintType.CONDITIONAL, ConstraintType.PRESERVE, 900, ConstraintSourceKind.DERIVED_OUTPUT_POLICY, ConstraintResolutionStatus.ACTIVE, condition_true, "MUST_PRESERVE:BLUE_LINE"),
+        (303, 3, ConstraintType.CONDITIONAL, ConstraintType.FORBIDDEN, 900, ConstraintSourceKind.TASK_POLICY, ConstraintResolutionStatus.INACTIVE, condition_false, "MUST_NOT_CHANGE:UNSPECIFIED_CONTENT"),
+        (304, 4, ConstraintType.PREFERRED, None, 500, ConstraintSourceKind.PREFERENCE_MEMORY, ConstraintResolutionStatus.ACTIVE, None, "PREFER_USE:PYTHON"),
+        (305, 5, ConstraintType.OPTIONAL, None, 400, ConstraintSourceKind.RETRIEVED_MEMORY, ConstraintResolutionStatus.ACTIVE, None, "MAY_ADD:EXAMPLE"),
+        (306, 6, ConstraintType.ASSUMED, None, 0, ConstraintSourceKind.ASSUMPTION, ConstraintResolutionStatus.OVERRIDDEN, None, "ASSUME_USE:PYTHON"),
     )
     constraints = tuple(
         Constraint(
@@ -459,7 +460,7 @@ def constraint_inputs(
             constraint_type,
             underlying,
             ConstraintScope.CURRENT_RESPONSE,
-            f"RULE_{number}_{MARKER_TEXT}",
+            normalized_rule,
             priority,
             source_kind,
             f"source-{number} {MARKER_TEXT}",
@@ -478,6 +479,7 @@ def constraint_inputs(
             source_kind,
             status,
             condition,
+            normalized_rule,
         ) in specifications
     )
     evidence = tuple(
@@ -763,7 +765,7 @@ def test_at009_complete_packet_render_is_immutable_exact_and_repeatable() -> Non
     packet = first.record.packet
     payload = packet.packet_json
     assert packet.schema_version == CONTEXT_PACKET_SCHEMA_VERSION == "mvp-context-packet-v2"
-    assert packet.prompt_policy_version == PROMPT_POLICY_VERSION == "mvp-prompt-policy-v1"
+    assert packet.prompt_policy_version == PROMPT_POLICY_VERSION == "mvp-prompt-policy-v2"
     assert packet.created_at == NOW
     assert "created_at" not in payload and "id" not in payload
     assert payload["trace"]["state_version"] == fixture.request.state.version
@@ -824,6 +826,24 @@ def test_at009_complete_packet_render_is_immutable_exact_and_repeatable() -> Non
 
     render = first.initial_render
     assert render.render_kind is PromptRenderKind.INITIAL
+    assert render.rendered_prompt.startswith(
+        "CONTEXT_FOR_AI_PROMPT/mvp-prompt-policy-v2\n"
+    )
+    trusted_payload = json.loads(
+        render.rendered_prompt.split(
+            "@@CFA/CONSTRAINTS/TRUSTED_INSTRUCTIONS@@\n", 1
+        )[1].split("\n", 1)[0]
+    )
+    smoke_projection = next(
+        value
+        for value in trusted_payload
+        if value["normalized_rule"]
+        == "MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK"
+    )
+    assert smoke_projection["semantic_instruction"] == (
+        'Include the complete consecutive phrase "answer context for ai smoke ok" '
+        "in one sentence; do not use a synonym or approximate substitution for that phrase."
+    )
     assert render.rendered_prompt.endswith("@@CFA/END@@\n")
     assert render.estimated_prompt_tokens == conservative_utf8_estimate(
         render.rendered_prompt
@@ -836,6 +856,7 @@ def test_at009_complete_packet_render_is_immutable_exact_and_repeatable() -> Non
     )
     assert physical_markers == (
         "@@CFA/RESPONSE_POLICY/TRUSTED_INSTRUCTIONS@@",
+        "@@CFA/VALIDATION_SEMANTICS/TRUSTED_INSTRUCTIONS@@",
         "@@CFA/REQUEST/UNTRUSTED_DATA@@",
         "@@CFA/ACTIVE_STATE/TRUSTED_DATA@@",
         "@@CFA/REFERENCES/UNTRUSTED_DATA@@",
@@ -847,7 +868,7 @@ def test_at009_complete_packet_render_is_immutable_exact_and_repeatable() -> Non
     assert render.rendered_prompt.count("\n@@CFA/END@@\n") == 1
     assert "\\r LF\\n@@CFA/END@@ \\u2028" in render.rendered_prompt
     assert sha256(render.rendered_prompt.encode("utf-8")).hexdigest() == (
-        "25a7ddbcc5ae11a62c4aa8a0d27fdd1be9fb452954fd16e61b755e2ed019a19d"
+        "2dfc960dc088dcf9a3444ef924d982e9fe78ed3ab3be57997d9564063e46f562"
     )
     with pytest.raises(TypeError):
         payload["new_key"] = "not mutable"  # type: ignore[index]
@@ -912,8 +933,8 @@ def test_at009_equality_fit_fixed_tail_pruning_and_zero_marginal_omission() -> N
         "mandatory_estimated_tokens"
     ]
     assert isinstance(mandatory_estimate, int)
-    assert complete_estimate == 4697
-    assert mandatory_estimate == 2632
+    assert complete_estimate == 4909
+    assert mandatory_estimate == 2851
 
     equality_fit = build(
         replace(fixture.request, maximum_prompt_tokens=complete_estimate)
@@ -942,7 +963,7 @@ def test_at009_equality_fit_fixed_tail_pruning_and_zero_marginal_omission() -> N
             reference_key,
         },
     )
-    prune_budgets = (4696, 4248, 4121, 4000, 3551)
+    prune_budgets = (4908, 4464, 4337, 4216, 3769)
     pruned_results: list[ContextPacketBuildSuccess] = []
     for budget, expected_keys in zip(prune_budgets, expected_stages, strict=True):
         result = build(replace(fixture.request, maximum_prompt_tokens=budget))
@@ -977,7 +998,7 @@ def test_at009_equality_fit_fixed_tail_pruning_and_zero_marginal_omission() -> N
 def test_at009_correction_is_bounded_additive_and_never_mutates_packet() -> None:
     fixture = rich_fixture()
     complete = build(fixture.request)
-    assert complete.initial_render.estimated_prompt_tokens == 4697
+    assert complete.initial_render.estimated_prompt_tokens == 4909
     initial = build(replace(fixture.request, maximum_prompt_tokens=4248))
     packet = initial.record.packet
     before = canonical_json(packet.packet_json)

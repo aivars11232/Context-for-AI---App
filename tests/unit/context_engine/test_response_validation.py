@@ -13,6 +13,7 @@ from context_for_ai.context_engine.response_validation import (
 )
 from context_for_ai.domain.decisions import (
     CONTEXT_PACKET_SCHEMA_VERSION,
+    HISTORICAL_PROMPT_POLICY_VERSION,
     PROMPT_POLICY_VERSION,
     ContextPacket,
 )
@@ -104,6 +105,7 @@ def packet(
     action_markers: tuple[str, ...] = ("TOOL_CALL:",),
     preserve_verbs: tuple[str, ...] = ("change",),
     correction_limit: int = 2,
+    prompt_policy_version: str = PROMPT_POLICY_VERSION,
 ) -> ContextPacket:
     active_topic = (
         None
@@ -169,7 +171,7 @@ def packet(
             "absolute_model_generation_cap": 3,
         },
         "rendering": {
-            "prompt_policy_version": PROMPT_POLICY_VERSION,
+            "prompt_policy_version": prompt_policy_version,
             "token_estimator": "conservative_utf8_v1",
             "token_budget": 10000,
             "mandatory_estimated_tokens": 0,
@@ -191,7 +193,7 @@ def packet(
         identifier(2),
         FrozenJsonObject(values),
         CONTEXT_PACKET_SCHEMA_VERSION,
-        PROMPT_POLICY_VERSION,
+        prompt_policy_version,
         "configuration-fingerprint",
         NOW,
     )
@@ -410,6 +412,39 @@ def test_reserved_required_predicates_have_exact_semantics(
 
 
 @pytest.mark.parametrize(
+    ("candidate", "expected"),
+    (
+        ("ANSWER_CONTEXT_FOR_AI_SMOKE_OK", False),
+        ("answer context for ai smoke ok", True),
+        (
+            "ANSWER_CONTEXT_FOR_AI_SMOKE_OK. Answer context for AI smoke ok.",
+            True,
+        ),
+    ),
+)
+def test_must_exactly_smoke_sentinel_preserves_existing_token_semantics(
+    candidate: str,
+    expected: bool,
+) -> None:
+    result = validate(
+        packet(
+            constraints=(
+                constraint(
+                    30,
+                    0,
+                    "REQUIRED",
+                    "MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK",
+                ),
+            )
+        ),
+        candidate,
+    )
+
+    required = result.evidence[3]
+    assert (required.outcome is ValidationOutcome.PASSED) is expected
+
+
+@pytest.mark.parametrize(
     ("shape", "candidate", "passes"),
     (
         ("NON_EMPTY_TEXT", "# Heading", True),
@@ -484,7 +519,8 @@ def test_malformed_or_type_mismatched_predicates_are_invalid_input(
                 underlying_type=underlying_type,
                 condition_evaluation=condition_evaluation,
             ),
-        )
+        ),
+        prompt_policy_version=HISTORICAL_PROMPT_POLICY_VERSION,
     )
 
     with pytest.raises(LifecycleInvariantError, match="predicate|production"):
