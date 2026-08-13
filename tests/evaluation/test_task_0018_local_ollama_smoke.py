@@ -1347,7 +1347,6 @@ def _assert_success_lineage(
         _require(validation["model_response_id"] == response["id"])
         _require(validation["id"] == str(result.latest_validation_result.id))
         _require(validation["status"] == "PASSED")
-        _require(validation["score"] == 1.0)
         _require(json.loads(validation["violations_json"]) == [])
         validation_evidence = json.loads(validation["evidence_json"])
         _assert_required_constraint_evidence(

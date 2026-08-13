@@ -38,6 +38,7 @@ from context_for_ai.domain.enums import (
     ValidationOutcome,
     ValidationSeverity,
     ValidationStatus,
+    ValidationWarningCode,
 )
 from context_for_ai.domain.ports.context import (
     ConstraintEvaluationRequest,
@@ -558,6 +559,122 @@ def test_at_016_daemon_free_pipeline_uses_v2_semantics_and_production_evidence(
         ),
         constraint_id=str(required_constraint.id),
     )
+
+
+def test_at_016_success_lineage_accepts_passed_repetition_warning_score(
+    tmp_path: Path,
+) -> None:
+    configuration = load_configuration(application_root=AT_016_FIXTURE, environ={})
+    candidate = (
+        "```\n"
+        "```json\n"
+        "{\n"
+        '  "response": "answer context for ai smoke ok"\n'
+        "}\n"
+        "```json\n"
+    )
+    outcome = CompletedGeneration(
+        candidate,
+        {
+            "provider": "ollama",
+            "provider_version": "0.32.3",
+            "model_identity": configuration.model.name,
+            "model_tag": model_evidence(configuration.model.name).tag,
+            "cloud_disable_source": "env",
+            "done_reason": "stop",
+            "total_duration_ns": 1_000,
+            "load_duration_ns": 100,
+            "prompt_eval_duration_ns": 300,
+            "eval_duration_ns": 600,
+        },
+        timedelta(microseconds=1),
+        None,
+    )
+    database_path = apply_migrations(tmp_path / "at-016-repetition-lineage.sqlite3")
+    factory = ProductionShellScopeFactory(
+        configuration=configuration,
+        database_path=database_path,
+        trace_logger=TraceSink(),  # type: ignore[arg-type]
+        clock=FixedClock(),
+        id_generator=FixedIds(),
+    )
+    gateway = ReturningGateway(outcome)
+    factory._model_gateway = gateway  # type: ignore[attr-defined]
+    preparation = prepare_application_shell(factory)
+    assert isinstance(preparation, ShellReadyResult)
+
+    scope = factory.open_foreground_scope()
+    try:
+        result = scope.process_user_message.execute(
+            ProcessUserMessageRequest(
+                preparation.conversation_id,
+                USER_TEXT,
+                identifier(999),
+                None,
+            ),
+            NoCancellation(),
+        )
+    finally:
+        scope.close()
+
+    assert isinstance(result, SucceededResult)
+    validation = result.latest_validation_result
+    assert validation.status is ValidationStatus.PASSED
+    assert validation.score == UnitScore("0.95")
+    assert validation.violations == ()
+    repetition_warnings = tuple(
+        item
+        for item in validation.evidence
+        if item.warning_code is ValidationWarningCode.UNNECESSARY_REPETITION
+    )
+    assert len(repetition_warnings) == 1
+    assert repetition_warnings[0].outcome is ValidationOutcome.WARNING
+
+    connection = connect_database(database_path)
+    try:
+        persisted_validation = SQLiteValidationRepository(connection).get(
+            validation.id
+        )
+        required_constraint = next(
+            item
+            for item in SQLiteConstraintRepository(connection).list_for_run(
+                result.processing_run_id
+            )
+            if item.constraint_type is ConstraintType.REQUIRED
+            and item.normalized_rule
+            == "MUST_EXACTLY:ANSWER_CONTEXT_FOR_AI_SMOKE_OK"
+        )
+    finally:
+        connection.close()
+
+    assert persisted_validation == validation
+    live_acceptance._assert_required_constraint_evidence(
+        json.loads(
+            canonical_json(
+                tuple(item.to_json_object() for item in validation.evidence)
+            )
+        ),
+        constraint_id=str(required_constraint.id),
+    )
+
+    durable = live_acceptance._extract_durable_generation(database_path)
+    assert isinstance(durable, live_acceptance._DurableGeneration)
+    recorder = live_acceptance._Recorder(
+        results=[result],
+        requests=list(gateway.requests),
+        outcomes=[outcome],
+    )
+    observation = live_acceptance._UiObservation(result, candidate, candidate)
+
+    private_values = live_acceptance._assert_success_lineage(
+        database_path,
+        configuration,
+        recorder,
+        observation,
+        durable,
+    )
+
+    assert private_values[-2:] == (candidate, candidate)
 
 
 def test_live_preflight_estimate_tracks_actual_runtime_timestamp_bytes(
